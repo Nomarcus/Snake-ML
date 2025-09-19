@@ -44,18 +44,18 @@ canvas.chart{width:100%;height:140px;background:#0b1030;border-radius:10px;borde
 .tabs button.active{background:linear-gradient(135deg,var(--a),var(--b));color:#fff;border-color:transparent}
 .tabs button:hover{transform:none;background:#1c2148;color:#fff}
 .tabs button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
-#guideView{max-width:900px;margin:24px auto;padding:0 16px;display:flex;flex-direction:column;gap:16px}
-#guideView .card{padding:24px}
-#guideView h2{font-size:20px;margin-bottom:12px}
-#guideView h3{margin-top:20px;margin-bottom:8px;color:#dfe3ff}
-#guideView p,#guideView li{color:#c7cdef}
-#guideView dl{margin:0;display:grid;grid-template-columns:170px 1fr;gap:10px 18px}
-#guideView dt{font-weight:700;color:#dfe3ff}
-#guideView dd{margin:0;color:#c7cdef;font-size:13px;line-height:1.6}
-#guideView ul{padding-left:18px;margin:8px 0}
-#guideView ol{padding-left:20px;margin:8px 0}
-#guideView .muted{color:#9aa3c7;font-size:12px;margin-top:12px}
-@media(max-width:700px){#guideView dl{grid-template-columns:1fr}#guideView dt{margin-top:12px}}
+.docView{max-width:900px;margin:24px auto;padding:0 16px;display:flex;flex-direction:column;gap:16px}
+.docView .card{padding:24px}
+.docView h2{font-size:20px;margin-bottom:12px}
+.docView h3{margin-top:20px;margin-bottom:8px;color:#dfe3ff}
+.docView p,.docView li{color:#c7cdef}
+.docView dl{margin:0;display:grid;grid-template-columns:170px 1fr;gap:10px 18px}
+.docView dt{font-weight:700;color:#dfe3ff}
+.docView dd{margin:0;color:#c7cdef;font-size:13px;line-height:1.6}
+.docView ul{padding-left:18px;margin:8px 0}
+.docView ol{padding-left:20px;margin:8px 0}
+.docView .muted{color:#9aa3c7;font-size:12px;margin-top:12px}
+@media(max-width:700px){.docView dl{grid-template-columns:1fr}.docView dt{margin-top:12px}}
 footer{opacity:.7;text-align:center;padding:18px}
 @media(max-width:1050px){main{grid-template-columns:1fr}canvas#board{width:100%;height:auto}}
 </style>
@@ -68,8 +68,9 @@ footer{opacity:.7;text-align:center;padding:18px}
   <span class="badge">γ <span id="gammaReadout">0.99</span></span>
   <span class="badge">LR <span id="lrReadout">0.0003</span></span>
   <nav class="tabs">
-    <button type="button" id="tabTraining" class="active">Träning</button>
-    <button type="button" id="tabGuide">Guide</button>
+    <button type="button" id="tabTraining" data-view="training" class="active">Träning</button>
+    <button type="button" id="tabGuide" data-view="guide">Guide</button>
+    <button type="button" id="tabManual" data-view="manual">Manual</button>
   </nav>
 </header>
 
@@ -159,7 +160,7 @@ footer{opacity:.7;text-align:center;padding:18px}
   </div>
 </main>
 
-<section id="guideView" class="hidden">
+<section id="guideView" class="docView hidden">
   <div class="card">
     <h2>Vad som är nytt</h2>
     <ul>
@@ -180,6 +181,70 @@ footer{opacity:.7;text-align:center;padding:18px}
       <li>Spara checkpoints ofta. Vid instabilitet: sänk LR eller höj grad‑clip.</li>
     </ol>
     <p class="muted">Allt startar från scratch i webbläsaren (ingen förtränad policy).</p>
+  </div>
+</section>
+
+<section id="manualView" class="docView hidden">
+  <div class="card">
+    <h2>Handbok & arbetsflöde</h2>
+    <p>Den här manualen beskriver hela träningsflödet så att du tryggt kan stänga ned datorn, återvända senare och fortsätta där du slutade.</p>
+    <h3>Snabbstart</h3>
+    <ol>
+      <li>Välj önskat agentläge och hyperparametrar i panelen till höger.</li>
+      <li>Tryck <span class="mono">▶ Train</span> för att låta agenten spela episoder tills du pausar.</li>
+      <li>Justera reglagen medan träningen rullar eller pausa för att testa enstaka episoder med <span class="mono">Step 1 ep</span>.</li>
+      <li>Spara framstegen via <span class="mono">Save</span> när du är nöjd eller innan du stänger webbläsaren.</li>
+      <li>När du kommer tillbaka: ladda filen med <span class="mono">Load</span> och fortsätt träningen.</li>
+    </ol>
+  </div>
+
+  <div class="card">
+    <h3>Knappar & lägen</h3>
+    <dl>
+      <dt>▶ Train</dt>
+      <dd>Startar eller återupptar den automatiska träningsloopen. Hastigheten styrs av <em>Render every</em> och <em>FPS limit</em>.</dd>
+      <dt>Pause</dt>
+      <dd>Pausar träningen men behåller alla samlade erfarenheter i minnet.</dd>
+      <dt>Step 1 ep</dt>
+      <dd>Kör exakt en episod och stannar sedan, praktiskt när du vill analysera belöning och förlopp.</dd>
+      <dt>Watch Smooth</dt>
+      <dd>Spelar upp en mjuk animering av den nuvarande policyn utan utforskning (exploatering).</dd>
+      <dt>Reset Env</dt>
+      <dd>Nollställer brädet till vald storlek utan att påverka replay-minnet eller nätverket.</dd>
+      <dt>Save</dt>
+      <dd>Exporterar agentens vikter, replay-buffer (PER eller vanlig), N-step kö, statistik, diagram och inställningar till en JSON-fil.</dd>
+      <dt>Load</dt>
+      <dd>Återställer allt från en tidigare sparad JSON-fil. Om träningen var igång pausas den temporärt och återupptas automatiskt.</dd>
+      <dt>Clear Saved</dt>
+      <dd>Tömmer TensorFlow.js cache i webbläsaren. Påverkar inte filer du redan laddat ned.</dd>
+    </dl>
+
+    <h3>Reglage & justeringar</h3>
+    <p>Reglagen är grupperade efter funktion:</p>
+    <ul>
+      <li><strong>Agent &amp; Hyperparametrar</strong> – välj arkitektur (DQN, Double, Dueling, kombinerad), PER, N-step, NoisyNets samt Polyak-uppdatering.</li>
+      <li><strong>Lärande</strong> – gamma, inlärningshastighet, grad-klippning och epsilon-schema styr hur snabbt agenten uppdateras och utforskar.</li>
+      <li><strong>Replay</strong> – batch-storlek, buffertkapacitet och target sync bestämmer träningsstabilitet och minnesåtgång.</li>
+      <li><strong>Curriculum</strong> – växla gradvis upp brädans storlek när snittbelöningen överstiger tröskeln.</li>
+      <li><strong>Render</strong> – grid-storlek, renderingsintervall och FPS påverkar bara visualiseringen, inte inlärningen.</li>
+    </ul>
+    <p>Alla ändringar skrivs direkt till agenten. När du byter arkitektur försöker appen kopiera kompatibla vikter så att du inte tappar framsteg.</p>
+
+    <h3>Spara &amp; ladda träningsdata</h3>
+    <ol>
+      <li>Tryck <span class="mono">Save</span>. En JSON-fil med tidsstämpel skapas och hämtas via webbläsaren.</li>
+      <li>För att återuppta: klicka <span class="mono">Load</span> och välj den sparade filen. Alla vikter, buffertar, diagram och inställningar återställs.</li>
+      <li>Efter laddning uppdateras samtliga reglage så att de speglar värdena från filen, inklusive val av agenttyp och curriculum-läge.</li>
+    </ol>
+    <p class="muted">Tips: spara regelbundet under långa träningspass och arkivera flera versioner om du experimenterar med olika hyperparametrar.</p>
+
+    <h3>Fördjupning</h3>
+    <ul>
+      <li><strong>Prioritized Replay</strong> ökar sannolikheten att repetera transitions med högre TD-fel. Importerade filer bevarar hela sum-trädet och vikterna.</li>
+      <li><strong>N-step returns</strong> (standard n=3) för ut signalen snabbare bakåt i tiden. Avaktivera om du vill analysera ren 1-step DQN.</li>
+      <li><strong>NoisyNets</strong> ersätter epsilon-greedy genom att injicera parameteriserat brus i nätverkets linjära lager.</li>
+      <li><strong>Mjuk target-sync (τ)</strong> ger stabilare uppdateringar. Sätt rullgardinen på noll om du föredrar hård kopiering var <em>Target sync</em>-steg.</li>
+    </ul>
   </div>
 </section>
 
@@ -310,8 +375,6 @@ class NStepBuffer{constructor(n=3,gamma=0.99){this.n=n;this.gamma=gamma;this.buf
 }
 
 /* ======================= Network building blocks ======================= */
-function dense(units,opts){return tf.layers.dense({units,activation:opts.act||'relu',kernelInitializer:opts.init||'heNormal'})}
-
 // Noisy Linear (factorized Gaussian noise)
 class NoisyDense extends tf.layers.Layer{
   constructor(cfg){super(cfg);this.units=cfg.units;this.activation=tf.activations.get(cfg.activation||'linear');}
@@ -320,13 +383,13 @@ class NoisyDense extends tf.layers.Layer{
     this.wSigma=this.addWeight('wSigma',[last,this.units],'float32',tf.initializers.constant({value:0.5/Math.sqrt(last)}));
     this.bMu=this.addWeight('bMu',[this.units],'float32',muInit);
     this.bSigma=this.addWeight('bSigma',[this.units],'float32',tf.initializers.constant({value:0.5/Math.sqrt(last)}));
-    this.built=true;}
+    super.build(inputShape);}
   f(e){return tf.sign(e).mul(tf.sqrt(tf.abs(e).add(EPS)))}
-  call(x){const inDim=x.shape[x.shape.length-1];const epsIn=tf.randomNormal([inDim]);const epsOut=tf.randomNormal([this.units]);
+  call(x){return tf.tidy(()=>{const inDim=x.shape[x.shape.length-1];const epsIn=tf.randomNormal([inDim]);const epsOut=tf.randomNormal([this.units]);
     const fi=this.f(epsIn), fj=this.f(epsOut); const wNoise=fi.expandDims(1).mul(fj.expandDims(0));
     const W=this.wMu.read().add(this.wSigma.read().mul(wNoise)); const b=this.bMu.read().add(this.bSigma.read().mul(fj));
-    const y=x.dot(W).add(b);return this.activation.apply(y);
-  }
+    const y=tf.matMul(x,W).add(b);return this.activation.apply(y);
+  });}
   static get className(){return 'NoisyDense'}
 }
 
@@ -450,8 +513,24 @@ const ui={
   curStart:document.getElementById('curStart'), curStop:document.getElementById('curStop'), curThreshold:document.getElementById('curThreshold')
 };
 
+const viewSections={
+  training:document.getElementById('trainingView'),
+  guide:document.getElementById('guideView'),
+  manual:document.getElementById('manualView')
+};
+const tabButtons=Array.from(document.querySelectorAll('nav.tabs button'));
 let activeTab='training';
-function setActiveTab(tab){ if(!ui.agentType)return; const showGuide=tab==='guide'; activeTab=showGuide?'guide':'training'; document.getElementById('tabTraining').classList.toggle('active',!showGuide); document.getElementById('tabGuide').classList.toggle('active',showGuide); document.getElementById('trainingView').classList.toggle('hidden',showGuide); document.getElementById('guideView').classList.toggle('hidden',!showGuide); }
+function setActiveTab(tab){
+  if(!viewSections[tab]) tab='training';
+  activeTab=tab;
+  tabButtons.forEach(btn=>{
+    const target=btn.dataset.view||'training';
+    btn.classList.toggle('active',target===tab);
+  });
+  Object.entries(viewSections).forEach(([name,section])=>{
+    if(section) section.classList.toggle('hidden',name!==tab);
+  });
+}
 
 window.addEventListener('load',async()=>{ agent=new Agent(stateDim,actionDim,cfgInit); bindUI(); setImmediateState(env); });
 
@@ -481,7 +560,7 @@ function bindUI(){
   ui.btnSave.onclick=saveTrainingToFile; ui.btnLoad.onclick=()=>{if(ui.fileLoader)ui.fileLoader.click();};
   if(ui.fileLoader){ ui.fileLoader.addEventListener('change',async ev=>{ const [file]=ev.target.files||[]; if(file)await loadTrainingFromFile(file); ev.target.value=''; }); }
   ui.btnClear.onclick=()=>{ for(const k in localStorage){ if(k.includes('tensorflowjs'))localStorage.removeItem(k);} flash('Rensade lokal lagring'); };
-  document.getElementById('tabTraining').onclick=()=>setActiveTab('training'); document.getElementById('tabGuide').onclick=()=>setActiveTab('guide');
+  tabButtons.forEach(btn=>btn.addEventListener('click',()=>setActiveTab(btn.dataset.view||'training')));
 
   update(); updateRenderEvery(); ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`; ui.fpsLabel.textContent=ui.fpsLimit.value; setActiveTab('training');
 }
