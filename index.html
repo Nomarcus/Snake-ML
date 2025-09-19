@@ -70,8 +70,8 @@ footer{opacity:.7;text-align:center;padding:18px}
         <span class="mono" id="gridLabel">20×20</span>
       </label>
       <label>Render every:
-        <input type="range" id="renderEvery" min="0" max="200" step="10" value="10">
-        <span class="mono" id="renderLabel">10 steps</span>
+        <input type="range" id="renderEvery" min="1" max="200" step="1" value="1">
+        <span class="mono" id="renderLabel">1 step</span>
       </label>
       <label>FPS limit:
         <input type="range" id="fpsLimit" min="10" max="240" step="10" value="180">
@@ -243,6 +243,153 @@ class MiniLine{
 const board=document.getElementById('board'), bctx=board.getContext('2d');
 let COLS=20,ROWS=20,CELL=board.width/COLS;
 let env=new SnakeEnv(COLS,ROWS);
+
+function snapshotEnv(environment){
+  return {
+    snake:environment.snake.map(p=>({x:p.x,y:p.y})),
+    fruit:environment.fruit?{x:environment.fruit.x,y:environment.fruit.y}:{x:-1,y:-1},
+  };
+}
+const cloneState=state=>({
+  snake:state.snake.map(p=>({x:p.x,y:p.y})),
+  fruit:{x:state.fruit.x,y:state.fruit.y},
+});
+
+const BG_COLOR='#0f1328', GRID_COLOR='#17204a', HEAD_COLOR='#23d18b', BODY_COLOR='#6c7bff';
+let lastDrawnState=snapshotEnv(env);
+let renderQueue=[];
+let currentAnim=null;
+let renderActive=false;
+let renderToken=0;
+const MAX_RENDER_QUEUE=120;
+
+function setImmediateState(environment){
+  const state=snapshotEnv(environment);
+  if(renderToken){cancelAnimationFrame(renderToken);renderToken=0;}
+  renderActive=false;
+  renderQueue.length=0;
+  currentAnim=null;
+  lastDrawnState=cloneState(state);
+  drawFrame(state,state,1);
+}
+
+function enqueueRenderFrame(from,to,duration=getAnimDuration()){
+  const entry={from:cloneState(from),to:cloneState(to),start:null,duration};
+  renderQueue.push(entry);
+  if(renderQueue.length>MAX_RENDER_QUEUE){
+    const latest=renderQueue[renderQueue.length-1];
+    renderQueue=[{from:cloneState(lastDrawnState),to:cloneState(latest.to),start:null,duration:Math.max(40,duration*0.5)}];
+    currentAnim=null;
+  }
+  if(!renderActive){
+    renderActive=true;
+    renderToken=requestAnimationFrame(stepRender);
+  }
+}
+
+function getAnimDuration(){
+  const maxFps=ui&&ui.fpsLimit?+ui.fpsLimit.value:60;
+  return Math.max(50,4000/Math.max(10,maxFps));
+}
+
+function stepRender(ts){
+  if(!currentAnim){
+    currentAnim=renderQueue.shift();
+    if(!currentAnim){
+      renderActive=false;
+      renderToken=0;
+      drawFrame(lastDrawnState,lastDrawnState,1);
+      return;
+    }
+  }
+  if(currentAnim.start===null)currentAnim.start=ts;
+  const duration=currentAnim.duration??getAnimDuration();
+  const progress=duration<=0?1:Math.min(1,(ts-currentAnim.start)/duration);
+  drawFrame(currentAnim.from,currentAnim.to,progress);
+  if(progress>=1){
+    lastDrawnState=cloneState(currentAnim.to);
+    currentAnim=null;
+  }
+  renderToken=requestAnimationFrame(stepRender);
+}
+
+function drawFrame(from,to,t){
+  bctx.fillStyle=BG_COLOR;
+  bctx.fillRect(0,0,board.width,board.height);
+  drawGrid();
+
+  const sameFruit=from.fruit.x===to.fruit.x&&from.fruit.y===to.fruit.y;
+  if(from.fruit.x>=0&&!sameFruit)drawFruit(from.fruit,1-t);
+  if(to.fruit.x>=0)drawFruit(to.fruit,sameFruit?1:t);
+
+  const fromSnake=from.snake;
+  const toSnake=to.snake;
+  const grew=toSnake.length>fromSnake.length;
+  const shrank=toSnake.length<fromSnake.length;
+  const offset=shrank?fromSnake.length-toSnake.length:0;
+  const segments=toSnake.map((seg,i)=>{
+    let start;
+    if(grew){
+      start=i===0?fromSnake[0]:fromSnake[i-1]??fromSnake[fromSnake.length-1];
+    } else if(shrank){
+      start=fromSnake[i+offset]??fromSnake[fromSnake.length-1];
+    } else {
+      start=fromSnake[i]??fromSnake[fromSnake.length-1];
+    }
+    const sx=(start?.x??seg.x);
+    const sy=(start?.y??seg.y);
+    return {x:sx+(seg.x-sx)*t,y:sy+(seg.y-sy)*t};
+  });
+  drawSnakeSegments(segments);
+}
+
+function drawGrid(){
+  bctx.strokeStyle=GRID_COLOR;
+  bctx.lineWidth=1;
+  for(let x=0;x<=COLS;x++){
+    bctx.beginPath();
+    bctx.moveTo(x*CELL,0);
+    bctx.lineTo(x*CELL,board.height);
+    bctx.stroke();
+  }
+  for(let y=0;y<=ROWS;y++){
+    bctx.beginPath();
+    bctx.moveTo(0,y*CELL);
+    bctx.lineTo(board.width,y*CELL);
+    bctx.stroke();
+  }
+}
+
+function drawFruit(pos,alpha=1){
+  if(alpha<=0)return;
+  bctx.save();
+  bctx.globalAlpha=alpha;
+  const fx=pos.x*CELL+CELL/2, fy=pos.y*CELL+CELL/2;
+  bctx.fillStyle='#ff5aa4';
+  bctx.beginPath();
+  bctx.arc(fx,fy,CELL/3,0,2*Math.PI);
+  bctx.fill();
+  bctx.restore();
+}
+
+function drawSnakeSegments(segments){
+  segments.forEach((p,i)=>drawSegment(p.x,p.y,i===0));
+}
+
+function drawSegment(x,y,isHead){
+  const px=x*CELL+1, py=y*CELL+1, size=CELL-2;
+  const baseRadius=isHead?Math.max(4,CELL*0.3):Math.max(3,CELL*0.25);
+  const radius=Math.min(baseRadius,size/2);
+  bctx.fillStyle=isHead?HEAD_COLOR:BODY_COLOR;
+  if(typeof bctx.roundRect==='function'){
+    bctx.beginPath();
+    bctx.roundRect(px,py,size,size,radius);
+    bctx.fill();
+  } else {
+    bctx.fillRect(px,py,size,size);
+  }
+}
+
 const stateDim=env.getState().length, actionDim=3;
 const cfg={gamma:0.98,lr:0.0005,batch:128,bufferSize:50000,epsStart:1.0,epsEnd:0.05,epsDecay:40000};
 let agent;
@@ -270,7 +417,7 @@ const ui={
 window.addEventListener('load',async()=>{
   agent=new DQN(stateDim,actionDim,cfg);
   bindUI();
-  drawEnv(env);
+  setImmediateState(env);
 });
 
 function bindUI(){
@@ -284,11 +431,16 @@ function bindUI(){
   };
   ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync'].forEach(id=>ui[id].addEventListener('input',update));
   ui.gridSize.addEventListener('input',()=>ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`);
-  ui.renderEvery.addEventListener('input',()=>ui.renderLabel.textContent=`${ui.renderEvery.value} steps`);
+  const updateRenderEvery=()=>{
+    const val=+ui.renderEvery.value;
+    ui.renderLabel.textContent=val===1?'1 step':`${val} steps`;
+    renderEvery=val;
+  };
+  ui.renderEvery.addEventListener('input',updateRenderEvery);
   ui.fpsLimit.addEventListener('input',()=>ui.fpsLabel.textContent=ui.fpsLimit.value);
 
   ui.btnReset.onclick=()=>{env=new SnakeEnv(+ui.gridSize.value,+ui.gridSize.value);
-    COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS;drawEnv(env);};
+    COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS;setImmediateState(env);};
   ui.btnTrain.onclick=startTraining;
   ui.btnPause.onclick=stopTraining;
   ui.btnStep.onclick=async()=>{await runEpisodes(1);};
@@ -296,9 +448,12 @@ function bindUI(){
   ui.btnLoad.onclick=async()=>{try{await agent.load();flash('Loaded');}catch{flash('No saved model',true);} };
   ui.btnClear.onclick=()=>{for(const k in localStorage){if(k.includes('tensorflowjs'))localStorage.removeItem(k);}flash('Cleared saved');};
   update();
+  updateRenderEvery();
+  ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`;
+  ui.fpsLabel.textContent=ui.fpsLimit.value;
 }
 
-let training=false,animToken=0,lastFrame=0,renderEvery=10;
+let training=false,animToken=0,lastFrame=0,renderEvery=1;
 let episode=0,totalSteps=0,bestLen=0;
 const rwHist=[],fruitHist=[],lossHist=[];
 function avg(a,n){return a.slice(-n).reduce((x,y)=>x+y,0)/Math.max(1,Math.min(a.length,n));}
@@ -326,25 +481,33 @@ async function runEpisodes(count=1){
   const targetSync=+ui.targetSync.value;
   for(let e=0;e<count;e++){
     const n=+ui.gridSize.value;
-    if(n!==env.cols){env=new SnakeEnv(n,n);COLS=n;ROWS=n;CELL=board.width/COLS;}
+    if(n!==env.cols){
+      env=new SnakeEnv(n,n);
+      COLS=n;ROWS=n;CELL=board.width/COLS;
+      setImmediateState(env);
+    }
     let s=env.reset(),done=false,R=0,fr=0,steps=0;
+    const resetState=snapshotEnv(env);
+    enqueueRenderFrame(lastDrawnState,resetState,0);
     while(!done){
+      const before=snapshotEnv(env);
       const a=agent.act(s);
       const {state:ns,reward:r,done:d}=env.step(a);
+      const after=snapshotEnv(env);
       agent.buffer.push(s,a,r,ns,d);
       s=ns;done=d;R+=r;steps++;totalSteps++;
       if(r>1)fr++;
 
-      // learn a couple of times per step
       for(let k=0;k<2;k++){
-        const loss=await agent.learn(); // <-- no tf.tidy wrapper
+        const loss=await agent.learn();
         if(loss!==null){lossHist.push(loss);ui.chartLoss.push(avg(lossHist,30));}
       }
       if(totalSteps%targetSync===0)agent.syncTarget();
       agent.updateEpsilon(totalSteps);
       ui.epsReadout.textContent=agent.epsilon.toFixed(2);
 
-      if(renderEvery===0||steps%renderEvery===0)drawEnv(env);
+      if(steps%renderEvery===0||d)enqueueRenderFrame(before,after);
+      if(steps%25===0)await tf.nextFrame();
     }
     episode++;
     rwHist.push(R); if(rwHist.length>1000)rwHist.shift();
@@ -355,24 +518,10 @@ async function runEpisodes(count=1){
     ui.kBest.textContent=bestLen;
     ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2);
     ui.chartReward.push(R);
+    await tf.nextFrame();
   }
 }
 
-function drawEnv(e){
-  bctx.fillStyle='#0f1328';bctx.fillRect(0,0,board.width,board.height);
-  bctx.strokeStyle='#17204a';
-  for(let x=0;x<=COLS;x++){bctx.beginPath();bctx.moveTo(x*CELL,0);bctx.lineTo(x*CELL,board.height);bctx.stroke();}
-  for(let y=0;y<=ROWS;y++){bctx.beginPath();bctx.moveTo(0,y*CELL);bctx.lineTo(board.width,y*CELL);bctx.stroke();}
-  if(e.fruit && e.fruit.x>=0){
-    const fx=e.fruit.x*CELL+CELL/2, fy=e.fruit.y*CELL+CELL/2;
-    bctx.fillStyle='#ff5aa4'; bctx.beginPath(); bctx.arc(fx,fy,CELL/3,0,2*Math.PI); bctx.fill();
-  }
-  e.snake.forEach((p,i)=>{
-    const x=p.x*CELL,y=p.y*CELL;
-    bctx.fillStyle=i===0?'#23d18b':'#6c7bff';
-    bctx.fillRect(x+1,y+1,CELL-2,CELL-2);
-  });
-}
 </script>
 </body>
 </html>
