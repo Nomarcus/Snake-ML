@@ -58,6 +58,7 @@ footer{opacity:.7;text-align:center;padding:18px}
       <button id="btnTrain">▶ Train</button>
       <button id="btnPause" class="secondary">Pause</button>
       <button id="btnStep" class="secondary">Step 1 ep</button>
+      <button id="btnWatch" class="secondary">Watch Smooth</button>
       <button id="btnReset" class="secondary">Reset Env</button>
       <button id="btnSave" class="secondary">Save</button>
       <button id="btnLoad" class="secondary">Load</button>
@@ -261,7 +262,10 @@ let renderQueue=[];
 let currentAnim=null;
 let renderActive=false;
 let renderToken=0;
-const MAX_RENDER_QUEUE=120;
+let watching=false;
+const MAX_RENDER_QUEUE=200;
+
+const queueLimit=()=>watching?MAX_RENDER_QUEUE*3:MAX_RENDER_QUEUE;
 
 function setImmediateState(environment){
   const state=snapshotEnv(environment);
@@ -276,7 +280,8 @@ function setImmediateState(environment){
 function enqueueRenderFrame(from,to,duration=getAnimDuration()){
   const entry={from:cloneState(from),to:cloneState(to),start:null,duration};
   renderQueue.push(entry);
-  if(renderQueue.length>MAX_RENDER_QUEUE){
+  const limit=queueLimit();
+  if(renderQueue.length>limit){
     const latest=renderQueue[renderQueue.length-1];
     renderQueue=[{from:cloneState(lastDrawnState),to:cloneState(latest.to),start:null,duration:Math.max(40,duration*0.5)}];
     currentAnim=null;
@@ -289,7 +294,13 @@ function enqueueRenderFrame(from,to,duration=getAnimDuration()){
 
 function getAnimDuration(){
   const maxFps=ui&&ui.fpsLimit?+ui.fpsLimit.value:60;
-  return Math.max(50,4000/Math.max(10,maxFps));
+  return Math.max(16,1000/Math.max(10,maxFps));
+}
+
+function getWatchDuration(){
+  const maxFps=ui&&ui.fpsLimit?+ui.fpsLimit.value:60;
+  const capped=Math.min(Math.max(10,maxFps),240);
+  return Math.max(12,1000/capped);
 }
 
 function stepRender(ts){
@@ -311,6 +322,20 @@ function stepRender(ts){
     currentAnim=null;
   }
   renderToken=requestAnimationFrame(stepRender);
+}
+
+const waitAnimationFrame=()=>new Promise(res=>requestAnimationFrame(res));
+
+async function waitForRenderCapacity(limit=Math.max(10,Math.floor(queueLimit()*0.6))){
+  while(renderQueue.length>limit){
+    await waitAnimationFrame();
+  }
+}
+
+async function waitForRenderIdle(){
+  while(renderQueue.length>0||currentAnim){
+    await waitAnimationFrame();
+  }
 }
 
 function drawFrame(from,to,t){
@@ -407,7 +432,8 @@ const ui={
   kEpisodes:document.getElementById('kEpisodes'),kAvgRw:document.getElementById('kAvgRw'),
   kBest:document.getElementById('kBest'),kFruitRate:document.getElementById('kFruitRate'),
   btnTrain:document.getElementById('btnTrain'),btnPause:document.getElementById('btnPause'),
-  btnStep:document.getElementById('btnStep'),btnReset:document.getElementById('btnReset'),
+  btnStep:document.getElementById('btnStep'),btnWatch:document.getElementById('btnWatch'),
+  btnReset:document.getElementById('btnReset'),
   btnSave:document.getElementById('btnSave'),btnLoad:document.getElementById('btnLoad'),
   btnClear:document.getElementById('btnClear'),
   chartReward:new MiniLine(document.getElementById('chartReward')),
@@ -444,6 +470,7 @@ function bindUI(){
   ui.btnTrain.onclick=startTraining;
   ui.btnPause.onclick=stopTraining;
   ui.btnStep.onclick=async()=>{await runEpisodes(1);};
+  ui.btnWatch.onclick=watchSmoothEpisode;
   ui.btnSave.onclick=async()=>{await agent.save(); flash('Saved');};
   ui.btnLoad.onclick=async()=>{try{await agent.load();flash('Loaded');}catch{flash('No saved model',true);} };
   ui.btnClear.onclick=()=>{for(const k in localStorage){if(k.includes('tensorflowjs'))localStorage.removeItem(k);}flash('Cleared saved');};
@@ -459,27 +486,40 @@ const rwHist=[],fruitHist=[],lossHist=[];
 function avg(a,n){return a.slice(-n).reduce((x,y)=>x+y,0)/Math.max(1,Math.min(a.length,n));}
 function flash(m,d=false){ui.trainState.textContent=m;
   ui.trainState.style.background=d?'#ff4b6e':'#1a1f46';
-  setTimeout(()=>{ui.trainState.textContent=training?'training':'idle';ui.trainState.style.background='#1a1f46';},1200);
+  setTimeout(()=>{
+    if(watching){
+      ui.trainState.textContent='watching';
+      ui.trainState.style.background='#1a1f46';
+      return;
+    }
+    ui.trainState.textContent=training?'training':'idle';
+    ui.trainState.style.background='#1a1f46';
+  },1200);
 }
 
-async function startTraining(){if(training)return;
-  training=true;ui.trainState.textContent='training';
+async function startTraining(){if(training||watching)return;
+  training=true;ui.trainState.textContent='training';ui.trainState.style.background='#1a1f46';
   renderEvery=+ui.renderEvery.value;
+  lastFrame=0;
   animToken=requestAnimationFrame(loopTrain);
 }
-function stopTraining(){if(!training)return;training=false;cancelAnimationFrame(animToken);ui.trainState.textContent='idle';}
+function stopTraining(){if(!training)return;training=false;cancelAnimationFrame(animToken);animToken=0;ui.trainState.textContent='idle';ui.trainState.style.background='#1a1f46';}
 
 async function loopTrain(ts){
+  if(!training||watching){animToken=0;return;}
   const maxFps=+ui.fpsLimit.value;
   if(ts-lastFrame<1000/maxFps){animToken=requestAnimationFrame(loopTrain);return;}
   lastFrame=ts;
-  await runEpisodes(1);  // smoother: one episode per frame
+  await runEpisodes(1,true);  // smoother: one episode per frame
+  if(!training||watching){animToken=0;return;}
   animToken=requestAnimationFrame(loopTrain);
 }
 
-async function runEpisodes(count=1){
+async function runEpisodes(count=1,respectStop=false){
+  if(watching)return;
   const targetSync=+ui.targetSync.value;
   for(let e=0;e<count;e++){
+    if(respectStop&&(!training||watching))break;
     const n=+ui.gridSize.value;
     if(n!==env.cols){
       env=new SnakeEnv(n,n);
@@ -489,7 +529,9 @@ async function runEpisodes(count=1){
     let s=env.reset(),done=false,R=0,fr=0,steps=0;
     const resetState=snapshotEnv(env);
     enqueueRenderFrame(lastDrawnState,resetState,0);
+    let aborted=false;
     while(!done){
+      if(respectStop&&(!training||watching)){aborted=true;break;}
       const before=snapshotEnv(env);
       const a=agent.act(s);
       const {state:ns,reward:r,done:d}=env.step(a);
@@ -509,6 +551,7 @@ async function runEpisodes(count=1){
       if(steps%renderEvery===0||d)enqueueRenderFrame(before,after);
       if(steps%25===0)await tf.nextFrame();
     }
+    if(aborted)return;
     episode++;
     rwHist.push(R); if(rwHist.length>1000)rwHist.shift();
     fruitHist.push(fr); if(fruitHist.length>1000)fruitHist.shift();
@@ -519,6 +562,55 @@ async function runEpisodes(count=1){
     ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2);
     ui.chartReward.push(R);
     await tf.nextFrame();
+    if(respectStop&&(!training||watching))return;
+  }
+}
+
+async function watchSmoothEpisode(){
+  if(watching||!agent)return;
+  const wasTraining=training;
+  if(wasTraining)stopTraining();
+  watching=true;
+  ui.trainState.textContent='watching';
+  ui.trainState.style.background='#1a1f46';
+  if(ui.btnWatch)ui.btnWatch.disabled=true;
+  try{
+    await waitForRenderIdle();
+    const n=+ui.gridSize.value;
+    if(n!==env.cols){
+      env=new SnakeEnv(n,n);
+      COLS=n;ROWS=n;CELL=board.width/COLS;
+    }
+    let state=env.reset();
+    setImmediateState(env);
+    const greedyAction=s=>tf.tidy(()=>agent.online.predict(tf.tensor2d([s],[1,stateDim])).argMax(1).dataSync()[0]);
+    const maxSteps=COLS*ROWS*6;
+    const frameDuration=getWatchDuration();
+    let done=false,steps=0;
+    while(!done&&steps<maxSteps){
+      const before=snapshotEnv(env);
+      const action=greedyAction(state);
+      const {state:nextState,done:finished}=env.step(action);
+      const after=snapshotEnv(env);
+      enqueueRenderFrame(before,after,frameDuration);
+      state=nextState;
+      done=finished;
+      steps++;
+      await waitForRenderCapacity();
+      await tf.nextFrame();
+    }
+    await waitForRenderIdle();
+    bestLen=Math.max(bestLen,env.snake.length);
+    ui.kBest.textContent=bestLen;
+  } finally {
+    watching=false;
+    if(ui.btnWatch)ui.btnWatch.disabled=false;
+    ui.trainState.style.background='#1a1f46';
+    if(wasTraining){
+      startTraining();
+    } else {
+      ui.trainState.textContent='idle';
+    }
   }
 }
 
