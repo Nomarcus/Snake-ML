@@ -4,9 +4,9 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Snake — Deep Q-Learning (smooth + fixed)</title>
-<script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <style>
-:root {--bg:#0f1220;--panel:#151936;--ink:#e7eaf6;--muted:#9aa3c7;--a:#6c7bff;--b:#9b5cff;}
+:root {--bg:#0f1220;--panel:#151936;--ink:#e7eaf6;--muted:#9aa3c7;--a:#6c7bff;--b:#9b5cff;--good:#23d18b;}
 *{box-sizing:border-box}
 body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#1a2050 0%,#101326 40%,#0b0e1c 100%);
      color:var(--ink);font:14px/1.5 system-ui,Segoe UI,Inter,Roboto,sans-serif;}
@@ -32,7 +32,6 @@ input[type="range"]{width:220px}
 .kpi .item b{display:block;font-size:12px;color:#9aa3c7;font-weight:600}
 .kpi .item span{font-weight:900;font-size:18px}
 .split{display:grid;grid-template-columns:1fr 1fr;gap:10px}
->>>>>>> main
 canvas.chart{width:100%;height:140px;background:#0b1030;border-radius:10px;border:1px solid #1b1f3a}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c7d2fe}
 .badge{padding:2px 8px;border-radius:999px;border:1px solid #2a2f61;background:#1a1f46;color:#cfd6ff;font-size:12px}
@@ -50,12 +49,21 @@ footer{opacity:.7;text-align:center;padding:18px}
 </head>
 <body>
 <header>
-
+  <div class="logo">Snake RL Lab</div>
+  <div class="badge" id="trainState">idle</div>
+  <div class="badge">ε <span id="epsReadout">1.00</span></div>
+  <nav class="tabs">
+    <button type="button" class="active" data-view="trainingView">Träning</button>
+    <button type="button" data-view="guideView">Guide</button>
+    <button type="button" data-view="manualView">Manual</button>
   </nav>
 </header>
 
-<main id="trainingView">
-
+<main id="trainingView" class="docView">
+  <div class="card">
+    <h2>Miljö</h2>
+    <canvas id="board" width="500" height="500"></canvas>
+    <div class="row controls" style="margin-top:12px">
       <button id="btnTrain">▶ Train</button>
       <button id="btnPause" class="secondary">Pause</button>
       <button id="btnStep" class="secondary">Step 1 ep</button>
@@ -65,8 +73,7 @@ footer{opacity:.7;text-align:center;padding:18px}
       <button id="btnLoad" class="secondary">Load</button>
       <button id="btnClear" class="danger">Clear Saved</button>
     </div>
-
-    <div class="row" style="margin-top:6px">
+    <div class="row" style="margin-top:12px">
       <label>Cells:
         <input type="range" id="gridSize" min="10" max="36" step="2" value="20">
         <span class="mono" id="gridLabel">20×20</span>
@@ -75,7 +82,12 @@ footer{opacity:.7;text-align:center;padding:18px}
         <input type="range" id="renderEvery" min="1" max="200" step="1" value="1">
         <span class="mono" id="renderLabel">1 step</span>
       </label>
-
+      <label>FPS limit:
+        <input type="range" id="fpsLimit" min="10" max="240" step="10" value="60">
+        <span class="mono" id="fpsLabel">60</span>
+      </label>
+    </div>
+  </div>
 
   <div class="card">
     <h2>Training Stats</h2>
@@ -83,7 +95,7 @@ footer{opacity:.7;text-align:center;padding:18px}
       <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
       <div class="item"><b>Avg Reward (100)</b><span id="kAvgRw">0.0</span></div>
       <div class="item"><b>Best Length</b><span id="kBest">0</span></div>
-      <div class="item"><b>Fruit Rate</b><span id="kFruitRate">0%</span></div>
+      <div class="item"><b>Fruit Avg (100)</b><span id="kFruitRate">0.0</span></div>
       <div class="item"><b>Exploit%</b><span id="kExploit">0%</span></div>
     </div>
     <div class="split" style="margin-top:10px">
@@ -91,7 +103,7 @@ footer{opacity:.7;text-align:center;padding:18px}
       <div><h2>Loss</h2><canvas id="chartLoss" class="chart" width="400" height="140"></canvas></div>
     </div>
 
-    <h2 style="margin-top:14px">Agent & Hyperparametrar</h2>
+    <h2 style="margin-top:14px">Agent &amp; Hyperparametrar</h2>
     <div class="row">
       <label>Agent:
         <select id="agentType">
@@ -107,9 +119,17 @@ footer{opacity:.7;text-align:center;padding:18px}
       <label><input type="checkbox" id="useSoftTau" checked> Mjuk target‑sync (τ)</label>
     </div>
     <div class="row" style="margin-top:6px">
-      <label>γ (discount): <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.99"></label>
-      <label>LR: <input type="range" id="lr" min="0.00005" max="0.005" step="0.00005" value="0.0003"></label>
-      <label>Grad clip: <input type="range" id="gradClip" min="0" max="2" step="0.05" value="1.0"></label>
+      <label>γ (discount):
+        <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.99">
+        <span class="mono" id="gammaReadout">0.990</span>
+      </label>
+      <label>LR:
+        <input type="range" id="lr" min="0.00005" max="0.005" step="0.00005" value="0.0003">
+        <span class="mono" id="lrReadout">0.0003</span>
+      </label>
+      <label>Grad clip:
+        <input type="range" id="gradClip" min="0" max="2" step="0.05" value="1.0">
+      </label>
     </div>
     <div class="row" style="margin-top:6px">
       <label>ε start: <input type="range" id="epsStart" min="0.2" max="1.0" step="0.05" value="1.0"></label>
@@ -415,11 +435,10 @@ class Agent{
   push(s,a,r,ns,d){ const item=this.nstep?this.nstep.push(s,a,r,ns,d):new ReplayItem(s,a,r,ns,d); if(item){ if(this.per){ this.per.push(item, this.per.maxPr); } else { this.buffer.push(item); } } if(d && this.nstep) this.nstep.clear(); }
   _sample(batch){ if(this.per){ const {batch:b,idxs,weights}=this.per.sample(batch); return {batch:b.map(ReplayItem.fromJSON), idxs, weights}; } const n=Math.min(batch,this.buffer.size()); const idxs=new Set(); while(idxs.size<n) idxs.add((Math.random()*this.buffer.size())|0); const arr=[...idxs].map(i=>this.buffer.get(i)); return {batch:arr, idxs:null, weights:null}; }
   async learn(){ const avail=this.per?this.per.n:this.buffer.size(); if(avail<this.batch) return null; const {batch,idxs,weights}=this._sample(this.batch); const S=tf.tensor2d(batch.map(x=>x.s)); const A=tf.tensor1d(batch.map(x=>x.a),'int32'); const R=tf.tensor1d(batch.map(x=>x.r)); const NS=tf.tensor2d(batch.map(x=>x.ns)); const D=tf.tensor1d(batch.map(x=>x.d?1:0)); const IS=weights?tf.tensor1d(Array.from(weights)) : tf.ones([batch.length]);
-    let lossVal, tdAbsArr; await this.optimizer.minimize(()=>{ const q=this.online.apply(S); const qPred=tf.mul(q,tf.oneHot(A,this.aDim)).sum(1);
+    let tdAbsArr; const lossVal=this.optimizer.minimize(()=>{ const q=this.online.apply(S); const qPred=tf.mul(q,tf.oneHot(A,this.aDim)).sum(1);
       let qNextTarget; if(this.double){ const onlineNext=this.online.apply(NS); const aMax=onlineNext.argMax(1); const targetNext=this.target.apply(NS); qNextTarget=tf.mul(targetNext, tf.oneHot(aMax,this.aDim)).sum(1); onlineNext.dispose(); targetNext.dispose(); aMax.dispose(); } else { qNextTarget=this.target.apply(NS).max(1); }
       const y=R.add(qNextTarget.mul(tf.scalar(this.gamma)).mul(tf.scalar(1).sub(D))); const td=tf.abs(y.sub(qPred)); tdAbsArr=td.dataSync();
-      let l=tf.losses.huberLoss(y,qPred); if(weights){ l=tf.mul(l,IS).mean(); } if(this.gradClip>0){ l=tf.clipByValue(l,-this.gradClip,this.gradClip); } return l; },true);
-    // Dispose tensors we created
+      let l=tf.losses.huberLoss(y,qPred); if(weights){ l=tf.mul(l,IS).mean(); } else if(l.rank>0){ l=l.mean(); } if(this.gradClip>0){ l=tf.clipByValue(l,-this.gradClip,this.gradClip); } return l; },true);
     S.dispose();A.dispose();R.dispose();NS.dispose();D.dispose(); IS.dispose(); if(lossVal){ const loss=lossVal.dataSync()[0]; lossVal.dispose(); this.trainStep++; if(this.useSoftTau){ this.syncTarget(this.softTau); } return {loss, tdAbs:tdAbsArr, idxs}; } return null; }
   postLearn(update){ if(this.per && update && update.idxs){ this.per.updateBatch(update.idxs, update.tdAbs); } }
   async exportState(){ const weights=await Promise.all(this.online.getWeights().map(async w=>({shape:w.shape,dtype:w.dtype,data:typedArrayToBase64(await w.data())}))); return {version:2,sDim:this.sDim,aDim:this.aDim,config:this.configJSON(),trainStep:this.trainStep,epsilon:this.epsilon, per:this.per?this.per.toJSON():null, buffer:(!this.per&&this.buffer)?{cap:this.buffer.cap,buf:(this.buffer.buf||[]).map(x=>x&&x.toJSON?x.toJSON():x)}:null, weights}; }
@@ -458,30 +477,179 @@ function drawFrame(from,to,t){ bctx.fillStyle=BG_COLOR; bctx.fillRect(0,0,board.
 
 /* ======================= Controls & State ======================= */
 const stateDim=env.getState().length, actionDim=3;
+let agent=null;
 
 const ui={
-  trainState:document.getElementById('trainState'),epsReadout:document.getElementById('epsReadout'),
-  gamma:document.getElementById('gamma'),gammaReadout:document.getElementById('gammaReadout'),
-  lr:document.getElementById('lr'),lrReadout:document.getElementById('lrReadout'),
-  epsStart:document.getElementById('epsStart'),epsEnd:document.getElementById('epsEnd'),
+  trainState:document.getElementById('trainState'),
+  epsReadout:document.getElementById('epsReadout'),
+  gamma:document.getElementById('gamma'),
+  gammaReadout:document.getElementById('gammaReadout'),
+  lr:document.getElementById('lr'),
+  lrReadout:document.getElementById('lrReadout'),
+  epsStart:document.getElementById('epsStart'),
+  epsEnd:document.getElementById('epsEnd'),
+  epsDecay:document.getElementById('epsDecay'),
+  gradClip:document.getElementById('gradClip'),
+  batchSize:document.getElementById('batchSize'),
+  bufferSize:document.getElementById('bufferSize'),
+  targetSync:document.getElementById('targetSync'),
+  tau:document.getElementById('tau'),
+  gridSize:document.getElementById('gridSize'),
+  gridLabel:document.getElementById('gridLabel'),
+  renderEvery:document.getElementById('renderEvery'),
+  renderLabel:document.getElementById('renderLabel'),
+  fpsLimit:document.getElementById('fpsLimit'),
+  fpsLabel:document.getElementById('fpsLabel'),
+  curStart:document.getElementById('curStart'),
+  curStop:document.getElementById('curStop'),
+  curThreshold:document.getElementById('curThreshold'),
+  agentType:document.getElementById('agentType'),
+  usePER:document.getElementById('usePER'),
+  useNStep:document.getElementById('useNStep'),
+  useNoisy:document.getElementById('useNoisy'),
+  useSoftTau:document.getElementById('useSoftTau'),
+  btnTrain:document.getElementById('btnTrain'),
+  btnPause:document.getElementById('btnPause'),
+  btnStep:document.getElementById('btnStep'),
+  btnWatch:document.getElementById('btnWatch'),
+  btnReset:document.getElementById('btnReset'),
+  btnSave:document.getElementById('btnSave'),
+  btnLoad:document.getElementById('btnLoad'),
+  btnClear:document.getElementById('btnClear'),
+  fileLoader:document.getElementById('fileLoader'),
+  kEpisodes:document.getElementById('kEpisodes'),
+  kAvgRw:document.getElementById('kAvgRw'),
+  kBest:document.getElementById('kBest'),
+  kFruitRate:document.getElementById('kFruitRate'),
+  kExploit:document.getElementById('kExploit'),
+  chartRewardCanvas:document.getElementById('chartReward'),
+  chartLossCanvas:document.getElementById('chartLoss')
+};
+ui.chartReward=new MiniLine(ui.chartRewardCanvas);
+ui.chartLoss=new MiniLine(ui.chartLossCanvas);
+
+function applyTogglesToConfig(){
+  const type=ui.agentType.value;
+  return {
+    double:type==='double'||type==='duel-double',
+    dueling:type==='dueling'||type==='duel-double',
+    usePER:ui.usePER.checked,
+    useNStep:ui.useNStep.checked,
+    useNoisy:ui.useNoisy.checked,
+    useSoftTau:ui.useSoftTau.checked
+  };
+}
 
 function bindUI(){
-  const update=()=>{ const toggles=applyTogglesToConfig(); agent.gamma=+ui.gamma.value; ui.gammaReadout.textContent=(+ui.gamma.value).toFixed(3); agent.lr=+ui.lr.value; ui.lrReadout.textContent=(+ui.lr.value).toFixed(4); agent.optimizer=tf.train.adam(agent.lr); agent.epsStart=+ui.epsStart.value; agent.epsEnd=+ui.epsEnd.value; agent.epsDecay=+ui.epsDecay.value; agent.batch=+ui.batchSize.value; if(agent.per) agent.per.cap=+ui.bufferSize.value; if(agent.buffer) agent.buffer.cap=+ui.bufferSize.value; agent.gradClip=+ui.gradClip.value; agent.softTau=+ui.tau.value; agent.useSoftTau=toggles.useSoftTau; if(!!agent.dueling!==toggles.dueling || !!agent.double!==toggles.double || !!agent.useNoisy!==toggles.useNoisy){ agent.dueling=toggles.dueling; agent.double=toggles.double; agent.useNoisy=toggles.useNoisy; // rebuild to apply arch
-      const old=agent.online; agent.online=buildQNetwork(stateDim,actionDim,{dueling:agent.dueling,noisy:agent.useNoisy});
-      // try copy compatible layers when shapes match
-      try{ const ow=old.getWeights(); const nw=agent.online.getWeights(); const copy=[]; for(let i=0;i<Math.min(ow.length,nw.length);i++){ if(tf.util.arraysEqual(ow[i].shape,nw[i].shape)) copy.push(ow[i]); else copy.push(nw[i]); } agent.online.setWeights(copy); ow.forEach(x=>{if(!copy.includes(x))x.dispose()}); nw.forEach(x=>{if(!copy.includes(x))x.dispose()}); }catch(e){}
-      agent.target=buildQNetwork(stateDim,actionDim,{dueling:agent.dueling,noisy:agent.useNoisy}); agent.syncTarget(1.0); }
+  const update=()=>{
+    if(!agent)return;
+    const toggles=applyTogglesToConfig();
+    agent.gamma=+ui.gamma.value;
+    ui.gammaReadout.textContent=(+ui.gamma.value).toFixed(3);
+    agent.lr=+ui.lr.value;
+    ui.lrReadout.textContent=(+ui.lr.value).toFixed(4);
+    agent.optimizer=tf.train.adam(agent.lr);
+    agent.epsStart=+ui.epsStart.value;
+    agent.epsEnd=+ui.epsEnd.value;
+    agent.epsDecay=+ui.epsDecay.value;
+    agent.batch=+ui.batchSize.value;
+    if(agent.per) agent.per.cap=+ui.bufferSize.value;
+    if(agent.buffer) agent.buffer.cap=+ui.bufferSize.value;
+    agent.gradClip=+ui.gradClip.value;
+    agent.softTau=+ui.tau.value;
+    agent.useSoftTau=toggles.useSoftTau;
+    if(!!agent.dueling!==toggles.dueling || !!agent.double!==toggles.double || !!agent.useNoisy!==toggles.useNoisy){
+      agent.dueling=toggles.dueling;
+      agent.double=toggles.double;
+      agent.useNoisy=toggles.useNoisy;
+      const old=agent.online;
+      agent.online=buildQNetwork(stateDim,actionDim,{dueling:agent.dueling,noisy:agent.useNoisy});
+      try{
+        const ow=old.getWeights();
+        const nw=agent.online.getWeights();
+        const copy=[];
+        for(let i=0;i<Math.min(ow.length,nw.length);i++){
+          if(tf.util.arraysEqual(ow[i].shape,nw[i].shape)) copy.push(ow[i]);
+          else copy.push(nw[i]);
+        }
+        agent.online.setWeights(copy);
+        ow.forEach(x=>{if(!copy.includes(x))x.dispose();});
+        nw.forEach(x=>{if(!copy.includes(x))x.dispose();});
+      }catch(err){ console.warn('Kunde inte kopiera vikter vid ombyggnad',err); }
+      agent.target=buildQNetwork(stateDim,actionDim,{dueling:agent.dueling,noisy:agent.useNoisy});
+      agent.syncTarget(1.0);
+    }
     if(toggles.usePER && !agent.per){ agent.per=new PrioritizedReplay(+ui.bufferSize.value,0.6,0.4); agent.buffer=null; }
     if(!toggles.usePER && agent.per){ agent.buffer=new RingBuffer(+ui.bufferSize.value); agent.per=null; }
-    if(toggles.useNStep && !agent.nstep){ agent.nstep=new NStepBuffer(3,agent.gamma); } if(!toggles.useNStep && agent.nstep){ agent.nstep=null; }
+    if(toggles.useNStep && !agent.nstep){ agent.nstep=new NStepBuffer(3,agent.gamma); }
+    if(!toggles.useNStep && agent.nstep){ agent.nstep=null; }
+    agent.useNoisy=toggles.useNoisy;
+    agent.double=toggles.double;
+    agent.dueling=toggles.dueling;
     ui.epsReadout.textContent=agent.epsilon.toFixed(2);
   };
-  ui.applyConfigFromInputs=update
+  ui.applyConfigFromInputs=update;
+
+  const bindRange=(input,label,format)=>{
+    if(!input||!label)return;
+    const handler=()=>{ label.textContent=format(+input.value); };
+    input.addEventListener('input',handler);
+    handler();
+  };
+  bindRange(ui.gamma,ui.gammaReadout,v=>v.toFixed(3));
+  bindRange(ui.lr,ui.lrReadout,v=>v.toFixed(4));
+
+  const updateGridLabel=()=>{ ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`; };
+  if(ui.gridSize){
+    ui.gridSize.addEventListener('input',updateGridLabel);
+    ui.gridSize.addEventListener('change',()=>{ updateGridLabel(); resetEnvironment(); });
+    updateGridLabel();
+  }
+
+  ui.updateRenderEvery=()=>{
+    const val=+ui.renderEvery.value;
+    ui.renderLabel.textContent=val===1?'1 step':`${val} steps`;
+    renderEvery=val;
+  };
+  ui.renderEvery.addEventListener('input',ui.updateRenderEvery);
+  ui.updateRenderEvery();
+
+  const updateFpsLabel=()=>{ ui.fpsLabel.textContent=ui.fpsLimit.value; };
+  ui.fpsLimit.addEventListener('input',updateFpsLabel);
+  updateFpsLabel();
+
+  [ui.gamma,ui.lr,ui.epsStart,ui.epsEnd,ui.epsDecay,ui.gradClip,ui.batchSize,ui.bufferSize,ui.targetSync,ui.tau]
+    .forEach(el=>el&&el.addEventListener('input',update));
+  [ui.agentType,ui.usePER,ui.useNStep,ui.useNoisy,ui.useSoftTau]
+    .forEach(el=>el&&el.addEventListener('change',update));
+
+  ui.btnTrain.addEventListener('click',startTraining);
+  ui.btnPause.addEventListener('click',stopTraining);
+  ui.btnStep.addEventListener('click',async()=>{ stopTraining(); await runEpisodes(1,false); });
+  ui.btnWatch.addEventListener('click',watchSmoothEpisode);
+  ui.btnReset.addEventListener('click',()=>{ resetEnvironment(); flash('Miljön återställd'); });
+  ui.btnSave.addEventListener('click',saveTrainingToFile);
+  ui.btnLoad.addEventListener('click',()=>ui.fileLoader.click());
+  ui.btnClear.addEventListener('click',clearSavedData);
+  ui.fileLoader.addEventListener('change',evt=>{
+    const file=evt.target.files&&evt.target.files[0];
+    if(file){
+      loadTrainingFromFile(file).finally(()=>{ evt.target.value=''; });
+    }
+  });
+
+  update();
 }
 
 async function buildAppState(){ const agentState=await agent.exportState(); return {version:2,createdAt:new Date().toISOString(), agent:agentState, meta:{ episode,totalSteps,bestLen,rwHist:Array.from(rwHist),fruitHist:Array.from(fruitHist),lossHist:Array.from(lossHist), chartReward:Array.from(ui.chartReward.data), chartLoss:Array.from(ui.chartLoss.data), targetSync:+ui.targetSync.value, gridSize:+ui.gridSize.value, renderEvery:+ui.renderEvery.value, fpsLimit:+ui.fpsLimit.value, exploitRate:exploitCount/Math.max(1,decisionCount) } }; }
 function applyLoadedConfig(config={}){ if(config.gamma!==undefined)ui.gamma.value=config.gamma; if(config.lr!==undefined)ui.lr.value=config.lr; if(config.batch!==undefined)ui.batchSize.value=config.batch; if(config.bufferSize!==undefined)ui.bufferSize.value=config.bufferSize; if(config.epsStart!==undefined)ui.epsStart.value=config.epsStart; if(config.epsEnd!==undefined)ui.epsEnd.value=config.epsEnd; if(config.epsDecay!==undefined)ui.epsDecay.value=config.epsDecay; if(config.gradClip!==undefined)ui.gradClip.value=config.gradClip; if(config.tau!==undefined)ui.tau.value=config.tau; if(config.useSoftTau!==undefined)ui.useSoftTau.checked=config.useSoftTau; if(config.useNoisy!==undefined)ui.useNoisy.checked=config.useNoisy; if(config.useNStep!==undefined)ui.useNStep.checked=config.useNStep; if(config.usePER!==undefined)ui.usePER.checked=config.usePER; const type=(config.dueling&&config.double)?'duel-double':(config.dueling?'dueling':(config.double?'double':'dqn')); ui.agentType.value=type; if(typeof ui.applyConfigFromInputs==='function') ui.applyConfigFromInputs(); else { ui.gammaReadout.textContent=(+ui.gamma.value).toFixed(3); ui.lrReadout.textContent=(+ui.lr.value).toFixed(4); ui.epsReadout.textContent=agent.epsilon.toFixed(2); } }
-function applyMeta(meta={}){ episode=typeof meta.episode==='number'?meta.episode:0; totalSteps=typeof meta.totalSteps==='number'?meta.totalSteps:0; bestLen=typeof meta.bestLen==='number'?meta.bestLen:0; assignArray(rwHist,meta.rwHist,v=>+v||0); assignArray(fruitHist,meta.fruitHist,v=>+v||0); assignArray(lossHist,meta.lossHist,v=>+v||0); ui.chartReward.data=Array.isArray(meta.chartReward)?meta.chartReward.map(v=>+v||0):[]; ui.chartReward.draw(); ui.chartLoss.data=Array.isArray(meta.chartLoss)?meta.chartLoss.map(v=>+v||0):[]; ui.chartLoss.draw(); ui.kEpisodes.textContent=episode; ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2); ui.kBest.textContent=bestLen; ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2); if(typeof meta.targetSync==='number')ui.targetSync.value=meta.targetSync; if(typeof meta.gridSize==='number'){ ui.gridSize.value=meta.gridSize; ui.gridLabel.textContent=`${meta.gridSize}×${meta.gridSize}`; env=new SnakeEnv(meta.gridSize,meta.gridSize); COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS; } else { ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`; } if(typeof meta.renderEvery==='number'){ ui.renderEvery.value=meta.renderEvery; } if(typeof ui.updateRenderEvery==='function') ui.updateRenderEvery(); else { const val=+ui.renderEvery.value; ui.renderLabel.textContent=val===1?'1 step':`${val} steps`; renderEvery=val; } if(typeof meta.fpsLimit==='number') ui.fpsLimit.value=meta.fpsLimit; ui.fpsLabel.textContent=ui.fpsLimit.value; env.reset(); setImmediateState(env); }
+function applyMeta(meta={}){ episode=typeof meta.episode==='number'?meta.episode:0; totalSteps=typeof meta.totalSteps==='number'?meta.totalSteps:0; bestLen=typeof meta.bestLen==='number'?meta.bestLen:0; decisionCount=0; exploitCount=0; ui.kExploit.textContent='0%'; assignArray(rwHist,meta.rwHist,v=>+v||0); assignArray(fruitHist,meta.fruitHist,v=>+v||0); assignArray(lossHist,meta.lossHist,v=>+v||0); ui.chartReward.data=Array.isArray(meta.chartReward)?meta.chartReward.map(v=>+v||0):[]; ui.chartReward.draw(); ui.chartLoss.data=Array.isArray(meta.chartLoss)?meta.chartLoss.map(v=>+v||0):[]; ui.chartLoss.draw(); ui.kEpisodes.textContent=episode; ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2); ui.kBest.textContent=bestLen; ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2); if(typeof meta.targetSync==='number')ui.targetSync.value=meta.targetSync; if(typeof meta.gridSize==='number'){ ui.gridSize.value=meta.gridSize; ui.gridLabel.textContent=`${meta.gridSize}×${meta.gridSize}`; env=new SnakeEnv(meta.gridSize,meta.gridSize); COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS; } else { ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`; } if(typeof meta.renderEvery==='number'){ ui.renderEvery.value=meta.renderEvery; } if(typeof ui.updateRenderEvery==='function') ui.updateRenderEvery(); else { const val=+ui.renderEvery.value; ui.renderLabel.textContent=val===1?'1 step':`${val} steps`; renderEvery=val; } if(typeof meta.fpsLimit==='number') ui.fpsLimit.value=meta.fpsLimit; ui.fpsLabel.textContent=ui.fpsLimit.value; env.reset(); setImmediateState(env); }
+
+function buildAgentConfig(){ const toggles=applyTogglesToConfig(); return { gamma:+ui.gamma.value, lr:+ui.lr.value, batch:+ui.batchSize.value, bufferSize:+ui.bufferSize.value, epsStart:+ui.epsStart.value, epsEnd:+ui.epsEnd.value, epsDecay:+ui.epsDecay.value, perAlpha:0.6, perBeta:0.4, nStep:3, useNStep:toggles.useNStep, usePER:toggles.usePER, useNoisy:toggles.useNoisy, dueling:toggles.dueling, double:toggles.double, gradClip:+ui.gradClip.value, tau:+ui.tau.value, useSoftTau:toggles.useSoftTau }; }
+
+function resetEnvironment(){ const size=+ui.gridSize.value||20; env=new SnakeEnv(size,size); COLS=env.cols; ROWS=env.rows; CELL=board.width/COLS; env.reset(); setImmediateState(env); if(agent&&agent.nstep&&typeof agent.nstep.clear==='function') agent.nstep.clear(); }
+
+async function clearSavedData(){ const resume=training; if(resume)stopTraining(); try{ const models=await tf.io.listModels(); const keys=Object.keys(models); await Promise.all(keys.map(key=>tf.io.removeModel(key).catch(()=>null))); flash('TF.js cache rensad'); }catch(err){ console.error(err); flash('Kunde inte rensa cache',true); } finally { if(resume&&!watching)startTraining(); } }
 
 async function saveTrainingToFile(){ const resume=training; if(resume)stopTraining(); try{ await waitForRenderIdle(); const state=await buildAppState(); const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'}); const stamp=new Date().toISOString().replace(/[:.]/g,'-'); const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`snake-rl-supercharged-${stamp}.json`; document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(()=>URL.revokeObjectURL(url),1000); flash('Sparat till fil'); }catch(err){ console.error(err); flash('Kunde inte spara',true);} finally { if(resume&&!watching)startTraining(); } }
 async function loadTrainingFromFile(file){ if(!file)return; if(watching){ flash('Avsluta visningsläget först',true); return; } const resume=training; if(resume)stopTraining(); try{ const text=await file.text(); const data=JSON.parse(text); if(!data||!data.agent)throw new Error('Ogiltig sparfil'); await agent.importState(data.agent); applyLoadedConfig(data.agent.config||{}); applyMeta(data.meta||{}); ui.epsReadout.textContent=agent.epsilon.toFixed(2); flash('Laddat från fil'); }catch(err){ console.error(err); flash('Kunde inte ladda',true);} finally { if(resume&&!watching)startTraining(); } }
@@ -495,10 +663,10 @@ async function startTraining(){ if(training||watching)return; training=true; ui.
 function stopTraining(){ if(!training)return; training=false; cancelAnimationFrame(animToken); animToken=0; ui.trainState.textContent='idle'; ui.trainState.style.background='#1a1f46'; }
 async function loopTrain(ts){ if(!training||watching){animToken=0;return;} const maxFps=+ui.fpsLimit.value; if(ts-lastFrame<1000/maxFps){animToken=requestAnimationFrame(loopTrain);return;} lastFrame=ts; await runEpisodes(1,true); if(!training||watching){animToken=0;return;} animToken=requestAnimationFrame(loopTrain); }
 
-function maybeCurriculum(){ const start=+ui.curStart.value, stop=+ui.curStop.value, thr=+ui.curThreshold.value; if(ROWS<stop && avg(rwHist,50)>=thr){ const next=Math.min(stop, ROWS+2); ui.gridSize.value=next; ui.gridLabel.textContent=`${next}×${next}`; env=new SnakeEnv(next,next); COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS; flash(`Curriculum: ${next}×${next}`); }
+function maybeCurriculum(){ const start=+ui.curStart.value, stop=+ui.curStop.value, thr=+ui.curThreshold.value; if(ROWS<stop && avg(rwHist,50)>=thr){ const next=Math.min(stop, ROWS+2); ui.gridSize.value=next; ui.gridLabel.textContent=`${next}×${next}`; env=new SnakeEnv(next,next); COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS; env.reset(); setImmediateState(env); flash(`Curriculum: ${next}×${next}`); }
 }
 
-async function runEpisodes(count=1,respectStop=false){ if(watching)return; const targetSync=+ui.targetSync.value; for(let e=0;e<count;e++){ if(respectStop&&(!training||watching))break; const n=+ui.gridSize.value; if(n!==env.cols){ env=new SnakeEnv(n,n); COLS=n;ROWS=n;CELL=board.width/COLS; setImmediateState(env);} let s=env.reset(),done=false,R=0,fr=0,steps=0; const resetState=snapshotEnv(env); enqueueRenderFrame(lastDrawnState,resetState,0); let aborted=false; while(!done){ if(respectStop&&(!training||watching)){aborted=true;break;} const before=snapshotEnv(env); const greedy=tf.tidy(()=>agent.online.predict(tf.tensor2d([s],[1,stateDim])).argMax(1).dataSync()[0]); const a=(Math.random()<agent.epsilon)?((Math.random()*actionDim)|0):greedy; decisionCount++; if(a===greedy) exploitCount++; const {state:ns,reward:r,done:d}=env.step(a); const after=snapshotEnv(env); agent.push(s,a,r,ns,d); s=ns; done=d; R+=r; steps++; totalSteps++; if(agent.batch>0){ for(let k=0;k<2;k++){ const upd=await agent.learn(); if(upd&&upd.loss!==undefined){ lossHist.push(upd.loss); ui.chartLoss.push(avg(lossHist,30)); agent.postLearn(upd); } } }
+async function runEpisodes(count=1,respectStop=false){ if(watching)return; const targetSync=+ui.targetSync.value; for(let e=0;e<count;e++){ if(respectStop&&(!training||watching))break; const n=+ui.gridSize.value; if(n!==env.cols){ env=new SnakeEnv(n,n); COLS=n;ROWS=n;CELL=board.width/COLS; setImmediateState(env);} let s=env.reset(),done=false,R=0,fr=0,steps=0; const resetState=snapshotEnv(env); enqueueRenderFrame(lastDrawnState,resetState,0); let aborted=false; while(!done){ if(respectStop&&(!training||watching)){aborted=true;break;} const before=snapshotEnv(env); const greedy=tf.tidy(()=>agent.online.predict(tf.tensor2d([s],[1,stateDim])).argMax(1).dataSync()[0]); const a=(Math.random()<agent.epsilon)?((Math.random()*actionDim)|0):greedy; decisionCount++; if(a===greedy) exploitCount++; const {state:ns,reward:r,done:d}=env.step(a); const after=snapshotEnv(env); if(after.snake.length>before.snake.length) fr++; agent.push(s,a,r,ns,d); s=ns; done=d; R+=r; steps++; totalSteps++; if(agent.batch>0){ for(let k=0;k<2;k++){ const upd=await agent.learn(); if(upd&&upd.loss!==undefined){ lossHist.push(upd.loss); ui.chartLoss.push(avg(lossHist,30)); agent.postLearn(upd); } } }
       if(totalSteps%targetSync===0 && !agent.useSoftTau) agent.syncTarget(1.0);
       agent.updateEpsilon(totalSteps); ui.epsReadout.textContent=agent.epsilon.toFixed(2);
       if(steps%renderEvery===0||d)enqueueRenderFrame(before,after); if(steps%25===0)await tf.nextFrame(); }
@@ -506,6 +674,13 @@ async function runEpisodes(count=1,respectStop=false){ if(watching)return; const
 }
 
 async function watchSmoothEpisode(){ if(watching||!agent)return; const wasTraining=training; if(wasTraining)stopTraining(); watching=true; ui.trainState.textContent='watching'; ui.trainState.style.background='#1a1f46'; if(ui.btnWatch)ui.btnWatch.disabled=true; try{ await waitForRenderIdle(); const n=+ui.gridSize.value; if(n!==env.cols){ env=new SnakeEnv(n,n); COLS=n;ROWS=n;CELL=board.width/COLS; } let state=env.reset(); setImmediateState(env); const greedyAction=s=>tf.tidy(()=>agent.online.predict(tf.tensor2d([s],[1,stateDim])).argMax(1).dataSync()[0]); const maxSteps=COLS*ROWS*6; const frameDuration=getWatchDuration(); let done=false,steps=0; while(!done&&steps<maxSteps){ const before=snapshotEnv(env); const action=greedyAction(state); const {state:nextState,done:finished}=env.step(action); const after=snapshotEnv(env); enqueueRenderFrame(before,after,frameDuration); state=nextState; done=finished; steps++; await waitForRenderCapacity(); await tf.nextFrame(); } await waitForRenderIdle(); bestLen=Math.max(bestLen,env.snake.length); ui.kBest.textContent=bestLen; } finally { watching=false; if(ui.btnWatch)ui.btnWatch.disabled=false; ui.trainState.style.background='#1a1f46'; if(wasTraining){ startTraining(); } else { ui.trainState.textContent='idle'; } } }
+
+function setupTabs(){ const views={ trainingView:document.getElementById('trainingView'), guideView:document.getElementById('guideView'), manualView:document.getElementById('manualView') }; const buttons=document.querySelectorAll('.tabs button'); buttons.forEach(btn=>{ btn.addEventListener('click',()=>{ const target=btn.dataset.view; Object.entries(views).forEach(([id,el])=>{ if(!el)return; if(id===target) el.classList.remove('hidden'); else el.classList.add('hidden'); }); buttons.forEach(b=>b.classList.toggle('active',b===btn)); }); }); }
+
+function initApp(){ agent=new Agent(stateDim,actionDim,buildAgentConfig()); agent.updateEpsilon(0); ui.chartReward.draw(); ui.chartLoss.draw(); bindUI(); resetEnvironment(); ui.epsReadout.textContent=agent.epsilon.toFixed(2); ui.trainState.textContent='idle'; ui.trainState.style.background='#1a1f46'; }
+
+setupTabs();
+initApp();
 </script>
 </body>
 </html>
