@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Snake — Deep Q-Learning (smooth + fixed)</title>
+<script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<style>
+:root {--bg:#0f1220;--panel:#151936;--ink:#e7eaf6;--muted:#9aa3c7;--a:#6c7bff;--b:#9b5cff;}
+*{box-sizing:border-box}
+body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#1a2050 0%,#101326 40%,#0b0e1c 100%);
+     color:var(--ink);font:14px/1.5 system-ui,Segoe UI,Inter,Roboto,sans-serif;}
+header{padding:16px 24px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10;
+       background:rgba(10,13,24,.6);backdrop-filter:blur(10px);border-bottom:1px solid #1b1f3a}
+.logo{font-weight:900;font-size:18px;background:linear-gradient(135deg,var(--a),var(--b));
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+main{max-width:1200px;margin:24px auto;padding:0 16px;display:grid;grid-template-columns:520px 1fr;gap:16px}
+.card{background:var(--panel);border:1px solid #1b1f3a;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+h2{margin:0 0 10px;font-size:16px;color:#dfe3ff}
+canvas#board{width:500px;height:500px;image-rendering:pixelated;border-radius:12px;background:#0f1328;border:1px solid #1b1f3a}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+button{appearance:none;border:none;padding:10px 14px;border-radius:10px;color:#fff;
+       background:linear-gradient(135deg,var(--a),var(--b));font-weight:700;cursor:pointer;
+       transition:.2s transform,.2s box-shadow;box-shadow:0 6px 20px rgba(108,123,255,.35)}
+button:hover{transform:translateY(-1px)}
+button.secondary{background:#23284f;box-shadow:none;color:#cfd6ff;border:1px solid #2a2f61}
+button.danger{background:linear-gradient(135deg,#ff6b6b,#ff3d77)}
+label{color:var(--muted);font-size:12px}
+input[type="range"]{width:220px}
+.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+.kpi .item{background:#111533;padding:12px;border-radius:12px;border:1px solid #1b1f3a}
+.kpi .item b{display:block;font-size:12px;color:#9aa3c7;font-weight:600}
+.kpi .item span{font-weight:900;font-size:18px}
+.split{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+canvas.chart{width:100%;height:140px;background:#0b1030;border-radius:10px;border:1px solid #1b1f3a}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c7d2fe}
+.badge{padding:2px 8px;border-radius:999px;border:1px solid #2a2f61;background:#1a1f46;color:#cfd6ff;font-size:12px}
+.hint{color:#9aa3c7;font-size:12px}
+footer{opacity:.7;text-align:center;padding:18px}
+@media(max-width:1050px){main{grid-template-columns:1fr}canvas#board{width:100%;height:auto}}
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">Snake • Deep Q-Learning</div>
+  <span class="badge" id="trainState">idle</span>
+  <span class="badge">ε <span id="epsReadout">1.00</span></span>
+  <span class="badge">γ <span id="gammaReadout">0.98</span></span>
+  <span class="badge">LR <span id="lrReadout">0.0005</span></span>
+</header>
+
+<main>
+  <div class="card">
+    <h2>Game</h2>
+    <canvas id="board" width="500" height="500"></canvas>
+
+    <div class="row" style="margin-top:10px">
+      <button id="btnTrain">▶ Train</button>
+      <button id="btnPause" class="secondary">Pause</button>
+      <button id="btnStep" class="secondary">Step 1 ep</button>
+      <button id="btnReset" class="secondary">Reset Env</button>
+      <button id="btnSave" class="secondary">Save</button>
+      <button id="btnLoad" class="secondary">Load</button>
+      <button id="btnClear" class="danger">Clear Saved</button>
+    </div>
+
+    <div class="row" style="margin-top:6px">
+      <label>Cells:
+        <input type="range" id="gridSize" min="10" max="30" step="2" value="20">
+        <span class="mono" id="gridLabel">20×20</span>
+      </label>
+      <label>Render every:
+        <input type="range" id="renderEvery" min="0" max="200" step="10" value="10">
+        <span class="mono" id="renderLabel">10 steps</span>
+      </label>
+      <label>FPS limit:
+        <input type="range" id="fpsLimit" min="10" max="240" step="10" value="180">
+        <span class="mono" id="fpsLabel">180</span>
+      </label>
+    </div>
+    <p class="hint">Lower “Render every” or raise “FPS limit” for smoother visuals.</p>
+  </div>
+
+  <div class="card">
+    <h2>Training Stats</h2>
+    <div class="kpi">
+      <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
+      <div class="item"><b>Avg Reward (100)</b><span id="kAvgRw">0.0</span></div>
+      <div class="item"><b>Best Length</b><span id="kBest">0</span></div>
+      <div class="item"><b>Fruit Rate</b><span id="kFruitRate">0%</span></div>
+    </div>
+    <div class="split" style="margin-top:10px">
+      <div><h2>Reward / Ep</h2><canvas id="chartReward" class="chart" width="400" height="140"></canvas></div>
+      <div><h2>Loss</h2><canvas id="chartLoss" class="chart" width="400" height="140"></canvas></div>
+    </div>
+
+    <h2 style="margin-top:14px">Hyperparameters</h2>
+    <div class="row">
+      <label>γ (discount): <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98"></label>
+      <label>LR: <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005"></label>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label>ε start: <input type="range" id="epsStart" min="0.2" max="1.0" step="0.05" value="1.0"></label>
+      <label>ε end: <input type="range" id="epsEnd" min="0.01" max="0.2" step="0.01" value="0.05"></label>
+      <label>ε decay (steps): <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="40000"></label>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label>Batch: <input type="range" id="batchSize" min="32" max="512" step="32" value="128"></label>
+      <label>Replay size: <input type="range" id="bufferSize" min="5000" max="200000" step="5000" value="50000"></label>
+      <label>Target sync (steps): <input type="range" id="targetSync" min="500" max="10000" step="500" value="2000"></label>
+    </div>
+  </div>
+</main>
+
+<footer class="hint">© Marcus — Snake learns from scratch with DQN in your browser (smooth + fixed)</footer>
+
+<script>
+/* ---------------- Environment ---------------- */
+class SnakeEnv {
+  constructor(cols=20, rows=20){ this.cols=cols; this.rows=rows; this.reset(); }
+  reset(){
+    this.dir={x:1,y:0};
+    const cx=(this.cols/2|0), cy=(this.rows/2|0);
+    this.snake=[{x:cx-1,y:cy},{x:cx,y:cy}];
+    this.snakeSet=new Set(this.snake.map(p=>`${p.x},${p.y}`));
+    this.spawnFruit(); this.steps=0; this.stepsSinceFruit=0; this.alive=true;
+    return this.getState();
+  }
+  spawnFruit(){
+    const free=[]; for(let y=0;y<this.rows;y++)for(let x=0;x<this.cols;x++)
+      if(!this.snakeSet.has(`${x},${y}`)) free.push({x,y});
+    this.fruit=free.length?free[(Math.random()*free.length)|0]:{x:-1,y:-1};
+  }
+  turn(a){const d=this.dir;if(a===1)this.dir={x:-d.y,y:d.x};else if(a===2)this.dir={x:d.y,y:-d.x};}
+  step(a){
+    if(!this.alive) return {state:this.getState(),reward:0,done:true};
+    this.turn(a);
+    const h=this.snake[0], nx=h.x+this.dir.x, ny=h.y+this.dir.y;
+    this.steps++; this.stepsSinceFruit++;
+    if(nx<0||ny<0||nx>=this.cols||ny>=this.rows||this.snakeSet.has(`${nx},${ny}`)){
+      this.alive=false; return {state:this.getState(),reward:-10,done:true};
+    }
+    this.snake.unshift({x:nx,y:ny});
+    let r=-0.02;
+    if(nx===this.fruit.x&&ny===this.fruit.y){
+      r+=10; this.snakeSet.add(`${nx},${ny}`); this.spawnFruit(); this.stepsSinceFruit=0;
+    } else {
+      const tail=this.snake.pop(); this.snakeSet.delete(`${tail.x},${tail.y}`);
+      this.snakeSet.add(`${nx},${ny}`);
+      const pd=Math.abs(h.x-this.fruit.x)+Math.abs(h.y-this.fruit.y);
+      const nd=Math.abs(nx-this.fruit.x)+Math.abs(ny-this.fruit.y);
+      r+= (nd<pd?0.03:-0.03);
+    }
+    if(this.stepsSinceFruit>this.cols*this.rows*2){this.alive=false; r-=5; return {state:this.getState(),reward:r,done:true};}
+    return {state:this.getState(),reward:r,done:false};
+  }
+  getState(){
+    const h=this.snake[0];
+    const L={x:-this.dir.y,y:this.dir.x}, R={x:this.dir.y,y:-this.dir.x};
+    const block=(dx,dy)=>{const x=h.x+dx,y=h.y+dy;
+      return (x<0||y<0||x>=this.cols||y>=this.rows||this.snakeSet.has(`${x},${y}`))?1:0;};
+    const danger=[block(this.dir.x,this.dir.y),block(L.x,L.y),block(R.x,R.y)];
+    const dir=[this.dir.y===-1?1:0,this.dir.y===1?1:0,this.dir.x===-1?1:0,this.dir.x===1?1:0];
+    const fruit=[this.fruit.y<h.y?1:0,this.fruit.y>h.y?1:0,this.fruit.x<h.x?1:0,this.fruit.x>h.x?1:0];
+    const dists=[h.y/(this.rows-1),(this.rows-1-h.y)/(this.rows-1),h.x/(this.cols-1),(this.cols-1-h.x)/(this.cols-1)];
+    const dx=this.fruit.x-h.x, dy=this.fruit.y-h.y, len=Math.hypot(dx,dy)||1;
+    return Float32Array.from([...danger,...dir,...fruit,...dists,dy/len,dx/len]);
+  }
+}
+
+/* ---------------- DQN Agent ---------------- */
+class ReplayBuffer{
+  constructor(cap=50000){this.cap=cap;this.buf=[];this.pos=0;}
+  push(s,a,r,ns,d){const item={s:Float32Array.from(s),a,r,ns:Float32Array.from(ns),d};
+    if(this.buf.length<this.cap)this.buf.push(item); else this.buf[this.pos]=item;
+    this.pos=(this.pos+1)%this.cap;}
+  sample(n){n=Math.min(n,this.buf.length);
+    const idxs=new Set();while(idxs.size<n)idxs.add((Math.random()*this.buf.length)|0);
+    return [...idxs].map(i=>this.buf[i]);}
+  size(){return this.buf.length;}
+}
+class DQN{
+  constructor(sDim,aDim,cfg){
+    this.sDim=sDim;this.aDim=aDim;
+    this.gamma=cfg.gamma;this.lr=cfg.lr;this.batch=cfg.batch;
+    this.buffer=new ReplayBuffer(cfg.bufferSize);
+    this.epsStart=cfg.epsStart;this.epsEnd=cfg.epsEnd;this.epsDecay=cfg.epsDecay;
+    this.trainStep=0;this.updateEpsilon(0);
+    this.online=this.build();this.target=this.build();this.syncTarget();
+    this.optimizer=tf.train.adam(this.lr);
+  }
+  build(){const m=tf.sequential();
+    m.add(tf.layers.dense({units:128,inputShape:[this.sDim],activation:'relu',kernelInitializer:'heNormal'}));
+    m.add(tf.layers.dense({units:128,activation:'relu',kernelInitializer:'heNormal'}));
+    m.add(tf.layers.dense({units:this.aDim,activation:'linear'}));return m;}
+  syncTarget(){this.target.setWeights(this.online.getWeights());}
+  updateEpsilon(step){const t=Math.min(1,step/this.epsDecay);
+    this.epsilon=this.epsStart*(1-t)+this.epsEnd*t;return this.epsilon;}
+  act(s){if(Math.random()<this.epsilon)return (Math.random()*this.aDim)|0;
+    return tf.tidy(()=>this.online.predict(tf.tensor2d([s],[1,this.sDim])).argMax(1).dataSync()[0]);}
+  async learn(){
+    if(this.buffer.size()<this.batch)return null;
+    const b=this.buffer.sample(this.batch);
+    const S=tf.tensor2d(b.map(x=>x.s)), NS=tf.tensor2d(b.map(x=>x.ns));
+    const A=tf.tensor1d(b.map(x=>x.a),'int32'), R=tf.tensor1d(b.map(x=>x.r)), D=tf.tensor1d(b.map(x=>x.d?1:0));
+    const lossVal=await this.optimizer.minimize(()=>{
+      const q=this.online.apply(S);
+      const qPred=tf.mul(q,tf.oneHot(A,this.aDim)).sum(1);
+      const qNext=this.target.apply(NS).max(1);
+      const target=R.add(qNext.mul(tf.scalar(this.gamma)).mul(tf.scalar(1).sub(D)));
+      return tf.losses.huberLoss(target,qPred);
+    },true);
+    S.dispose();NS.dispose();A.dispose();R.dispose();D.dispose();
+    const loss=lossVal.dataSync()[0];lossVal.dispose();this.trainStep++;return loss;
+  }
+  async save(){await this.online.save('localstorage://snake-dqn');}
+  async load(){this.online=await tf.loadLayersModel('localstorage://snake-dqn');
+    this.target=this.build();this.syncTarget();}
+}
+
+/* ---------------- Mini chart ---------------- */
+class MiniLine{
+  constructor(cv,max=400){this.cv=cv;this.ctx=cv.getContext('2d');this.max=max;this.data=[];}
+  push(v){this.data.push(v);if(this.data.length>this.max)this.data.shift();this.draw();}
+  draw(){
+    const c=this.ctx,w=this.cv.width,h=this.cv.height;
+    c.clearRect(0,0,w,h);c.fillStyle='#0b1030';c.fillRect(0,0,w,h);
+    c.strokeStyle='#1b1f3a';
+    for(let i=0;i<=4;i++){c.beginPath();c.moveTo(0,i*h/4);c.lineTo(w,i*h/4);c.stroke();}
+    if(!this.data.length)return;
+    const min=Math.min(...this.data),max=Math.max(...this.data),pad=1e-6;
+    c.beginPath();c.strokeStyle='#6c7bff';c.lineWidth=2;
+    this.data.forEach((v,i)=>{
+      const x=(i/(this.data.length-1))*w;
+      const y=h-((v-min)/(max-min+pad))*h;
+      if(i===0)c.moveTo(x,y);else c.lineTo(x,y);
+    });
+    c.stroke();
+  }
+}
+
+/* ---------------- App wiring ---------------- */
+const board=document.getElementById('board'), bctx=board.getContext('2d');
+let COLS=20,ROWS=20,CELL=board.width/COLS;
+let env=new SnakeEnv(COLS,ROWS);
+const stateDim=env.getState().length, actionDim=3;
+const cfg={gamma:0.98,lr:0.0005,batch:128,bufferSize:50000,epsStart:1.0,epsEnd:0.05,epsDecay:40000};
+let agent;
+
+const ui={
+  trainState:document.getElementById('trainState'),epsReadout:document.getElementById('epsReadout'),
+  gamma:document.getElementById('gamma'),gammaReadout:document.getElementById('gammaReadout'),
+  lr:document.getElementById('lr'),lrReadout:document.getElementById('lrReadout'),
+  epsStart:document.getElementById('epsStart'),epsEnd:document.getElementById('epsEnd'),
+  epsDecay:document.getElementById('epsDecay'),batchSize:document.getElementById('batchSize'),
+  bufferSize:document.getElementById('bufferSize'),targetSync:document.getElementById('targetSync'),
+  gridSize:document.getElementById('gridSize'),gridLabel:document.getElementById('gridLabel'),
+  renderEvery:document.getElementById('renderEvery'),renderLabel:document.getElementById('renderLabel'),
+  fpsLimit:document.getElementById('fpsLimit'),fpsLabel:document.getElementById('fpsLabel'),
+  kEpisodes:document.getElementById('kEpisodes'),kAvgRw:document.getElementById('kAvgRw'),
+  kBest:document.getElementById('kBest'),kFruitRate:document.getElementById('kFruitRate'),
+  btnTrain:document.getElementById('btnTrain'),btnPause:document.getElementById('btnPause'),
+  btnStep:document.getElementById('btnStep'),btnReset:document.getElementById('btnReset'),
+  btnSave:document.getElementById('btnSave'),btnLoad:document.getElementById('btnLoad'),
+  btnClear:document.getElementById('btnClear'),
+  chartReward:new MiniLine(document.getElementById('chartReward')),
+  chartLoss:new MiniLine(document.getElementById('chartLoss')),
+};
+
+window.addEventListener('load',async()=>{
+  agent=new DQN(stateDim,actionDim,cfg);
+  bindUI();
+  drawEnv(env);
+});
+
+function bindUI(){
+  const update=()=>{
+    agent.gamma=+ui.gamma.value; ui.gammaReadout.textContent=(+ui.gamma.value).toFixed(3);
+    agent.lr=+ui.lr.value; ui.lrReadout.textContent=(+ui.lr.value).toFixed(4);
+    agent.optimizer=tf.train.adam(agent.lr);
+    agent.epsStart=+ui.epsStart.value; agent.epsEnd=+ui.epsEnd.value; agent.epsDecay=+ui.epsDecay.value;
+    agent.batch=+ui.batchSize.value; agent.buffer.cap=+ui.bufferSize.value;
+    ui.epsReadout.textContent=agent.epsilon.toFixed(2);
+  };
+  ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync'].forEach(id=>ui[id].addEventListener('input',update));
+  ui.gridSize.addEventListener('input',()=>ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`);
+  ui.renderEvery.addEventListener('input',()=>ui.renderLabel.textContent=`${ui.renderEvery.value} steps`);
+  ui.fpsLimit.addEventListener('input',()=>ui.fpsLabel.textContent=ui.fpsLimit.value);
+
+  ui.btnReset.onclick=()=>{env=new SnakeEnv(+ui.gridSize.value,+ui.gridSize.value);
+    COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS;drawEnv(env);};
+  ui.btnTrain.onclick=startTraining;
+  ui.btnPause.onclick=stopTraining;
+  ui.btnStep.onclick=async()=>{await runEpisodes(1);};
+  ui.btnSave.onclick=async()=>{await agent.save(); flash('Saved');};
+  ui.btnLoad.onclick=async()=>{try{await agent.load();flash('Loaded');}catch{flash('No saved model',true);} };
+  ui.btnClear.onclick=()=>{for(const k in localStorage){if(k.includes('tensorflowjs'))localStorage.removeItem(k);}flash('Cleared saved');};
+  update();
+}
+
+let training=false,animToken=0,lastFrame=0,renderEvery=10;
+let episode=0,totalSteps=0,bestLen=0;
+const rwHist=[],fruitHist=[],lossHist=[];
+function avg(a,n){return a.slice(-n).reduce((x,y)=>x+y,0)/Math.max(1,Math.min(a.length,n));}
+function flash(m,d=false){ui.trainState.textContent=m;
+  ui.trainState.style.background=d?'#ff4b6e':'#1a1f46';
+  setTimeout(()=>{ui.trainState.textContent=training?'training':'idle';ui.trainState.style.background='#1a1f46';},1200);
+}
+
+async function startTraining(){if(training)return;
+  training=true;ui.trainState.textContent='training';
+  renderEvery=+ui.renderEvery.value;
+  animToken=requestAnimationFrame(loopTrain);
+}
+function stopTraining(){if(!training)return;training=false;cancelAnimationFrame(animToken);ui.trainState.textContent='idle';}
+
+async function loopTrain(ts){
+  const maxFps=+ui.fpsLimit.value;
+  if(ts-lastFrame<1000/maxFps){animToken=requestAnimationFrame(loopTrain);return;}
+  lastFrame=ts;
+  await runEpisodes(1);  // smoother: one episode per frame
+  animToken=requestAnimationFrame(loopTrain);
+}
+
+async function runEpisodes(count=1){
+  const targetSync=+ui.targetSync.value;
+  for(let e=0;e<count;e++){
+    const n=+ui.gridSize.value;
+    if(n!==env.cols){env=new SnakeEnv(n,n);COLS=n;ROWS=n;CELL=board.width/COLS;}
+    let s=env.reset(),done=false,R=0,fr=0,steps=0;
+    while(!done){
+      const a=agent.act(s);
+      const {state:ns,reward:r,done:d}=env.step(a);
+      agent.buffer.push(s,a,r,ns,d);
+      s=ns;done=d;R+=r;steps++;totalSteps++;
+      if(r>1)fr++;
+
+      // learn a couple of times per step
+      for(let k=0;k<2;k++){
+        const loss=await agent.learn(); // <-- no tf.tidy wrapper
+        if(loss!==null){lossHist.push(loss);ui.chartLoss.push(avg(lossHist,30));}
+      }
+      if(totalSteps%targetSync===0)agent.syncTarget();
+      agent.updateEpsilon(totalSteps);
+      ui.epsReadout.textContent=agent.epsilon.toFixed(2);
+
+      if(renderEvery===0||steps%renderEvery===0)drawEnv(env);
+    }
+    episode++;
+    rwHist.push(R); if(rwHist.length>1000)rwHist.shift();
+    fruitHist.push(fr); if(fruitHist.length>1000)fruitHist.shift();
+    bestLen=Math.max(bestLen,env.snake.length);
+    ui.kEpisodes.textContent=episode;
+    ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2);
+    ui.kBest.textContent=bestLen;
+    ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2);
+    ui.chartReward.push(R);
+  }
+}
+
+function drawEnv(e){
+  bctx.fillStyle='#0f1328';bctx.fillRect(0,0,board.width,board.height);
+  bctx.strokeStyle='#17204a';
+  for(let x=0;x<=COLS;x++){bctx.beginPath();bctx.moveTo(x*CELL,0);bctx.lineTo(x*CELL,board.height);bctx.stroke();}
+  for(let y=0;y<=ROWS;y++){bctx.beginPath();bctx.moveTo(0,y*CELL);bctx.lineTo(board.width,y*CELL);bctx.stroke();}
+  if(e.fruit && e.fruit.x>=0){
+    const fx=e.fruit.x*CELL+CELL/2, fy=e.fruit.y*CELL+CELL/2;
+    bctx.fillStyle='#ff5aa4'; bctx.beginPath(); bctx.arc(fx,fy,CELL/3,0,2*Math.PI); bctx.fill();
+  }
+  e.snake.forEach((p,i)=>{
+    const x=p.x*CELL,y=p.y*CELL;
+    bctx.fillStyle=i===0?'#23d18b':'#6c7bff';
+    bctx.fillRect(x+1,y+1,CELL-2,CELL-2);
+  });
+}
+</script>
+</body>
+</html>
