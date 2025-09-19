@@ -36,6 +36,25 @@ canvas.chart{width:100%;height:140px;background:#0b1030;border-radius:10px;borde
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c7d2fe}
 .badge{padding:2px 8px;border-radius:999px;border:1px solid #2a2f61;background:#1a1f46;color:#cfd6ff;font-size:12px}
 .hint{color:#9aa3c7;font-size:12px}
+.hidden{display:none!important}
+.tabs{margin-left:auto;display:flex;gap:10px;align-items:center}
+.tabs button{appearance:none;border:1px solid #2a2f61;padding:8px 14px;border-radius:999px;background:transparent;
+  color:#b5bce0;font-weight:600;cursor:pointer;box-shadow:none;transition:.2s background,.2s color}
+.tabs button.active{background:linear-gradient(135deg,var(--a),var(--b));color:#fff;border-color:transparent}
+.tabs button:hover{transform:none;background:#1c2148;color:#fff}
+.tabs button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
+#guideView{max-width:900px;margin:24px auto;padding:0 16px;display:flex;flex-direction:column;gap:16px}
+#guideView .card{padding:24px}
+#guideView h2{font-size:20px;margin-bottom:12px}
+#guideView h3{margin-top:20px;margin-bottom:8px;color:#dfe3ff}
+#guideView p,#guideView li{color:#c7cdef}
+#guideView dl{margin:0;display:grid;grid-template-columns:160px 1fr;gap:10px 18px}
+#guideView dt{font-weight:700;color:#dfe3ff}
+#guideView dd{margin:0;color:#c7cdef;font-size:13px;line-height:1.6}
+#guideView ul{padding-left:18px;margin:8px 0}
+#guideView ol{padding-left:20px;margin:8px 0}
+#guideView .muted{color:#9aa3c7;font-size:12px;margin-top:12px}
+@media(max-width:700px){#guideView dl{grid-template-columns:1fr}#guideView dt{margin-top:12px}}
 footer{opacity:.7;text-align:center;padding:18px}
 @media(max-width:1050px){main{grid-template-columns:1fr}canvas#board{width:100%;height:auto}}
 </style>
@@ -47,9 +66,13 @@ footer{opacity:.7;text-align:center;padding:18px}
   <span class="badge">ε <span id="epsReadout">1.00</span></span>
   <span class="badge">γ <span id="gammaReadout">0.98</span></span>
   <span class="badge">LR <span id="lrReadout">0.0005</span></span>
+  <nav class="tabs">
+    <button type="button" id="tabTraining" class="active">Träning</button>
+    <button type="button" id="tabGuide">Guide</button>
+  </nav>
 </header>
 
-<main>
+<main id="trainingView">
   <div class="card">
     <h2>Game</h2>
     <canvas id="board" width="500" height="500"></canvas>
@@ -113,9 +136,91 @@ footer{opacity:.7;text-align:center;padding:18px}
   </div>
 </main>
 
+<section id="guideView" class="hidden">
+  <div class="card">
+    <h2>Hur inlärningen fungerar</h2>
+    <p>
+      Ormen tränas med Deep Q-Learning. Agenten tittar på spelbrädet, uppskattar värdet av möjliga rörelser
+      och väljer antingen det bästa draget eller utforskar slumpmässigt beroende på aktuell <em>epsilon</em>.
+      Två neurala nät används: ett online-nät som uppdateras efter varje träningsbatch och ett target-nät som
+      håller inlärningen stabil genom att uppdateras mer sällan.
+    </p>
+    <h3>Så här tränar du</h3>
+    <ol>
+      <li>Välj storlek på spelplanen och önskade hyperparametrar.</li>
+      <li>Klicka på <strong>Träning</strong>-fliken om du inte redan är där och tryck på <strong>▶ Train</strong>.</li>
+      <li>Följ statistikrutorna för att se belöning, bästa längd och epsilon-nivå.</li>
+      <li>När du är nöjd kan du spara hela träningsläget till fil och återuppta senare med <strong>Load</strong>.</li>
+    </ol>
+    <h3>Knappar</h3>
+    <dl>
+      <dt>▶ Train</dt><dd>Startar kontinuerlig träning. Uppdateringar sker så snabbt som angivet av FPS-begränsningen.</dd>
+      <dt>Pause</dt><dd>Pausar träningen men lämnar allt sparat i minnet.</dd>
+      <dt>Step 1 ep</dt><dd>Kör exakt ett avsnitt från start till död utan att gå in i kontinuerlig loop.</dd>
+      <dt>Watch Smooth</dt><dd>Låter agenten spela med enbart bästa drag så att du kan se vad den lärt sig.</dd>
+      <dt>Reset Env</dt><dd>Startar en ny spelvärld med vald storlek utan att nollställa erfarenheter eller nätverk.</dd>
+      <dt>Save</dt><dd>Laddar ned en JSON-fil som innehåller nätverkets vikter, replay-minnet och statistik.</dd>
+      <dt>Load</dt><dd>Läs in en tidigare sparad fil för att fortsätta träningen exakt där du slutade.</dd>
+      <dt>Clear Saved</dt><dd>Rensar gamla TensorFlow.js-lagringar i webbläsaren om sådana finns kvar.</dd>
+    </dl>
+    <h3>Justeringar och reglage</h3>
+    <ul>
+      <li><strong>Cells</strong> – storleken på brädet. Större bräde ger längre episoder men fler möjligheter.</li>
+      <li><strong>Render every</strong> – hur ofta spelplanen ritas under träning. Höga värden ger snabbare träning.</li>
+      <li><strong>FPS limit</strong> – begränsar uppdateringshastigheten för att spara CPU eller låta allt gå max.</li>
+      <li><strong>γ (discount)</strong> – hur mycket framtida belöningar väger. Högre värde prioriterar långsiktiga mål.</li>
+      <li><strong>LR</strong> – inlärningshastighet för Adam-optimeraren.</li>
+      <li><strong>ε start / end / decay</strong> – styr utforskningstakten från helt slumpmässigt till nästan deterministiskt.</li>
+      <li><strong>Batch</strong> – antal upplevelser som tränas samtidigt.</li>
+      <li><strong>Replay size</strong> – minnet av tidigare upplevelser. Större minne ger mer variation men tar mer plats.</li>
+      <li><strong>Target sync</strong> – antal steg mellan uppdatering av target-nätet.</li>
+    </ul>
+    <h3>Spara &amp; ladda</h3>
+    <p>
+      När du trycker <strong>Save</strong> skapas en fil <code>.json</code> med allt som behövs för att återställa läget:
+      neurala nätens vikter, replay-buffer, statistik och kontrollpanelens inställningar. För att ladda, klicka på
+      <strong>Load</strong> och välj filen. Träningen återupptas från exakt samma status inklusive epsilon-nivå och historik.
+    </p>
+    <p class="muted">Tips: Spara regelbundet om du låter träningen gå länge så att du kan fortsätta efter omstart av datorn.</p>
+  </div>
+</section>
+
+<input type="file" id="fileLoader" accept="application/json" hidden>
+
 <footer class="hint">© Marcus — Snake learns from scratch with DQN in your browser (smooth + fixed)</footer>
 
 <script>
+/* ---------------- Serialization helpers ---------------- */
+const DTYPE_ARRAYS={float32:Float32Array,int32:Int32Array,bool:Uint8Array};
+
+function typedArrayToBase64(arr){
+  if(!(arr instanceof Float32Array||arr instanceof Int32Array||arr instanceof Uint8Array)){
+    arr=Float32Array.from(arr);
+  }
+  const view=new Uint8Array(arr.buffer,arr.byteOffset||0,arr.byteLength);
+  let binary='';
+  const chunk=0x8000;
+  for(let i=0;i<view.length;i+=chunk){
+    binary+=String.fromCharCode.apply(null,view.subarray(i,i+chunk));
+  }
+  return btoa(binary);
+}
+
+function base64ToTypedArray(str,dtype='float32'){
+  const binary=atob(str);
+  const len=binary.length;
+  const bytes=new Uint8Array(len);
+  for(let i=0;i<len;i++)bytes[i]=binary.charCodeAt(i);
+  const C=DTYPE_ARRAYS[dtype]||Float32Array;
+  return new C(bytes.buffer);
+}
+
+function assignArray(target,source,mapper=v=>v){
+  target.length=0;
+  if(!Array.isArray(source))return;
+  source.forEach(v=>target.push(mapper(v)));
+}
+
 /* ---------------- Environment ---------------- */
 class SnakeEnv {
   constructor(cols=20, rows=20){ this.cols=cols; this.rows=rows; this.reset(); }
@@ -179,6 +284,41 @@ class ReplayBuffer{
     const idxs=new Set();while(idxs.size<n)idxs.add((Math.random()*this.buf.length)|0);
     return [...idxs].map(i=>this.buf[i]);}
   size(){return this.buf.length;}
+  toJSON(){
+    return {
+      cap:this.cap,
+      pos:this.pos,
+      buf:this.buf.map(item=>({
+        s:typedArrayToBase64(item.s),
+        a:item.a,
+        r:item.r,
+        ns:typedArrayToBase64(item.ns),
+        d:item.d?1:0,
+      })),
+    };
+  }
+  static fromJSON(data={},overrideCap){
+    const cap=overrideCap??(typeof data.cap==='number'?data.cap:50000);
+    const buffer=new ReplayBuffer(cap);
+    const originalLength=Array.isArray(data.buf)?data.buf.length:0;
+    if(originalLength){
+      buffer.buf=data.buf.slice(-cap).map(entry=>({
+        s:base64ToTypedArray(entry.s,'float32'),
+        a:entry.a,
+        r:entry.r,
+        ns:base64ToTypedArray(entry.ns,'float32'),
+        d:!!entry.d,
+      }));
+    }
+    const truncated=originalLength>cap;
+    if(truncated){
+      buffer.pos=buffer.buf.length%buffer.cap;
+    } else {
+      const pos=typeof data.pos==='number'?data.pos:buffer.buf.length;
+      buffer.pos=pos%buffer.cap;
+    }
+    return buffer;
+  }
 }
 class DQN{
   constructor(sDim,aDim,cfg){
@@ -214,9 +354,54 @@ class DQN{
     S.dispose();NS.dispose();A.dispose();R.dispose();D.dispose();
     const loss=lossVal.dataSync()[0];lossVal.dispose();this.trainStep++;return loss;
   }
-  async save(){await this.online.save('localstorage://snake-dqn');}
-  async load(){this.online=await tf.loadLayersModel('localstorage://snake-dqn');
-    this.target=this.build();this.syncTarget();}
+  async exportState(){
+    const weights=await Promise.all(this.online.getWeights().map(async w=>({
+      shape:w.shape,
+      dtype:w.dtype,
+      data:typedArrayToBase64(await w.data()),
+    })));
+    return {
+      version:1,
+      sDim:this.sDim,
+      aDim:this.aDim,
+      config:{
+        gamma:this.gamma,
+        lr:this.lr,
+        batch:this.batch,
+        bufferSize:this.buffer.cap,
+        epsStart:this.epsStart,
+        epsEnd:this.epsEnd,
+        epsDecay:this.epsDecay,
+      },
+      trainStep:this.trainStep,
+      epsilon:this.epsilon,
+      buffer:this.buffer.toJSON(),
+      weights,
+    };
+  }
+  async importState(state){
+    if(!state)throw new Error('Ogiltigt tillstånd');
+    if(state.sDim&&state.sDim!==this.sDim)throw new Error('State-dimension matchar inte');
+    if(state.aDim&&state.aDim!==this.aDim)throw new Error('Action-dimension matchar inte');
+    const cfg=state.config??{};
+    this.gamma=cfg.gamma??this.gamma;
+    this.lr=cfg.lr??this.lr;
+    this.batch=cfg.batch??this.batch;
+    this.buffer=ReplayBuffer.fromJSON(state.buffer,cfg.bufferSize);
+    this.epsStart=cfg.epsStart??this.epsStart;
+    this.epsEnd=cfg.epsEnd??this.epsEnd;
+    this.epsDecay=cfg.epsDecay??this.epsDecay;
+    this.trainStep=state.trainStep??this.trainStep;
+    this.optimizer=tf.train.adam(this.lr);
+    if(Array.isArray(state.weights)){
+      const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
+      this.online.setWeights(tensors);
+      tensors.forEach(t=>t.dispose());
+    }
+    this.target=this.build();
+    this.syncTarget();
+    this.epsilon=state.epsilon??this.updateEpsilon(this.trainStep);
+  }
 }
 
 /* ---------------- Mini chart ---------------- */
@@ -436,9 +621,23 @@ const ui={
   btnReset:document.getElementById('btnReset'),
   btnSave:document.getElementById('btnSave'),btnLoad:document.getElementById('btnLoad'),
   btnClear:document.getElementById('btnClear'),
+  tabTraining:document.getElementById('tabTraining'),tabGuide:document.getElementById('tabGuide'),
+  trainingView:document.getElementById('trainingView'),guideView:document.getElementById('guideView'),
+  fileLoader:document.getElementById('fileLoader'),
   chartReward:new MiniLine(document.getElementById('chartReward')),
   chartLoss:new MiniLine(document.getElementById('chartLoss')),
 };
+
+let activeTab='training';
+function setActiveTab(tab){
+  if(!ui.tabTraining||!ui.tabGuide)return;
+  const showGuide=tab==='guide';
+  activeTab=showGuide?'guide':'training';
+  ui.tabTraining.classList.toggle('active',!showGuide);
+  ui.tabGuide.classList.toggle('active',showGuide);
+  if(ui.trainingView)ui.trainingView.classList.toggle('hidden',showGuide);
+  if(ui.guideView)ui.guideView.classList.toggle('hidden',!showGuide);
+}
 
 window.addEventListener('load',async()=>{
   agent=new DQN(stateDim,actionDim,cfg);
@@ -455,6 +654,7 @@ function bindUI(){
     agent.batch=+ui.batchSize.value; agent.buffer.cap=+ui.bufferSize.value;
     ui.epsReadout.textContent=agent.epsilon.toFixed(2);
   };
+  ui.applyConfigFromInputs=update;
   ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync'].forEach(id=>ui[id].addEventListener('input',update));
   ui.gridSize.addEventListener('input',()=>ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`);
   const updateRenderEvery=()=>{
@@ -462,6 +662,7 @@ function bindUI(){
     ui.renderLabel.textContent=val===1?'1 step':`${val} steps`;
     renderEvery=val;
   };
+  ui.updateRenderEvery=updateRenderEvery;
   ui.renderEvery.addEventListener('input',updateRenderEvery);
   ui.fpsLimit.addEventListener('input',()=>ui.fpsLabel.textContent=ui.fpsLimit.value);
 
@@ -471,13 +672,159 @@ function bindUI(){
   ui.btnPause.onclick=stopTraining;
   ui.btnStep.onclick=async()=>{await runEpisodes(1);};
   ui.btnWatch.onclick=watchSmoothEpisode;
-  ui.btnSave.onclick=async()=>{await agent.save(); flash('Saved');};
-  ui.btnLoad.onclick=async()=>{try{await agent.load();flash('Loaded');}catch{flash('No saved model',true);} };
-  ui.btnClear.onclick=()=>{for(const k in localStorage){if(k.includes('tensorflowjs'))localStorage.removeItem(k);}flash('Cleared saved');};
+  ui.btnSave.onclick=saveTrainingToFile;
+  ui.btnLoad.onclick=()=>{if(ui.fileLoader)ui.fileLoader.click();};
+  if(ui.fileLoader){
+    ui.fileLoader.addEventListener('change',async ev=>{
+      const [file]=ev.target.files||[];
+      if(file)await loadTrainingFromFile(file);
+      ev.target.value='';
+    });
+  }
+  ui.btnClear.onclick=()=>{for(const k in localStorage){if(k.includes('tensorflowjs'))localStorage.removeItem(k);}flash('Rensade lokal lagring');};
+  if(ui.tabTraining&&ui.tabGuide){
+    ui.tabTraining.onclick=()=>setActiveTab('training');
+    ui.tabGuide.onclick=()=>setActiveTab('guide');
+  }
+
   update();
   updateRenderEvery();
   ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`;
   ui.fpsLabel.textContent=ui.fpsLimit.value;
+  setActiveTab('training');
+}
+
+async function buildAppState(){
+  const agentState=await agent.exportState();
+  return {
+    version:1,
+    createdAt:new Date().toISOString(),
+    agent:agentState,
+    meta:{
+      episode,
+      totalSteps,
+      bestLen,
+      rwHist:Array.from(rwHist),
+      fruitHist:Array.from(fruitHist),
+      lossHist:Array.from(lossHist),
+      chartReward:Array.from(ui.chartReward.data),
+      chartLoss:Array.from(ui.chartLoss.data),
+      targetSync:+ui.targetSync.value,
+      gridSize:+ui.gridSize.value,
+      renderEvery:+ui.renderEvery.value,
+      fpsLimit:+ui.fpsLimit.value,
+    },
+  };
+}
+
+function applyLoadedConfig(config={}){
+  if(config.gamma!==undefined)ui.gamma.value=config.gamma;
+  if(config.lr!==undefined)ui.lr.value=config.lr;
+  if(config.batch!==undefined)ui.batchSize.value=config.batch;
+  if(config.bufferSize!==undefined)ui.bufferSize.value=config.bufferSize;
+  if(config.epsStart!==undefined)ui.epsStart.value=config.epsStart;
+  if(config.epsEnd!==undefined)ui.epsEnd.value=config.epsEnd;
+  if(config.epsDecay!==undefined)ui.epsDecay.value=config.epsDecay;
+  if(typeof ui.applyConfigFromInputs==='function'){
+    ui.applyConfigFromInputs();
+  } else {
+    ui.gammaReadout.textContent=(+ui.gamma.value).toFixed(3);
+    ui.lrReadout.textContent=(+ui.lr.value).toFixed(4);
+    ui.epsReadout.textContent=agent.epsilon.toFixed(2);
+  }
+}
+
+function applyMeta(meta={}){
+  episode=typeof meta.episode==='number'?meta.episode:0;
+  totalSteps=typeof meta.totalSteps==='number'?meta.totalSteps:0;
+  bestLen=typeof meta.bestLen==='number'?meta.bestLen:0;
+  assignArray(rwHist,meta.rwHist,v=>+v||0);
+  assignArray(fruitHist,meta.fruitHist,v=>+v||0);
+  assignArray(lossHist,meta.lossHist,v=>+v||0);
+  ui.chartReward.data=Array.isArray(meta.chartReward)?meta.chartReward.map(v=>+v||0):[];
+  ui.chartReward.draw();
+  ui.chartLoss.data=Array.isArray(meta.chartLoss)?meta.chartLoss.map(v=>+v||0):[];
+  ui.chartLoss.draw();
+  ui.kEpisodes.textContent=episode;
+  ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2);
+  ui.kBest.textContent=bestLen;
+  ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2);
+  if(typeof meta.targetSync==='number')ui.targetSync.value=meta.targetSync;
+  if(typeof meta.gridSize==='number'){
+    ui.gridSize.value=meta.gridSize;
+    ui.gridLabel.textContent=`${meta.gridSize}×${meta.gridSize}`;
+    env=new SnakeEnv(meta.gridSize,meta.gridSize);
+    COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS;
+  } else {
+    ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`;
+  }
+  if(typeof meta.renderEvery==='number'){
+    ui.renderEvery.value=meta.renderEvery;
+  }
+  if(typeof ui.updateRenderEvery==='function'){
+    ui.updateRenderEvery();
+  } else {
+    const val=+ui.renderEvery.value;
+    ui.renderLabel.textContent=val===1?'1 step':`${val} steps`;
+    renderEvery=val;
+  }
+  if(typeof meta.fpsLimit==='number'){
+    ui.fpsLimit.value=meta.fpsLimit;
+  }
+  ui.fpsLabel.textContent=ui.fpsLimit.value;
+  env.reset();
+  setImmediateState(env);
+}
+
+async function saveTrainingToFile(){
+  if(!agent)return;
+  const resume=training;
+  if(resume)stopTraining();
+  try{
+    await waitForRenderIdle();
+    const state=await buildAppState();
+    const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
+    const stamp=new Date().toISOString().replace(/[:.]/g,'-');
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=`snake-training-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    flash('Sparat till fil');
+  } catch(err){
+    console.error(err);
+    flash('Kunde inte spara',true);
+  } finally {
+    if(resume&&!watching)startTraining();
+  }
+}
+
+async function loadTrainingFromFile(file){
+  if(!agent||!file)return;
+  if(watching){
+    flash('Avsluta visningsläget först',true);
+    return;
+  }
+  const resume=training;
+  if(resume)stopTraining();
+  try{
+    const text=await file.text();
+    const data=JSON.parse(text);
+    if(!data||data.version!==1||!data.agent)throw new Error('Ogiltig sparfil');
+    await agent.importState(data.agent);
+    applyLoadedConfig(data.agent.config||{});
+    applyMeta(data.meta||{});
+    ui.epsReadout.textContent=agent.epsilon.toFixed(2);
+    flash('Laddat från fil');
+  } catch(err){
+    console.error(err);
+    flash('Kunde inte ladda',true);
+  } finally {
+    if(resume&&!watching)startTraining();
+  }
 }
 
 let training=false,animToken=0,lastFrame=0,renderEvery=1;
