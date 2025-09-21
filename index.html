@@ -474,8 +474,8 @@ footer{
             <span class="mono" id="rewardStepReadout">0.010</span>
           </label>
           <label>Svängstraff
-            <input type="range" id="rewardTurn" min="0" max="0.02" step="0.001" value="0.005">
-            <span class="mono" id="rewardTurnReadout">0.005</span>
+            <input type="range" id="rewardTurn" min="0" max="0.02" step="0.001" value="0.001">
+            <span class="mono" id="rewardTurnReadout">0.001</span>
           </label>
           <label>Mot frukt-bonus
             <input type="range" id="rewardApproach" min="0" max="0.1" step="0.005" value="0.030">
@@ -493,12 +493,12 @@ footer{
         <h3>Loopar &amp; upprepningar</h3>
         <div class="row">
           <label>Loopstraff
-            <input type="range" id="rewardLoop" min="0" max="1" step="0.01" value="0.10">
-            <span class="mono" id="rewardLoopReadout">0.10</span>
+            <input type="range" id="rewardLoop" min="0" max="1" step="0.01" value="0.50">
+            <span class="mono" id="rewardLoopReadout">0.50</span>
           </label>
           <label>Upprepad ruta-straff
-            <input type="range" id="rewardRevisit" min="0" max="0.1" step="0.001" value="0.020">
-            <span class="mono" id="rewardRevisitReadout">0.020</span>
+            <input type="range" id="rewardRevisit" min="0" max="0.1" step="0.001" value="0.050">
+            <span class="mono" id="rewardRevisitReadout">0.050</span>
           </label>
         </div>
       </div>
@@ -510,12 +510,22 @@ footer{
             <span class="mono" id="rewardWallReadout">10.0</span>
           </label>
           <label>Kroppskrasch
-            <input type="range" id="rewardSelf" min="0" max="30" step="0.5" value="10">
-            <span class="mono" id="rewardSelfReadout">10.0</span>
+            <input type="range" id="rewardSelf" min="0" max="30" step="0.5" value="25.5">
+            <span class="mono" id="rewardSelfReadout">25.5</span>
           </label>
           <label>Fastna-straff
             <input type="range" id="rewardTimeout" min="0" max="20" step="0.5" value="5">
             <span class="mono" id="rewardTimeoutReadout">5.0</span>
+          </label>
+        </div>
+        <div class="row">
+          <label>Instängningsstraff
+            <input type="range" id="rewardTrap" min="0" max="2" step="0.05" value="0.50">
+            <span class="mono" id="rewardTrapReadout">0.50</span>
+          </label>
+          <label>Fri yta-bonus
+            <input type="range" id="rewardSpace" min="0" max="0.2" step="0.01" value="0.05">
+            <span class="mono" id="rewardSpaceReadout">0.05</span>
           </label>
         </div>
       </div>
@@ -557,12 +567,12 @@ footer{
             <span class="mono" id="epsStartReadout">1.00</span>
           </label>
           <label>ε slut
-            <input type="range" id="epsEnd" min="0.01" max="0.3" step="0.01" value="0.05">
-            <span class="mono" id="epsEndReadout">0.05</span>
+            <input type="range" id="epsEnd" min="0.01" max="0.3" step="0.01" value="0.12">
+            <span class="mono" id="epsEndReadout">0.12</span>
           </label>
           <label>ε decay (steg)
-            <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="40000">
-            <span class="mono" id="epsDecayReadout">40000</span>
+            <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="80000">
+            <span class="mono" id="epsDecayReadout">80000</span>
           </label>
         </div>
         <div class="row">
@@ -810,16 +820,18 @@ footer{
 
 const REWARD_DEFAULTS={
   stepPenalty:0.01,
-  turnPenalty:0.005,
+  turnPenalty:0.001,
   approachBonus:0.03,
   retreatPenalty:0.03,
-  loopPenalty:0.10,
-  revisitPenalty:0.02,
+  loopPenalty:0.50,
+  revisitPenalty:0.05,
   wallPenalty:10,
-  selfPenalty:10,
+  selfPenalty:25.5,
   timeoutPenalty:5,
   fruitReward:10,
   compactWeight:0,
+  trapPenalty:0.5,
+  spaceGainBonus:0.05,
 };
 let rewardConfig={...REWARD_DEFAULTS};
 
@@ -861,6 +873,34 @@ class SnakeEnv{
   }
   setRewardConfig(cfg={}){
     this.reward={...REWARD_DEFAULTS,...cfg};
+  }
+  neighbors(x,y){
+    return [
+      {x:x+1,y},
+      {x:x-1,y},
+      {x,y:y+1},
+      {x,y:y-1},
+    ].filter(p=>p.x>=0&&p.y>=0&&p.x<this.cols&&p.y<this.rows);
+  }
+  freeSpaceFrom(sx,sy,tailWillMove){
+    const seen=new Set();
+    const q=[{x:sx,y:sy}];
+    const blocked=new Set(this.snakeSet);
+    blocked.delete(`${sx},${sy}`);
+    if(tailWillMove&&this.snake.length){
+      const t=this.snake[this.snake.length-1];
+      blocked.delete(`${t.x},${t.y}`);
+    }
+    while(q.length){
+      const p=q.pop();
+      const key=`${p.x},${p.y}`;
+      if(seen.has(key)) continue;
+      if(blocked.has(key)) continue;
+      seen.add(key);
+      for(const n of this.neighbors(p.x,p.y)) q.push(n);
+      if(seen.size>this.cols*this.rows) break;
+    }
+    return seen.size;
   }
   computeSlack(){
     if(!this.snake?.length) return 0;
@@ -925,9 +965,24 @@ class SnakeEnv{
       const crashReward=hitsWall?-R.wallPenalty:-R.selfPenalty;
       return {state:this.getState(),reward:crashReward,done:true};
     }
+    let spaceReward=0;
+    if((R.trapPenalty??0)!==0 || (R.spaceGainBonus??0)!==0){
+      const space=this.freeSpaceFrom(nx,ny,!willGrow);
+      const need=this.snake.length+2;
+      const denom=Math.max(1,need);
+      if(space<need){
+        spaceReward-=R.trapPenalty*(1+(need-space)/denom);
+      }else if(R.spaceGainBonus){
+        const curSpace=this.freeSpaceFrom(this.snake[0].x,this.snake[0].y,true);
+        if(space>curSpace){
+          spaceReward+=R.spaceGainBonus*Math.min(1,(space-curSpace)/denom);
+        }
+      }
+    }
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
     this.snake.unshift({x:nx,y:ny});
     let r=-R.stepPenalty;
+    r+=spaceReward;
     if(a!==0) r-=R.turnPenalty;
     this.actionHist.push(a);
     if(this.actionHist.length>6) this.actionHist.shift();
@@ -1194,8 +1249,8 @@ class DQNAgent{
     });
     this.priorityEps=this.buffer.priorityEps;
     this.epsStart=cfg.epsStart??1.0;
-    this.epsEnd=cfg.epsEnd??0.05;
-    this.epsDecay=cfg.epsDecay??40000;
+    this.epsEnd=cfg.epsEnd??0.12;
+    this.epsDecay=cfg.epsDecay??80000;
     this.nStep=cfg.nStep??3;
     this.nStepBuffer=new NStepAccumulator(this.nStep,this.gamma);
     this.trainStep=cfg.trainStep??0;
@@ -2126,7 +2181,7 @@ const AGENT_PRESETS={
     type:'dqn',
     defaults:{
       gamma:0.98,lr:0.0005,
-      epsStart:1.0,epsEnd:0.05,epsDecay:40000,
+      epsStart:1.0,epsEnd:0.12,epsDecay:80000,
       batch:128,bufferSize:50000,targetSync:2000,
       nStep:3,priorityAlpha:0.6,priorityBeta:0.4,
       layers:[256,256,128],dueling:true,double:true,learnRepeats:2,
@@ -2146,7 +2201,7 @@ const AGENT_PRESETS={
     type:'dqn',
     defaults:{
       gamma:0.97,lr:0.00025,
-      epsStart:1.0,epsEnd:0.1,epsDecay:60000,
+      epsStart:1.0,epsEnd:0.12,epsDecay:80000,
       batch:64,bufferSize:40000,targetSync:1500,
       nStep:1,priorityAlpha:0.4,priorityBeta:0.4,
       layers:[128,128],dueling:false,double:false,learnRepeats:1,
@@ -2270,6 +2325,10 @@ const ui={
   rewardSelfReadout:document.getElementById('rewardSelfReadout'),
   rewardTimeout:document.getElementById('rewardTimeout'),
   rewardTimeoutReadout:document.getElementById('rewardTimeoutReadout'),
+  rewardTrap:document.getElementById('rewardTrap'),
+  rewardTrapReadout:document.getElementById('rewardTrapReadout'),
+  rewardSpace:document.getElementById('rewardSpace'),
+  rewardSpaceReadout:document.getElementById('rewardSpaceReadout'),
   rewardFruit:document.getElementById('rewardFruit'),
   rewardFruitReadout:document.getElementById('rewardFruitReadout'),
   rewardCompact:document.getElementById('rewardCompact'),
@@ -2348,7 +2407,7 @@ function bindUI(){
   const updateAndApply=()=>{ updateReadouts(); applyConfigToAgent(); };
   ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync','nStep','priorityAlpha','priorityBeta','pgEntropy','acEntropy','acValueCoef','ppoEntropy','ppoClip','ppoLambda','ppoBatch','ppoEpochs','ppoValueCoef']
     .forEach(id=>ui[id]?.addEventListener('input',updateAndApply));
-  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardFruit','rewardCompact'];
+  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardFruit','rewardCompact'];
   const updateRewards=()=>{ updateRewardReadouts(); applyRewardsToEnv(); };
   rewardIds.forEach(id=>ui[id]?.addEventListener('input',updateRewards));
   ui.tabTraining.addEventListener('click',()=>setActiveTab('training'));
@@ -2456,6 +2515,8 @@ function updateRewardReadouts(){
   ui.rewardWallReadout.textContent=(+ui.rewardWall.value).toFixed(1);
   ui.rewardSelfReadout.textContent=(+ui.rewardSelf.value).toFixed(1);
   ui.rewardTimeoutReadout.textContent=(+ui.rewardTimeout.value).toFixed(1);
+  ui.rewardTrapReadout.textContent=(+ui.rewardTrap.value).toFixed(2);
+  ui.rewardSpaceReadout.textContent=(+ui.rewardSpace.value).toFixed(2);
   ui.rewardFruitReadout.textContent=(+ui.rewardFruit.value).toFixed(1);
   ui.rewardCompactReadout.textContent=(+ui.rewardCompact.value).toFixed(3);
 }
@@ -2470,6 +2531,8 @@ function getRewardConfigFromUI(){
     wallPenalty:+ui.rewardWall.value,
     selfPenalty:+ui.rewardSelf.value,
     timeoutPenalty:+ui.rewardTimeout.value,
+    trapPenalty:+ui.rewardTrap.value,
+    spaceGainBonus:+ui.rewardSpace.value,
     fruitReward:+ui.rewardFruit.value,
     compactWeight:+ui.rewardCompact.value,
   };
@@ -2488,6 +2551,8 @@ function applyRewardConfigToUI(config={}){
   if(config.wallPenalty!==undefined) ui.rewardWall.value=config.wallPenalty;
   if(config.selfPenalty!==undefined) ui.rewardSelf.value=config.selfPenalty;
   if(config.timeoutPenalty!==undefined) ui.rewardTimeout.value=config.timeoutPenalty;
+  if(config.trapPenalty!==undefined) ui.rewardTrap.value=config.trapPenalty;
+  if(config.spaceGainBonus!==undefined) ui.rewardSpace.value=config.spaceGainBonus;
   if(config.fruitReward!==undefined) ui.rewardFruit.value=config.fruitReward;
   if(config.compactWeight!==undefined) ui.rewardCompact.value=config.compactWeight;
   updateRewardReadouts();
@@ -2724,6 +2789,22 @@ async function playSingleEpisode(){
   }
   await finalizeEpisode(ctx);
 }
+function previewDeath(env,action){
+  const d=env.dir;
+  const L={x:-d.y,y:d.x};
+  const R={x:d.y,y:-d.x};
+  const F=d;
+  const dir=action===1?L:action===2?R:F;
+  const h=env.snake[0];
+  const nx=h.x+dir.x;
+  const ny=h.y+dir.y;
+  const tail=env.snake[env.snake.length-1];
+  const willGrow=(nx===env.fruit.x && ny===env.fruit.y);
+  const hitsWall=nx<0||ny<0||nx>=env.cols||ny>=env.rows;
+  const key=`${nx},${ny}`;
+  const hitsBody=env.snakeSet.has(key) && !(tail && tail.x===nx && tail.y===ny && !willGrow);
+  return hitsWall||hitsBody;
+}
 async function watchSmoothEpisode(){
   if(watching||!agent) return;
   const wasTraining=training;
@@ -2745,7 +2826,12 @@ async function watchSmoothEpisode(){
     let done=false;
     while(!done && steps<maxSteps){
       const before=snapshotEnv(env);
-      const action=agent.greedyAction(state);
+      let action=agent.greedyAction(state);
+      if(previewDeath(env,action)){
+        for(const alt of [0,1,2]){
+          if(!previewDeath(env,alt)){ action=alt; break; }
+        }
+      }
       const {state:nextState,done:finished}=env.step(action);
       const after=snapshotEnv(env);
       enqueueRenderFrame(before,after,mode.frameMs);
