@@ -468,6 +468,76 @@ footer{
       </div>
     </div>
 
+    <details id="rewardPanel" open>
+      <summary>Belöningsmodell</summary>
+      <div class="stack">
+        <h3>Tempo &amp; riktning</h3>
+        <div class="row">
+          <label>Stegstraff
+            <input type="range" id="rewardStep" min="0" max="0.05" step="0.001" value="0.010">
+            <span class="mono" id="rewardStepReadout">0.010</span>
+          </label>
+          <label>Svängstraff
+            <input type="range" id="rewardTurn" min="0" max="0.02" step="0.001" value="0.005">
+            <span class="mono" id="rewardTurnReadout">0.005</span>
+          </label>
+          <label>Mot frukt-bonus
+            <input type="range" id="rewardApproach" min="0" max="0.1" step="0.005" value="0.030">
+            <span class="mono" id="rewardApproachReadout">0.030</span>
+          </label>
+        </div>
+        <div class="row">
+          <label>Från frukt-straff
+            <input type="range" id="rewardRetreat" min="0" max="0.1" step="0.005" value="0.030">
+            <span class="mono" id="rewardRetreatReadout">0.030</span>
+          </label>
+        </div>
+      </div>
+      <div class="stack">
+        <h3>Loopar &amp; upprepningar</h3>
+        <div class="row">
+          <label>Loopstraff
+            <input type="range" id="rewardLoop" min="0" max="1" step="0.01" value="0.10">
+            <span class="mono" id="rewardLoopReadout">0.10</span>
+          </label>
+          <label>Upprepad ruta-straff
+            <input type="range" id="rewardRevisit" min="0" max="0.1" step="0.001" value="0.020">
+            <span class="mono" id="rewardRevisitReadout">0.020</span>
+          </label>
+        </div>
+      </div>
+      <div class="stack">
+        <h3>Krascher &amp; fastna</h3>
+        <div class="row">
+          <label>Väggkrasch
+            <input type="range" id="rewardWall" min="0" max="30" step="0.5" value="10">
+            <span class="mono" id="rewardWallReadout">10.0</span>
+          </label>
+          <label>Kroppskrasch
+            <input type="range" id="rewardSelf" min="0" max="30" step="0.5" value="10">
+            <span class="mono" id="rewardSelfReadout">10.0</span>
+          </label>
+          <label>Fastna-straff
+            <input type="range" id="rewardTimeout" min="0" max="20" step="0.5" value="5">
+            <span class="mono" id="rewardTimeoutReadout">5.0</span>
+          </label>
+        </div>
+      </div>
+      <div class="stack">
+        <h3>Starka belöningar</h3>
+        <div class="row">
+          <label>Äppelbelöning
+            <input type="range" id="rewardFruit" min="0" max="30" step="0.5" value="10">
+            <span class="mono" id="rewardFruitReadout">10.0</span>
+          </label>
+          <label>Kompakthetsbonus
+            <input type="range" id="rewardCompact" min="0" max="0.1" step="0.001" value="0.000">
+            <span class="mono" id="rewardCompactReadout">0.000</span>
+          </label>
+        </div>
+      </div>
+    </details>
+
     <details id="advancedPanel" open>
       <summary>Avancerade inställningar</summary>
       <div class="stack" data-config="shared">
@@ -663,6 +733,33 @@ footer{
   </div>
 
   <div class="card">
+    <h2>Belöningsguide</h2>
+    <p>Belöningsmodellen styr hur ormen värderar varje steg. Justera reglagen i panelen <em>Belöningsmodell</em> för att fintrimma strategin utan att behöva träna om modellen från början.</p>
+    <h3>Tempo &amp; riktning</h3>
+    <ul>
+      <li><strong>Stegstraff:</strong> grundkostnad för varje drag (standard 0,01). Höj för att få kortare, mer målmedvetna rutter.</li>
+      <li><strong>Svängstraff:</strong> extra kostnad när ormen vrider sig. Sänks om du vill att modellen ska testa fler små korrigeringar.</li>
+      <li><strong>Mot/Från frukt:</strong> bonusen för att minska avståndet till frukten samt straffet för att öka det. Håll värdena lika för symmetrisk feedback.</li>
+    </ul>
+    <h3>Loopar &amp; upprepningar</h3>
+    <ul>
+      <li><strong>Loopstraff:</strong> träffar när historiken visar vänster/höger-loopar (mönster 1,2,1,2). Höj om ormen ofta fastnar i åttor.</li>
+      <li><strong>Upprepad ruta:</strong> multipliceras med hur nyligen ett fält besökts. Ett högre värde pressar ormen att utforska nya ytor.</li>
+    </ul>
+    <h3>Krascher &amp; fastna</h3>
+    <ul>
+      <li><strong>Väggkrasch:</strong> straff när huvudet går utanför brädet.</li>
+      <li><strong>Kroppskrasch:</strong> straff när ormen biter sig själv.</li>
+      <li><strong>Fastna-straff:</strong> delas ut om ingen frukt plockats på två hela bräden med drag. Används för att bryta livslånga slingor.</li>
+    </ul>
+    <h3>Starka belöningar</h3>
+    <ul>
+      <li><strong>Äppelbelöning:</strong> huvudbelöningen när en frukt äts. Justera upp för mer aggressiv fruktjakt.</li>
+      <li><strong>Kompakthetsbonus:</strong> ger en liten bonus när ormens täckta område blir tätare (lägre differens mellan omslutande ruta och ormens längd). Höj först mot slutet av träningen om du vill att kroppen packas ihop.</li>
+    </ul>
+  </div>
+
+  <div class="card">
     <h2>Reglage &amp; hur de påverkar träningen</h2>
     <h3>Miljö och visning</h3>
     <ul>
@@ -715,6 +812,21 @@ footer{
 <script>
 'use strict';
 
+const REWARD_DEFAULTS={
+  stepPenalty:0.01,
+  turnPenalty:0.005,
+  approachBonus:0.03,
+  retreatPenalty:0.03,
+  loopPenalty:0.10,
+  revisitPenalty:0.02,
+  wallPenalty:10,
+  selfPenalty:10,
+  timeoutPenalty:5,
+  fruitReward:10,
+  compactWeight:0,
+};
+let rewardConfig={...REWARD_DEFAULTS};
+
 /* ---------------- Serialization helpers ---------------- */
 const DTYPE_ARRAYS={float32:Float32Array,int32:Int32Array,bool:Uint8Array};
 function typedArrayToBase64(arr){
@@ -745,10 +857,29 @@ function assignArray(target,source,mapper=v=>v){
 
 /* ---------------- Snake environment ---------------- */
 class SnakeEnv{
-  constructor(cols=20,rows=20){
+  constructor(cols=20,rows=20,rewardOverrides={}){
     this.cols=cols;
     this.rows=rows;
+    this.setRewardConfig(rewardOverrides);
     this.reset();
+  }
+  setRewardConfig(cfg={}){
+    this.reward={...REWARD_DEFAULTS,...cfg};
+  }
+  computeSlack(){
+    if(!this.snake?.length) return 0;
+    let minX=this.snake[0].x, maxX=this.snake[0].x;
+    let minY=this.snake[0].y, maxY=this.snake[0].y;
+    for(const seg of this.snake){
+      if(seg.x<minX) minX=seg.x;
+      if(seg.x>maxX) maxX=seg.x;
+      if(seg.y<minY) minY=seg.y;
+      if(seg.y>maxY) maxY=seg.y;
+    }
+    const width=(maxX-minX+1);
+    const height=(maxY-minY+1);
+    const area=width*height;
+    return Math.max(0,area-this.snake.length);
   }
   reset(){
     this.dir={x:1,y:0};
@@ -761,6 +892,7 @@ class SnakeEnv{
     this.steps=0;
     this.stepsSinceFruit=0;
     this.alive=true;
+    this.prevSlack=this.computeSlack();
     return this.getState();
   }
   idx(x,y){return y*this.cols+x;}
@@ -780,6 +912,7 @@ class SnakeEnv{
   }
   step(a){
     if(!this.alive) return {state:this.getState(),reward:0,done:true};
+    const R=this.reward;
     this.turn(a);
     const h=this.snake[0];
     const nx=h.x+this.dir.x;
@@ -793,25 +926,26 @@ class SnakeEnv{
     const hitsBody=this.snakeSet.has(key) && !(tail && tail.x===nx && tail.y===ny && !willGrow);
     if(hitsWall||hitsBody){
       this.alive=false;
-      return {state:this.getState(),reward:-10,done:true};
+      const crashReward=hitsWall?-R.wallPenalty:-R.selfPenalty;
+      return {state:this.getState(),reward:crashReward,done:true};
     }
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
     this.snake.unshift({x:nx,y:ny});
-    let r=-0.01;
-    if(a!==0) r-=0.005;
+    let r=-R.stepPenalty;
+    if(a!==0) r-=R.turnPenalty;
     this.actionHist.push(a);
     if(this.actionHist.length>6) this.actionHist.shift();
     if(this.actionHist.length>=4){
       const last4=this.actionHist.slice(-4).join(',');
-      if(last4==='1,2,1,2' || last4==='2,1,2,1') r-=0.10;
+      if(last4==='1,2,1,2' || last4==='2,1,2,1') r-=R.loopPenalty;
     }
     const vidx=this.idx(nx,ny);
-    const revisitPenalty=this.visit[vidx]*0.02;
+    const revisitPenalty=this.visit[vidx]*R.revisitPenalty;
     r-=revisitPenalty;
     let ateFruit=false;
     if(nx===this.fruit.x && ny===this.fruit.y){
       ateFruit=true;
-      r+=10;
+      r+=R.fruitReward;
       this.snakeSet.add(`${nx},${ny}`);
       this.spawnFruit();
       this.stepsSinceFruit=0;
@@ -822,11 +956,18 @@ class SnakeEnv{
       this.visit[vidx]=Math.min(1,this.visit[vidx]+0.3);
       const pd=Math.abs(h.x-this.fruit.x)+Math.abs(h.y-this.fruit.y);
       const nd=Math.abs(nx-this.fruit.x)+Math.abs(ny-this.fruit.y);
-      r+= (nd<pd?0.03:-0.03);
+      if(nd<pd) r+=R.approachBonus;
+      else if(nd>pd) r-=R.retreatPenalty;
     }
+    const slack=this.computeSlack();
+    const slackDelta=this.prevSlack-slack;
+    if(R.compactWeight!==0){
+      r+=slackDelta*R.compactWeight;
+    }
+    this.prevSlack=slack;
     if(this.stepsSinceFruit>this.cols*this.rows*2){
       this.alive=false;
-      r-=5;
+      r-=R.timeoutPenalty;
       return {state:this.getState(),reward:r,done:true};
     }
     return {state:this.getState(),reward:r,done:false,ateFruit};
@@ -1793,7 +1934,7 @@ class MiniLine{
 const board=document.getElementById('board');
 const bctx=board.getContext('2d');
 let COLS=20,ROWS=20,CELL=board.width/COLS;
-let env=new SnakeEnv(COLS,ROWS);
+let env=new SnakeEnv(COLS,ROWS,rewardConfig);
 
 function snapshotEnv(environment){
   return {
@@ -2115,6 +2256,28 @@ const ui={
   ppoEpochsReadout:document.getElementById('ppoEpochsReadout'),
   ppoValueCoef:document.getElementById('ppoValueCoef'),
   ppoValueCoefReadout:document.getElementById('ppoValueCoefReadout'),
+  rewardStep:document.getElementById('rewardStep'),
+  rewardStepReadout:document.getElementById('rewardStepReadout'),
+  rewardTurn:document.getElementById('rewardTurn'),
+  rewardTurnReadout:document.getElementById('rewardTurnReadout'),
+  rewardApproach:document.getElementById('rewardApproach'),
+  rewardApproachReadout:document.getElementById('rewardApproachReadout'),
+  rewardRetreat:document.getElementById('rewardRetreat'),
+  rewardRetreatReadout:document.getElementById('rewardRetreatReadout'),
+  rewardLoop:document.getElementById('rewardLoop'),
+  rewardLoopReadout:document.getElementById('rewardLoopReadout'),
+  rewardRevisit:document.getElementById('rewardRevisit'),
+  rewardRevisitReadout:document.getElementById('rewardRevisitReadout'),
+  rewardWall:document.getElementById('rewardWall'),
+  rewardWallReadout:document.getElementById('rewardWallReadout'),
+  rewardSelf:document.getElementById('rewardSelf'),
+  rewardSelfReadout:document.getElementById('rewardSelfReadout'),
+  rewardTimeout:document.getElementById('rewardTimeout'),
+  rewardTimeoutReadout:document.getElementById('rewardTimeoutReadout'),
+  rewardFruit:document.getElementById('rewardFruit'),
+  rewardFruitReadout:document.getElementById('rewardFruitReadout'),
+  rewardCompact:document.getElementById('rewardCompact'),
+  rewardCompactReadout:document.getElementById('rewardCompactReadout'),
   kEpisodes:document.getElementById('kEpisodes'),
   kAvgRw:document.getElementById('kAvgRw'),
   kBest:document.getElementById('kBest'),
@@ -2190,10 +2353,14 @@ function bindUI(){
   const updateAndApply=()=>{ updateReadouts(); applyConfigToAgent(); };
   ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync','nStep','priorityAlpha','priorityBeta','pgEntropy','acEntropy','acValueCoef','ppoEntropy','ppoClip','ppoLambda','ppoBatch','ppoEpochs','ppoValueCoef']
     .forEach(id=>ui[id]?.addEventListener('input',updateAndApply));
+  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardFruit','rewardCompact'];
+  const updateRewards=()=>{ updateRewardReadouts(); applyRewardsToEnv(); };
+  rewardIds.forEach(id=>ui[id]?.addEventListener('input',updateRewards));
   ui.tabTraining.addEventListener('click',()=>setActiveTab('training'));
   ui.tabGuide.addEventListener('click',()=>setActiveTab('guide'));
   updateReadouts();
   updateGridLabel();
+  applyRewardsToEnv();
 }
 function setActiveTab(tab){
   const showGuide=tab==='guide';
@@ -2252,6 +2419,7 @@ function applyConfigToAgent(){
 }
 function updateReadouts(){
   updateBadgeMetrics();
+  updateRewardReadouts();
 }
 function updateBadgeMetrics(){
   ui.gammaReadout.textContent=(+ui.gamma.value).toFixed(3);
@@ -2281,6 +2449,54 @@ function updateBadgeMetrics(){
   ui.ppoBatchReadout.textContent=`${(+ui.ppoBatch.value)|0}`;
   ui.ppoEpochsReadout.textContent=`${(+ui.ppoEpochs.value)|0}`;
   ui.ppoValueCoefReadout.textContent=(+ui.ppoValueCoef.value).toFixed(2);
+}
+function updateRewardReadouts(){
+  if(!ui.rewardStep) return;
+  ui.rewardStepReadout.textContent=(+ui.rewardStep.value).toFixed(3);
+  ui.rewardTurnReadout.textContent=(+ui.rewardTurn.value).toFixed(3);
+  ui.rewardApproachReadout.textContent=(+ui.rewardApproach.value).toFixed(3);
+  ui.rewardRetreatReadout.textContent=(+ui.rewardRetreat.value).toFixed(3);
+  ui.rewardLoopReadout.textContent=(+ui.rewardLoop.value).toFixed(2);
+  ui.rewardRevisitReadout.textContent=(+ui.rewardRevisit.value).toFixed(3);
+  ui.rewardWallReadout.textContent=(+ui.rewardWall.value).toFixed(1);
+  ui.rewardSelfReadout.textContent=(+ui.rewardSelf.value).toFixed(1);
+  ui.rewardTimeoutReadout.textContent=(+ui.rewardTimeout.value).toFixed(1);
+  ui.rewardFruitReadout.textContent=(+ui.rewardFruit.value).toFixed(1);
+  ui.rewardCompactReadout.textContent=(+ui.rewardCompact.value).toFixed(3);
+}
+function getRewardConfigFromUI(){
+  return {
+    stepPenalty:+ui.rewardStep.value,
+    turnPenalty:+ui.rewardTurn.value,
+    approachBonus:+ui.rewardApproach.value,
+    retreatPenalty:+ui.rewardRetreat.value,
+    loopPenalty:+ui.rewardLoop.value,
+    revisitPenalty:+ui.rewardRevisit.value,
+    wallPenalty:+ui.rewardWall.value,
+    selfPenalty:+ui.rewardSelf.value,
+    timeoutPenalty:+ui.rewardTimeout.value,
+    fruitReward:+ui.rewardFruit.value,
+    compactWeight:+ui.rewardCompact.value,
+  };
+}
+function applyRewardsToEnv(){
+  rewardConfig=getRewardConfigFromUI();
+  env?.setRewardConfig(rewardConfig);
+}
+function applyRewardConfigToUI(config={}){
+  if(config.stepPenalty!==undefined) ui.rewardStep.value=config.stepPenalty;
+  if(config.turnPenalty!==undefined) ui.rewardTurn.value=config.turnPenalty;
+  if(config.approachBonus!==undefined) ui.rewardApproach.value=config.approachBonus;
+  if(config.retreatPenalty!==undefined) ui.rewardRetreat.value=config.retreatPenalty;
+  if(config.loopPenalty!==undefined) ui.rewardLoop.value=config.loopPenalty;
+  if(config.revisitPenalty!==undefined) ui.rewardRevisit.value=config.revisitPenalty;
+  if(config.wallPenalty!==undefined) ui.rewardWall.value=config.wallPenalty;
+  if(config.selfPenalty!==undefined) ui.rewardSelf.value=config.selfPenalty;
+  if(config.timeoutPenalty!==undefined) ui.rewardTimeout.value=config.timeoutPenalty;
+  if(config.fruitReward!==undefined) ui.rewardFruit.value=config.fruitReward;
+  if(config.compactWeight!==undefined) ui.rewardCompact.value=config.compactWeight;
+  updateRewardReadouts();
+  applyRewardsToEnv();
 }
 function updateAdvancedVisibility(){
   const type=AGENT_PRESETS[currentAlgoKey]?.type||'dqn';
@@ -2359,7 +2575,7 @@ function applyPresetToUI(config){
 function resetEnvironment(size=COLS,force){
   const n=+size|0;
   if(!force && env.cols===n && env.rows===n) return;
-  env=new SnakeEnv(n,n);
+  env=new SnakeEnv(n,n,rewardConfig);
   COLS=env.cols;
   ROWS=env.rows;
   CELL=board.width/COLS;
@@ -2574,11 +2790,12 @@ async function watchSmoothEpisode(){
 async function buildAppState(){
   const agentState=await agent.exportState();
   return {
-    version:3,
+    version:4,
     createdAt:new Date().toISOString(),
     algo:currentAlgoKey,
     playback:playbackMode,
     gridSize:+ui.gridSize.value,
+    rewardConfig:{...rewardConfig},
     agent:agentState,
     meta:{
       episode,totalSteps,bestLen,
@@ -2642,6 +2859,7 @@ async function loadTrainingFromFile(file){
     if(!data||!data.agent) throw new Error('Ogiltig sparfil');
     const algo=data.algo&&AGENT_PRESETS[data.algo]?data.algo:'dueling';
     applyPresetToUI({...AGENT_PRESETS[algo].defaults,...data.agent.config});
+    if(data.rewardConfig) applyRewardConfigToUI(data.rewardConfig);
     if(typeof data.gridSize==='number'){
       ui.gridSize.value=data.gridSize;
       updateGridLabel();
