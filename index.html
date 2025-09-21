@@ -1,180 +1,645 @@
-
 <!DOCTYPE html>
 <html lang="sv">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Snake — Deep Q-Learning (dueling double + anti-loop)</title>
+<title>Snake — RL-studio med mjuk rendering</title>
 <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <style>
-/* ... (oförändrad CSS från din version) ... */
-:root {--bg:#0f1220;--panel:#151936;--ink:#e7eaf6;--muted:#9aa3c7;--a:#6c7bff;--b:#9b5cff}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#1a2050 0%,#101326 40%,#0b0e1c 100%);color:var(--ink);font:14px/1.5 system-ui,Segoe UI,Inter,Roboto,sans-serif}
-header{padding:16px 24px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:10;background:rgba(10,13,24,.6);backdrop-filter:blur(10px);border-bottom:1px solid #1b1f3a}
-.logo{font-weight:900;font-size:18px;background:linear-gradient(135deg,var(--a),var(--b));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
-main{max-width:1200px;margin:24px auto;padding:0 16px;display:grid;grid-template-columns:520px 1fr;gap:16px}
-.card{background:var(--panel);border:1px solid #1b1f3a;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-h2{margin:0 0 10px;font-size:16px;color:#dfe3ff}
-canvas#board{width:500px;height:500px;image-rendering:pixelated;border-radius:12px;background:#0f1328;border:1px solid #1b1f3a}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-button{appearance:none;border:none;padding:10px 14px;border-radius:10px;color:#fff;background:linear-gradient(135deg,var(--a),var(--b));font-weight:700;cursor:pointer;transition:.2s transform,.2s box-shadow;box-shadow:0 6px 20px rgba(108,123,255,.35)}
+:root {
+  --bg:#0f1220;
+  --panel:#151936;
+  --ink:#e7eaf6;
+  --muted:#9aa3c7;
+  --accent-a:#6c7bff;
+  --accent-b:#9b5cff;
+  --danger:#ff4b6e;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  min-height:100vh;
+  background:radial-gradient(1200px 600px at 20% -10%,#1a2050 0%,#101326 40%,#0b0e1c 100%);
+  color:var(--ink);
+  font:14px/1.5 "Inter","Segoe UI",Roboto,sans-serif;
+}
+header{
+  padding:16px 24px;
+  display:flex;
+  align-items:center;
+  gap:14px;
+  position:sticky;
+  top:0;
+  z-index:10;
+  background:rgba(10,13,24,.65);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid #1b1f3a;
+}
+.logo{
+  font-weight:900;
+  font-size:18px;
+  background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
+  -webkit-background-clip:text;
+  -webkit-text-fill-color:transparent;
+}
+.status-group{
+  margin-left:auto;
+  display:flex;
+  gap:8px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.badge{
+  padding:6px 12px;
+  border-radius:999px;
+  border:1px solid #2a2f61;
+  background:#1a1f46;
+  color:#cfd6ff;
+  font-size:12px;
+  font-weight:600;
+}
+.badge.soft{
+  background:rgba(108,123,255,.15);
+  color:#cfd6ff;
+  border-color:rgba(108,123,255,.4);
+}
+main.layout{
+  max-width:1200px;
+  margin:24px auto;
+  padding:0 16px 40px;
+  display:grid;
+  gap:16px;
+  grid-template-columns:520px 1fr;
+}
+.card{
+  background:var(--panel);
+  border:1px solid #1b1f3a;
+  border-radius:16px;
+  padding:18px;
+  box-shadow:0 10px 30px rgba(0,0,0,.25);
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+}
+.card-head{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+}
+.card-actions{
+  display:flex;
+  gap:8px;
+  flex-wrap:wrap;
+}
+h2{
+  margin:0;
+  font-size:16px;
+  color:#dfe3ff;
+}
+canvas#board{
+  width:500px;
+  height:500px;
+  border-radius:18px;
+  background:radial-gradient(120% 120% at 30% 20%,#151d4c 0%,#0f1328 60%);
+  border:1px solid #1b1f3a;
+  box-shadow:0 14px 40px rgba(15,20,60,.45);
+  align-self:center;
+}
+.controls{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:center;
+}
+.controls.secondary{
+  justify-content:space-between;
+}
+button{
+  appearance:none;
+  border:none;
+  padding:10px 14px;
+  border-radius:10px;
+  color:#fff;
+  background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
+  font-weight:700;
+  cursor:pointer;
+  transition:.2s transform,.2s box-shadow;
+  box-shadow:0 6px 20px rgba(108,123,255,.35);
+}
 button:hover{transform:translateY(-1px)}
-button.secondary{background:#23284f;box-shadow:none;color:#cfd6ff;border:1px solid #2a2f61}
-button.danger{background:linear-gradient(135deg,#ff6b6b,#ff3d77)}
-label{color:var(--muted);font-size:12px}
-input[type="range"]{width:220px}
-.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.kpi .item{background:#111533;padding:12px;border-radius:12px;border:1px solid #1b1f3a}
-.kpi .item b{display:block;font-size:12px;color:#9aa3c7;font-weight:600}
-.kpi .item span{font-weight:900;font-size:18px}
-.split{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-canvas.chart{width:100%;height:140px;background:#0b1030;border-radius:10px;border:1px solid #1b1f3a}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c7d2fe}
-.badge{padding:2px 8px;border-radius:999px;border:1px solid #2a2f61;background:#1a1f46;color:#cfd6ff;font-size:12px}
-.hint{color:#9aa3c7;font-size:12px}
+button.secondary{
+  background:#23284f;
+  box-shadow:none;
+  color:#cfd6ff;
+  border:1px solid #2a2f61;
+}
+button.danger{
+  background:linear-gradient(135deg,#ff6b6b,#ff3d77);
+  box-shadow:none;
+}
+button:disabled{
+  opacity:0.6;
+  cursor:not-allowed;
+  transform:none;
+  box-shadow:none;
+}
+.pill-group{
+  display:inline-flex;
+  gap:6px;
+  background:#1a1f46;
+  padding:4px;
+  border-radius:999px;
+  border:1px solid #2a2f61;
+}
+.pill-group .pill{
+  appearance:none;
+  border:none;
+  padding:8px 14px;
+  border-radius:999px;
+  background:transparent;
+  color:#cfd6ff;
+  font-weight:600;
+  cursor:pointer;
+  transition:.2s background,.2s color;
+}
+.pill-group .pill.active{
+  background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
+  color:#fff;
+  box-shadow:0 4px 14px rgba(108,123,255,.35);
+}
+.field{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  font-size:12px;
+  color:var(--muted);
+}
+.field.compact{
+  min-width:160px;
+}
+.field.block select{
+  width:100%;
+}
+.field label{
+  color:var(--muted);
+  font-size:12px;
+  font-weight:600;
+}
+input[type="range"]{
+  width:200px;
+}
+select{
+  background:#1a1f46;
+  border:1px solid #2a2f61;
+  border-radius:10px;
+  color:#cfd6ff;
+  padding:10px 12px;
+  font-size:14px;
+}
+.kpi{
+  display:grid;
+  grid-template-columns:repeat(4,1fr);
+  gap:10px;
+}
+.kpi .item{
+  background:#111533;
+  padding:12px;
+  border-radius:12px;
+  border:1px solid #1b1f3a;
+}
+.kpi .item b{
+  display:block;
+  font-size:12px;
+  color:#9aa3c7;
+  font-weight:600;
+}
+.kpi .item span{
+  font-weight:900;
+  font-size:18px;
+}
+.split{
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:12px;
+}
+canvas.chart{
+  width:100%;
+  height:140px;
+  background:#0b1030;
+  border-radius:10px;
+  border:1px solid #1b1f3a;
+}
+.mono{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color:#c7d2fe;
+  font-size:12px;
+}
+.hint{
+  color:#9aa3c7;
+  font-size:12px;
+}
+.tabs{
+  margin-left:16px;
+  display:flex;
+  gap:10px;
+  align-items:center;
+}
+.tabs button{
+  appearance:none;
+  border:1px solid #2a2f61;
+  padding:8px 14px;
+  border-radius:999px;
+  background:transparent;
+  color:#b5bce0;
+  font-weight:600;
+  cursor:pointer;
+  box-shadow:none;
+  transition:.2s background,.2s color;
+}
+.tabs button.active{
+  background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
+  color:#fff;
+  border-color:transparent;
+}
+.tabs button:hover{
+  transform:none;
+  background:#1c2148;
+  color:#fff;
+}
+.tabs button:focus-visible{
+  outline:2px solid var(--accent-a);
+  outline-offset:2px;
+}
+details{
+  background:#111533;
+  border-radius:12px;
+  border:1px solid #1b1f3a;
+  padding:12px 14px;
+}
+details[open]{
+  padding-bottom:16px;
+}
+details summary{
+  cursor:pointer;
+  font-weight:700;
+  color:#dfe3ff;
+  margin:-12px -14px 12px;
+  padding:12px 14px;
+  border-radius:12px;
+}
+details summary::-webkit-details-marker{display:none}
+.stack{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  margin-bottom:14px;
+}
+.stack h3{
+  margin:0;
+  font-size:13px;
+  color:#dfe3ff;
+  letter-spacing:.01em;
+  text-transform:uppercase;
+}
+.row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:16px;
+  align-items:flex-end;
+}
+.row label{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+}
 .hidden{display:none!important}
-.tabs{margin-left:auto;display:flex;gap:10px;align-items:center}
-.tabs button{appearance:none;border:1px solid #2a2f61;padding:8px 14px;border-radius:999px;background:transparent;color:#b5bce0;font-weight:600;cursor:pointer;box-shadow:none;transition:.2s background,.2s color}
-.tabs button.active{background:linear-gradient(135deg,var(--a),var(--b));color:#fff;border-color:transparent}
-.tabs button:hover{transform:none;background:#1c2148;color:#fff}
-.tabs button:focus-visible{outline:2px solid var(--a);outline-offset:2px}
-#guideView{max-width:900px;margin:24px auto;padding:0 16px;display:flex;flex-direction:column;gap:16px}
-#guideView .card{padding:24px}
-#guideView h2{font-size:20px;margin-bottom:12px}
-#guideView h3{margin-top:20px;margin-bottom:8px;color:#dfe3ff}
-#guideView p,#guideView li{color:#c7cdef}
-#guideView dl{margin:0;display:grid;grid-template-columns:160px 1fr;gap:10px 18px}
-#guideView dt{font-weight:700;color:#dfe3ff}
-#guideView dd{margin:0;color:#c7cdef;font-size:13px;line-height:1.6}
-#guideView ul{padding-left:18px;margin:8px 0}
-#guideView ol{padding-left:20px;margin:8px 0}
-#guideView .muted{color:#9aa3c7;font-size:12px;margin-top:12px}
-@media(max-width:700px){#guideView dl{grid-template-columns:1fr}#guideView dt{margin-top:12px}}
-footer{opacity:.7;text-align:center;padding:18px}
-@media(max-width:1050px){main{grid-template-columns:1fr}canvas#board{width:100%;height:auto}}
+#guideView{
+  max-width:900px;
+  margin:24px auto 60px;
+  padding:0 16px;
+  display:flex;
+  flex-direction:column;
+  gap:16px;
+}
+#guideView .card{
+  padding:24px;
+}
+#guideView h2{
+  font-size:20px;
+  margin-bottom:12px;
+}
+#guideView h3{
+  margin-top:20px;
+  margin-bottom:8px;
+  color:#dfe3ff;
+}
+#guideView p,#guideView li{
+  color:#c7cdef;
+}
+#guideView ul{
+  padding-left:20px;
+  margin:8px 0;
+}
+footer{
+  opacity:.7;
+  text-align:center;
+  padding:18px;
+  font-size:12px;
+}
+@media(max-width:1050px){
+  main.layout{
+    grid-template-columns:1fr;
+  }
+  canvas#board{
+    width:100%;
+    height:auto;
+  }
+  .controls.secondary{
+    flex-direction:column;
+    align-items:flex-start;
+    gap:12px;
+  }
+  .status-group{
+    justify-content:flex-end;
+  }
+}
+@media(max-width:640px){
+  header{
+    flex-wrap:wrap;
+    gap:12px;
+  }
+  .status-group{
+    width:100%;
+    justify-content:flex-start;
+  }
+  .tabs{
+    margin-left:0;
+    width:100%;
+    justify-content:flex-start;
+  }
+  input[type="range"]{
+    width:160px;
+  }
+}
 </style>
 </head>
 <body>
 <header>
-  <div class="logo">Snake • Deep Q-Learning</div>
-  <span class="badge" id="trainState">idle</span>
-  <span class="badge">ε <span id="epsReadout">1.00</span></span>
-  <span class="badge">γ <span id="gammaReadout">0.98</span></span>
-  <span class="badge">LR <span id="lrReadout">0.0005</span></span>
+  <div class="logo">Snake • RL-studio</div>
+  <div class="status-group">
+    <span class="badge" id="trainState">idle</span>
+    <span class="badge" id="algoBadge">Dueling DQN</span>
+    <span class="badge">ε <span id="epsReadout">1.00</span></span>
+    <span class="badge">γ <span id="gammaBadge">0.98</span></span>
+    <span class="badge">LR <span id="lrBadge">0.0005</span></span>
+  </div>
   <nav class="tabs">
     <button type="button" id="tabTraining" class="active">Träning</button>
     <button type="button" id="tabGuide">Guide</button>
   </nav>
 </header>
 
-<main id="trainingView">
-  <div class="card">
-    <h2>Game</h2>
-    <canvas id="board" width="500" height="500"></canvas>
-
-    <div class="row" style="margin-top:10px">
-      <button id="btnTrain">▶ Train</button>
-      <button id="btnPause" class="secondary">Pause</button>
-      <button id="btnStep" class="secondary">Step 1 ep</button>
-      <button id="btnWatch" class="secondary">Watch Smooth</button>
-      <button id="btnReset" class="secondary">Reset Env</button>
-      <button id="btnSave" class="secondary">Save</button>
-      <button id="btnLoad" class="secondary">Load</button>
-      <button id="btnClear" class="danger">Clear Saved</button>
+<main id="trainingView" class="layout">
+  <section class="card game-card">
+    <div class="card-head">
+      <h2>Live-board</h2>
+      <span class="badge soft" id="playbackLabel">Mjuk realtid</span>
     </div>
-
-    <div class="row" style="margin-top:6px">
-      <label>Cells:
+    <canvas id="board" width="500" height="500"></canvas>
+    <div class="controls primary">
+      <button id="btnTrain">▶ Starta träning</button>
+      <button id="btnPause" class="secondary">⏸ Paus</button>
+      <button id="btnStep" class="secondary">Steg 1 runda</button>
+      <button id="btnWatch" class="secondary">Titta</button>
+      <button id="btnReset" class="secondary">Återställ</button>
+    </div>
+    <div class="controls secondary">
+      <div class="pill-group" id="playbackGroup" role="group" aria-label="Visningsläge">
+        <button type="button" class="pill active" data-speed="cinematic">Mjuk</button>
+        <button type="button" class="pill" data-speed="fast">Snabb</button>
+        <button type="button" class="pill" data-speed="turbo">Turbo</button>
+      </div>
+      <div class="field compact">
+        <label for="gridSize">Brädstorlek</label>
         <input type="range" id="gridSize" min="10" max="30" step="2" value="20">
         <span class="mono" id="gridLabel">20×20</span>
-      </label>
-      <label>Render every:
-        <input type="range" id="renderEvery" min="1" max="200" step="1" value="1">
-        <span class="mono" id="renderLabel">1 step</span>
-      </label>
-      <label>FPS limit:
-        <input type="range" id="fpsLimit" min="10" max="240" step="10" value="180">
-        <span class="mono" id="fpsLabel">180</span>
-      </label>
+      </div>
     </div>
-    <p class="hint">Lägre “Render every” eller högre “FPS limit” = mjukare. Träningen skalar upp brädet automatiskt med bra resultat.</p>
-  </div>
+    <p class="hint">Varje episod renderas mjukt utan extra inställningar. Turbo hoppar över vissa frames men fortsätter lära.</p>
+  </section>
 
-  <div class="card">
-    <h2>Training Stats</h2>
+  <section class="card control-card">
+    <div class="card-head">
+      <h2>Lärande</h2>
+      <div class="card-actions">
+        <button id="btnSave" class="secondary">Spara</button>
+        <button id="btnLoad" class="secondary">Ladda</button>
+        <button id="btnClear" class="danger">Rensa cache</button>
+      </div>
+    </div>
+    <div class="field block">
+      <label for="algoSelect">Algoritm</label>
+      <select id="algoSelect">
+        <option value="dueling">Dueling Double DQN</option>
+        <option value="vanilla">Klassisk DQN</option>
+        <option value="policy">Policy Gradient (REINFORCE)</option>
+        <option value="a2c">Advantage Actor-Critic</option>
+        <option value="ppo">Proximal Policy Optimization</option>
+      </select>
+    </div>
+    <p class="hint" id="algoDescription">Prioriterad replay, n-step returns och dueling-nät gör DQN stabilt och sample-effektivt.</p>
+
     <div class="kpi">
-      <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
-      <div class="item"><b>Avg Reward (100)</b><span id="kAvgRw">0.0</span></div>
-      <div class="item"><b>Best Length</b><span id="kBest">0</span></div>
-      <div class="item"><b>Fruit Rate</b><span id="kFruitRate">0%</span></div>
-    </div>
-    <div class="split" style="margin-top:10px">
-      <div><h2>Reward / Ep</h2><canvas id="chartReward" class="chart" width="400" height="140"></canvas></div>
-      <div><h2>Loss</h2><canvas id="chartLoss" class="chart" width="400" height="140"></canvas></div>
+      <div class="item"><b>Episoder</b><span id="kEpisodes">0</span></div>
+      <div class="item"><b>Snittreward (100)</b><span id="kAvgRw">0.0</span></div>
+      <div class="item"><b>Bästa längd</b><span id="kBest">0</span></div>
+      <div class="item"><b>Frukt / ep</b><span id="kFruitRate">0.0</span></div>
     </div>
 
-    <h2 style="margin-top:14px">Hyperparameters</h2>
-    <div class="row">
-      <label>γ (discount): <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98"></label>
-      <label>LR: <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005"></label>
+    <div class="split charts">
+      <div>
+        <h2>Reward / episod</h2>
+        <canvas id="chartReward" class="chart" width="400" height="140"></canvas>
+      </div>
+      <div>
+        <h2>Förlust</h2>
+        <canvas id="chartLoss" class="chart" width="400" height="140"></canvas>
+      </div>
     </div>
-    <div class="row" style="margin-top:6px">
-      <label>ε start: <input type="range" id="epsStart" min="0.2" max="1.0" step="0.05" value="1.0"></label>
-      <label>ε end: <input type="range" id="epsEnd" min="0.01" max="0.2" step="0.01" value="0.05"></label>
-      <label>ε decay (steps): <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="40000"></label>
-    </div>
-    <div class="row" style="margin-top:6px">
-      <label>Batch: <input type="range" id="batchSize" min="32" max="512" step="32" value="128"></label>
-      <label>Replay size: <input type="range" id="bufferSize" min="5000" max="200000" step="5000" value="50000"></label>
-      <label>Target sync (steps): <input type="range" id="targetSync" min="500" max="10000" step="500" value="2000"></label>
-    </div>
-    <div class="row" style="margin-top:6px">
-      <label>n-step <span class="mono" id="nStepReadout">3</span>: <input type="range" id="nStep" min="1" max="5" step="1" value="3"></label>
-      <label>PER alpha <span class="mono" id="alphaReadout">0.60</span>: <input type="range" id="priorityAlpha" min="0.1" max="1" step="0.05" value="0.6"></label>
-      <label>PER beta <span class="mono" id="betaReadout">0.40</span>: <input type="range" id="priorityBeta" min="0.1" max="1" step="0.05" value="0.4"></label>
-    </div>
-    <div class="row" style="margin-top:6px">
-      <label>Beta inc/1k <span class="mono" id="betaIncReadout">0.002</span>: <input type="range" id="priorityBetaInc" min="0" max="0.02" step="0.0005" value="0.002"></label>
-      <label>Priority eps <span class="mono" id="priorityEpsReadout">0.0010</span>: <input type="range" id="priorityEps" min="0.0001" max="0.02" step="0.0001" value="0.001"></label>
-    </div>
-  </div>
+
+    <details id="advancedPanel" open>
+      <summary>Avancerade inställningar</summary>
+      <div class="stack" data-config="shared">
+        <h3>Gemensamt</h3>
+        <div class="row">
+          <label>γ (discount)
+            <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
+            <span class="mono" id="gammaReadout">0.98</span>
+          </label>
+          <label>LR
+            <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005">
+            <span class="mono" id="lrReadout">0.0005</span>
+          </label>
+        </div>
+      </div>
+      <div class="stack" data-config="dqn">
+        <h3>DQN-familjen</h3>
+        <div class="row">
+          <label>ε start
+            <input type="range" id="epsStart" min="0.2" max="1.0" step="0.05" value="1.0">
+            <span class="mono" id="epsStartReadout">1.00</span>
+          </label>
+          <label>ε slut
+            <input type="range" id="epsEnd" min="0.01" max="0.3" step="0.01" value="0.05">
+            <span class="mono" id="epsEndReadout">0.05</span>
+          </label>
+          <label>ε decay (steg)
+            <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="40000">
+            <span class="mono" id="epsDecayReadout">40000</span>
+          </label>
+        </div>
+        <div class="row">
+          <label>Batch
+            <input type="range" id="batchSize" min="32" max="512" step="32" value="128">
+            <span class="mono" id="batchReadout">128</span>
+          </label>
+          <label>Replay-storlek
+            <input type="range" id="bufferSize" min="5000" max="200000" step="5000" value="50000">
+            <span class="mono" id="bufferReadout">50000</span>
+          </label>
+          <label>Target sync (steg)
+            <input type="range" id="targetSync" min="500" max="10000" step="500" value="2000">
+            <span class="mono" id="targetSyncReadout">2000</span>
+          </label>
+        </div>
+        <div class="row">
+          <label>n-step
+            <input type="range" id="nStep" min="1" max="5" step="1" value="3">
+            <span class="mono" id="nStepReadout">3</span>
+          </label>
+          <label>PER α
+            <input type="range" id="priorityAlpha" min="0.1" max="1" step="0.05" value="0.6">
+            <span class="mono" id="alphaReadout">0.60</span>
+          </label>
+          <label>PER β
+            <input type="range" id="priorityBeta" min="0.1" max="1" step="0.05" value="0.4">
+            <span class="mono" id="betaReadout">0.40</span>
+          </label>
+        </div>
+      </div>
+      <div class="stack hidden" data-config="policy">
+        <h3>Policy Gradient</h3>
+        <div class="row">
+          <label>Entropy-vikt
+            <input type="range" id="pgEntropy" min="0" max="0.05" step="0.001" value="0.01">
+            <span class="mono" id="pgEntropyReadout">0.010</span>
+          </label>
+        </div>
+      </div>
+      <div class="stack hidden" data-config="a2c">
+        <h3>Actor-Critic</h3>
+        <div class="row">
+          <label>Entropy-vikt
+            <input type="range" id="acEntropy" min="0" max="0.05" step="0.001" value="0.005">
+            <span class="mono" id="acEntropyReadout">0.005</span>
+          </label>
+          <label>Värdevikt
+            <input type="range" id="acValueCoef" min="0.1" max="1.0" step="0.05" value="0.5">
+            <span class="mono" id="acValueCoefReadout">0.50</span>
+          </label>
+        </div>
+      </div>
+      <div class="stack hidden" data-config="ppo">
+        <h3>PPO</h3>
+        <div class="row">
+          <label>Entropy-vikt
+            <input type="range" id="ppoEntropy" min="0" max="0.05" step="0.001" value="0.003">
+            <span class="mono" id="ppoEntropyReadout">0.003</span>
+          </label>
+          <label>Clip-faktor
+            <input type="range" id="ppoClip" min="0.05" max="0.4" step="0.01" value="0.2">
+            <span class="mono" id="ppoClipReadout">0.20</span>
+          </label>
+          <label>GAE λ
+            <input type="range" id="ppoLambda" min="0.5" max="1.0" step="0.01" value="0.95">
+            <span class="mono" id="ppoLambdaReadout">0.95</span>
+          </label>
+        </div>
+        <div class="row">
+          <label>Batch
+            <input type="range" id="ppoBatch" min="32" max="512" step="32" value="256">
+            <span class="mono" id="ppoBatchReadout">256</span>
+          </label>
+          <label>Epochs
+            <input type="range" id="ppoEpochs" min="1" max="10" step="1" value="4">
+            <span class="mono" id="ppoEpochsReadout">4</span>
+          </label>
+          <label>Värdevikt
+            <input type="range" id="ppoValueCoef" min="0.1" max="1.0" step="0.05" value="0.5">
+            <span class="mono" id="ppoValueCoefReadout">0.50</span>
+          </label>
+        </div>
+      </div>
+    </details>
+  </section>
 </main>
 
 <section id="guideView" class="hidden">
   <div class="card">
-    <h2>Vad som ändrats</h2>
+    <h2>Vad är nytt?</h2>
     <ul>
-      <li>Anti-snurr-straff: svängar kostar lite, loop-mönster kostar mer, samt straff för nyligen besökta rutor.</li>
-      <li>Dueling Double DQN + djupare nät (256→256→128) för stabilare inlärning.</li>
-      <li>Prioritized replay + n-step returns with sliders for smoother training.</li>
-      <li>Curriculum: automatiskt större bräde när det går bra ⇒ klarar mer komplexa layouter.</li>
-      <li>Mjukare rendering och mindre risk att renderkön sticker iväg.</li>
+      <li>Ny renderingloop synkad med inlärningen – masken rör sig mjukt utan att du behöver pilla på inställningar.</li>
+      <li>Tre visningslägen (Mjuk, Snabb, Turbo) som styr hur ofta vi visar frames medan träningen fortsätter.</li>
+      <li>Fem RL-strategier: dueling DQN, klassisk DQN, policy gradient, advantage actor-critic och PPO.</li>
+      <li>Förbättrade spar/ladda-funktioner och diagram för reward och förlust.</li>
     </ul>
+    <h3>Tips</h3>
+    <p>Starta med “Mjuk”-läget för att se hur nätverket beter sig. När du vill öka farten kan du växla till “Snabb” eller “Turbo”.</p>
+    <p>Varje algoritm har sina egna sliders i <em>Avancerade inställningar</em>. Testa gärna olika kombinationer och spara din favorit som JSON.</p>
   </div>
-  <!-- (resten av din guide kan behållas eller uppdateras) -->
 </section>
 
 <input type="file" id="fileLoader" accept="application/json" hidden>
 
-<footer class="hint">© Marcus — Snake learns from scratch with DQN (dueling double + anti-loop)</footer>
+<footer class="hint">© Marcus — Snake lär sig med flera RL-strategier och cinematiska rörelser.</footer>
 
 <script>
-/* ---------------- Serialization helpers (samma som tidigare) ---------------- */
+'use strict';
+
+/* ---------------- Serialization helpers ---------------- */
 const DTYPE_ARRAYS={float32:Float32Array,int32:Int32Array,bool:Uint8Array};
-function typedArrayToBase64(arr){ if(!(arr instanceof Float32Array||arr instanceof Int32Array||arr instanceof Uint8Array)){arr=Float32Array.from(arr);}
-  const view=new Uint8Array(arr.buffer,arr.byteOffset||0,arr.byteLength); let binary=''; const chunk=0x8000;
-  for(let i=0;i<view.length;i+=chunk){binary+=String.fromCharCode.apply(null,view.subarray(i,i+chunk));}
+function typedArrayToBase64(arr){
+  if(!(arr instanceof Float32Array||arr instanceof Int32Array||arr instanceof Uint8Array)){
+    arr=Float32Array.from(arr);
+  }
+  const view=new Uint8Array(arr.buffer,arr.byteOffset||0,arr.byteLength);
+  let binary='';
+  const chunk=0x8000;
+  for(let i=0;i<view.length;i+=chunk){
+    binary+=String.fromCharCode.apply(null,view.subarray(i,i+chunk));
+  }
   return btoa(binary);
 }
-function base64ToTypedArray(str,dtype='float32'){ const binary=atob(str); const len=binary.length; const bytes=new Uint8Array(len);
-  for(let i=0;i<len;i++)bytes[i]=binary.charCodeAt(i); const C=DTYPE_ARRAYS[dtype]||Float32Array; return new C(bytes.buffer);
+function base64ToTypedArray(str,dtype='float32'){
+  const binary=atob(str);
+  const len=binary.length;
+  const bytes=new Uint8Array(len);
+  for(let i=0;i<len;i++) bytes[i]=binary.charCodeAt(i);
+  const C=DTYPE_ARRAYS[dtype]||Float32Array;
+  return new C(bytes.buffer);
 }
-function assignArray(target,source,mapper=v=>v){ target.length=0; if(!Array.isArray(source))return; source.forEach(v=>target.push(mapper(v))); }
+function assignArray(target,source,mapper=v=>v){
+  target.length=0;
+  if(!Array.isArray(source)) return;
+  source.forEach(v=>target.push(mapper(v)));
+}
 
-/* ---------------- Environment med anti-loop ---------------- */
-class SnakeEnv {
-  constructor(cols=20, rows=20){
-    this.cols=cols; this.rows=rows;
+/* ---------------- Snake environment ---------------- */
+class SnakeEnv{
+  constructor(cols=20,rows=20){
+    this.cols=cols;
+    this.rows=rows;
     this.reset();
   }
   reset(){
@@ -182,88 +647,99 @@ class SnakeEnv {
     const cx=(this.cols/2|0), cy=(this.rows/2|0);
     this.snake=[{x:cx-1,y:cy},{x:cx,y:cy}];
     this.snakeSet=new Set(this.snake.map(p=>`${p.x},${p.y}`));
-    // besökskarta (decay varje steg)
     this.visit=new Float32Array(this.cols*this.rows).fill(0);
-    // historik för åtgärder (för att upptäcka L-R-L-R)
     this.actionHist=[];
     this.spawnFruit();
-    this.steps=0; this.stepsSinceFruit=0; this.alive=true;
+    this.steps=0;
+    this.stepsSinceFruit=0;
+    this.alive=true;
     return this.getState();
   }
-  idx(x,y){return y*this.cols+x}
+  idx(x,y){return y*this.cols+x;}
   spawnFruit(){
     const free=[];
-    for(let y=0;y<this.rows;y++)for(let x=0;x<this.cols;x++)
-      if(!this.snakeSet.has(`${x},${y}`)) free.push({x,y});
+    for(let y=0;y<this.rows;y++){
+      for(let x=0;x<this.cols;x++){
+        if(!this.snakeSet.has(`${x},${y}`)) free.push({x,y});
+      }
+    }
     this.fruit=free.length?free[(Math.random()*free.length)|0]:{x:-1,y:-1};
   }
-  turn(a){ const d=this.dir; if(a===1)this.dir={x:-d.y,y:d.x}; else if(a===2)this.dir={x:d.y,y:-d.x}; }
+  turn(a){
+    const d=this.dir;
+    if(a===1)this.dir={x:-d.y,y:d.x};
+    else if(a===2)this.dir={x:d.y,y:-d.x};
+  }
   step(a){
     if(!this.alive) return {state:this.getState(),reward:0,done:true};
     this.turn(a);
-    const h=this.snake[0], nx=h.x+this.dir.x, ny=h.y+this.dir.y;
-    this.steps++; this.stepsSinceFruit++;
-
-    // vägg/bit-själv
-    if(nx<0||ny<0||nx>=this.cols||ny>=this.rows||this.snakeSet.has(`${nx},${ny}`)){
-      this.alive=false; return {state:this.getState(),reward:-10,done:true};
+    const h=this.snake[0];
+    const nx=h.x+this.dir.x;
+    const ny=h.y+this.dir.y;
+    this.steps++;
+    this.stepsSinceFruit++;
+    const key=`${nx},${ny}`;
+    const tail=this.snake[this.snake.length-1];
+    const willGrow=(nx===this.fruit.x && ny===this.fruit.y);
+    const hitsWall=nx<0||ny<0||nx>=this.cols||ny>=this.rows;
+    const hitsBody=this.snakeSet.has(key) && !(tail && tail.x===nx && tail.y===ny && !willGrow);
+    if(hitsWall||hitsBody){
+      this.alive=false;
+      return {state:this.getState(),reward:-10,done:true};
     }
-
-    // decay besökskartan lite
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
-
     this.snake.unshift({x:nx,y:ny});
-    let r=-0.01; // något mildare bas-stegkostnad
-
-    // svängkostnad (liten)
+    let r=-0.01;
     if(a!==0) r-=0.005;
-
-    // loop-oscillation: kolla de fyra senaste
     this.actionHist.push(a);
     if(this.actionHist.length>6) this.actionHist.shift();
     if(this.actionHist.length>=4){
       const last4=this.actionHist.slice(-4).join(',');
-      // mönster 1,2,1,2 eller 2,1,2,1 ⇒ snurr
       if(last4==='1,2,1,2' || last4==='2,1,2,1') r-=0.10;
     }
-
-    // besöksstraff (nyligen trampad cell) – motverkar cirklar
     const vidx=this.idx(nx,ny);
-    const revisitPenalty=this.visit[vidx]*0.02; // skala liten men tydlig
-    r -= revisitPenalty;
-
+    const revisitPenalty=this.visit[vidx]*0.02;
+    r-=revisitPenalty;
+    let ateFruit=false;
     if(nx===this.fruit.x && ny===this.fruit.y){
-      r+=10; this.snakeSet.add(`${nx},${ny}`); this.spawnFruit(); this.stepsSinceFruit=0;
-    } else {
-      const tail=this.snake.pop(); this.snakeSet.delete(`${tail.x},${tail.y}`);
+      ateFruit=true;
+      r+=10;
       this.snakeSet.add(`${nx},${ny}`);
-      // uppdatera besökskarta
+      this.spawnFruit();
+      this.stepsSinceFruit=0;
+    }else{
+      const tail=this.snake.pop();
+      this.snakeSet.delete(`${tail.x},${tail.y}`);
+      this.snakeSet.add(`${nx},${ny}`);
       this.visit[vidx]=Math.min(1,this.visit[vidx]+0.3);
-
-      // potential shaping mot frukt
       const pd=Math.abs(h.x-this.fruit.x)+Math.abs(h.y-this.fruit.y);
       const nd=Math.abs(nx-this.fruit.x)+Math.abs(ny-this.fruit.y);
       r+= (nd<pd?0.03:-0.03);
     }
-
-    // stagnation-timeout
     if(this.stepsSinceFruit>this.cols*this.rows*2){
-      this.alive=false; r-=5; return {state:this.getState(),reward:r,done:true};
+      this.alive=false;
+      r-=5;
+      return {state:this.getState(),reward:r,done:true};
     }
-    return {state:this.getState(),reward:r,done:false};
+    return {state:this.getState(),reward:r,done:false,ateFruit};
+  }
+  getVisit(x,y){
+    if(x<0||y<0||x>=this.cols||y>=this.rows) return 1;
+    return this.visit[this.idx(x,y)]||0;
   }
   getState(){
     const h=this.snake[0];
     const L={x:-this.dir.y,y:this.dir.x}, R={x:this.dir.y,y:-this.dir.x};
-    const block=(dx,dy)=>{const x=h.x+dx,y=h.y+dy;
-      return (x<0||y<0||x>=this.cols||y>=this.rows||this.snakeSet.has(`${x},${y}`))?1:0;};
+    const block=(dx,dy)=>{
+      const x=h.x+dx,y=h.y+dy;
+      return (x<0||y<0||x>=this.cols||y>=this.rows||this.snakeSet.has(`${x},${y}`))?1:0;
+    };
     const danger=[block(this.dir.x,this.dir.y),block(L.x,L.y),block(R.x,R.y)];
     const dir=[this.dir.y===-1?1:0,this.dir.y===1?1:0,this.dir.x===-1?1:0,this.dir.x===1?1:0];
     const fruit=[this.fruit.y<h.y?1:0,this.fruit.y>h.y?1:0,this.fruit.x<h.x?1:0,this.fruit.x>h.x?1:0];
     const dists=[h.y/(this.rows-1),(this.rows-1-h.y)/(this.rows-1),h.x/(this.cols-1),(this.cols-1-h.x)/(this.cols-1)];
     const dx=this.fruit.x-h.x, dy=this.fruit.y-h.y, len=Math.hypot(dx,dy)||1;
-    // lägg till “trängsel” från besökskarta runt huvudet (4-grannar)
-    const crowd = [
+    const crowd=[
       this.getVisit(h.x, h.y-1),
       this.getVisit(h.x, h.y+1),
       this.getVisit(h.x-1, h.y),
@@ -271,17 +747,11 @@ class SnakeEnv {
     ];
     return Float32Array.from([...danger,...dir,...fruit,...dists,dy/len,dx/len,...crowd]);
   }
-  getVisit(x,y){
-    if(x<0||y<0||x>=this.cols||y>=this.rows) return 1; // utanför = “trångt”
-    return this.visit[this.idx(x,y)]||0;
-  }
 }
 
-/* ---------------- ReplayBuffer (oförändrat) ---------------- */
+/* ---------------- Replay buffer helpers ---------------- */
 class NStepAccumulator{
-  constructor(n=1,gamma=0.99){
-    this.setConfig(n,gamma);
-  }
+  constructor(n=1,gamma=0.99){ this.setConfig(n,gamma); }
   setConfig(n,gamma){
     this.n=Math.max(1,n|0);
     this.gamma=gamma;
@@ -338,7 +808,6 @@ class NStepAccumulator{
     return out;
   }
 }
-
 class ReplayBuffer{
   constructor(cap=50000,opts={}){
     this.cap=Math.max(1,cap|0);
@@ -352,206 +821,161 @@ class ReplayBuffer{
     this.maxPriority=this.priorityEps;
   }
   size(){return this.buf.length;}
-  setAlpha(val){this.alpha=Math.max(0.01,+val||0.01);}
-  setBeta(val){this.beta=Math.min(1,Math.max(0,+val||0));}
-  setBetaIncrement(val){this.betaIncrement=Math.max(0,+val||0);}
+  setCapacity(cap){
+    const newCap=Math.max(1,cap|0);
+    if(newCap===this.cap) return;
+    this.cap=newCap;
+    this.buf=this.buf.slice(-this.cap);
+    this.pos=Math.min(this.pos,this.cap-1);
+    this.priorities=new Float32Array(this.cap);
+    this.maxPriority=this.priorityEps;
+  }
+  setAlpha(val){ this.alpha=Math.max(0.01,+val||0.01); }
+  setBeta(val){ this.beta=Math.min(1,Math.max(0,+val||0)); }
   setPriorityEps(val){
     this.priorityEps=Math.max(1e-6,+val||1e-6);
     for(let i=0;i<this.buf.length;i++){
-      if(this.priorities[i]<this.priorityEps){
-        this.priorities[i]=this.priorityEps;
-      }
-    }
-    this.maxPriority=Math.max(this.maxPriority,this.priorityEps);
-  }
-  setCapacity(cap){
-    cap=Math.max(1,cap|0);
-    if(cap===this.cap)return;
-    if(cap<this.buf.length){
-      const start=this.buf.length-cap;
-      this.buf=this.buf.slice(start);
-      const next=new Float32Array(cap);
-      for(let i=0;i<cap;i++)next[i]=this.priorities[start+i];
-      this.priorities=next;
-    } else {
-      const next=new Float32Array(cap);
-      next.set(this.priorities.slice(0,this.buf.length));
-      this.priorities=next;
-    }
-    this.cap=cap;
-    this.pos=this.buf.length%this.cap;
-    this.maxPriority=this.priorityEps;
-    for(let i=0;i<this.buf.length;i++){
-      this.maxPriority=Math.max(this.maxPriority,this.priorities[i]);
+      if(this.priorities[i]<this.priorityEps) this.priorities[i]=this.priorityEps;
     }
   }
-  push(s,a,r,ns,d,priority){
-    if(typeof s==='object'&&s!==null&&s.s!==undefined){
-      ({s,a,r,ns,d,priority}=s);
-    }
-    const entry={
-      s:Float32Array.from(s),
-      a:a|0,
-      r:+r,
-      ns:Float32Array.from(ns),
-      d:!!d,
-    };
-    const p=Math.max(priority??this.maxPriority,this.priorityEps);
+  setBetaIncrement(val){ this.betaIncrement=Math.max(0,+val||0); }
+  push(sample){
+    const entry={...sample};
     if(this.buf.length<this.cap){
       this.buf.push(entry);
-      this.priorities[this.buf.length-1]=p;
-    } else {
-      this.buf[this.pos]=entry;
-      this.priorities[this.pos]=p;
+      const lastIdx=this.buf.length-1;
+      this.priorities[lastIdx]=this.maxPriority;
+    }else{
+      const idx=this.pos%this.cap;
+      this.buf[idx]=entry;
+      this.priorities[idx]=this.maxPriority;
     }
-    this.maxPriority=Math.max(this.maxPriority,p);
     this.pos=(this.pos+1)%this.cap;
   }
-  sample(n){
-    const size=this.buf.length;
-    if(!size)return null;
-    const count=Math.min(n,size);
-    const powered=new Float32Array(size);
-    let total=0;
-    for(let i=0;i<size;i++){
-      const pow=Math.pow(this.priorities[i],this.alpha);
-      powered[i]=pow;
-      total+=pow;
-    }
-    if(total<=0){
-      for(let i=0;i<size;i++)powered[i]=1;
-      total=size;
-    }
-    const cdf=new Float32Array(size);
-    let cumulative=0;
-    for(let i=0;i<size;i++){
-      cumulative+=powered[i];
-      cdf[i]=cumulative;
-    }
+  sample(batchSize){
+    if(!this.buf.length) return null;
+    const size=Math.min(batchSize,this.buf.length);
+    const priorities=this.priorities.slice(0,this.buf.length);
+    const probs=priorities.map(p=>Math.pow(p,this.alpha));
+    const sum=probs.reduce((a,b)=>a+b,0)||1;
+    const normalized=probs.map(p=>p/sum);
     const batch=[];
-    const idxs=new Array(count);
-    const weights=new Float32Array(count);
-    let maxWeight=0;
-    for(let k=0;k<count;k++){
-      const target=Math.random()*total;
-      let l=0,h=size-1;
-      while(l<h){
-        const mid=(l+h)>>>1;
-        if(target<=cdf[mid])h=mid; else l=mid+1;
-      }
-      const idx=l;
-      idxs[k]=idx;
-      batch.push(this.buf[idx]);
-      const prob=powered[idx]/total;
-      const weight=Math.pow(size*prob,-this.beta);
-      weights[k]=weight;
-      if(weight>maxWeight)maxWeight=weight;
-    }
-    if(maxWeight>0){
-      for(let i=0;i<count;i++)weights[i]/=maxWeight;
-    }
+    const idxs=[];
+    const weights=[];
+    let beta=this.beta;
     this.beta=Math.min(1,this.beta+this.betaIncrement);
-    return {batch,idxs,weights:Array.from(weights)};
+    const maxWeight=Math.pow(this.buf.length, -beta);
+    for(let i=0;i<size;i++){
+      const r=Math.random();
+      let acc=0;
+      let index=0;
+      for(let j=0;j<normalized.length;j++){
+        acc+=normalized[j];
+        if(r<=acc){ index=j; break; }
+      }
+      batch.push(this.buf[index]);
+      idxs.push(index);
+      const w=Math.pow(this.buf.length*normalized[index], -beta);
+      weights.push(w/maxWeight);
+    }
+    return {batch,idxs,weights};
   }
-  updatePriorities(idxs,values){
-    if(!idxs||!values)return;
-    const valArr=Array.from(values);
-    for(let i=0;i<idxs.length;i++){
-      const idx=idxs[i];
-      if(idx<0||idx>=this.buf.length)continue;
-      const raw=valArr[i]??0;
-      const p=Math.max(Math.abs(raw),this.priorityEps);
+  updatePriorities(idxs,priorities){
+    idxs.forEach((idx,i)=>{
+      const p=Math.max(this.priorityEps,priorities[i]);
       this.priorities[idx]=p;
       this.maxPriority=Math.max(this.maxPriority,p);
-    }
+    });
   }
   toJSON(){
     return {
       cap:this.cap,
+      buf:this.buf.map(item=>({
+        s:Array.from(item.s),
+        a:item.a,
+        r:item.r,
+        ns:Array.from(item.ns),
+        d:item.d,
+      })),
       pos:this.pos,
       alpha:this.alpha,
       beta:this.beta,
       betaIncrement:this.betaIncrement,
       priorityEps:this.priorityEps,
+      priorities:Array.from(this.priorities),
       maxPriority:this.maxPriority,
-      priorities:Array.from(this.priorities.slice(0,this.buf.length)),
-      buf:this.buf.map(item=>({
-        s:typedArrayToBase64(item.s),
-        a:item.a,
-        r:item.r,
-        ns:typedArrayToBase64(item.ns),
-        d:item.d?1:0,
-      })),
     };
   }
-  static fromJSON(data={},overrideCap,overrides={}){
-    const cap=overrideCap??(typeof data.cap==='number'?data.cap:50000);
-    const opts={
-      alpha:overrides.alpha??data.alpha??0.6,
-      beta:overrides.beta??data.beta??0.4,
-      betaIncrement:overrides.betaIncrement??data.betaIncrement??0.000002,
-      priorityEps:overrides.priorityEps??data.priorityEps??0.001,
-    };
-    const buffer=new ReplayBuffer(cap,opts);
-    const entries=Array.isArray(data.buf)?data.buf:[];
-    const priorities=Array.isArray(data.priorities)?data.priorities:[];
-    const fallback=Math.max(buffer.priorityEps,typeof data.maxPriority==='number'?data.maxPriority:1);
-    const entrySlice=entries.slice(-cap);
-    const prioSlice=priorities.slice(-cap);
-    entrySlice.forEach((entry,idx)=>{
-      const priority=prioSlice[idx]??fallback;
-      buffer.push({
-        s:base64ToTypedArray(entry.s,'float32'),
-        a:entry.a,
-        r:entry.r,
-        ns:base64ToTypedArray(entry.ns,'float32'),
-        d:!!entry.d,
-        priority,
+  static fromJSON(json={},cap,opts={}){
+    const buffer=new ReplayBuffer(cap??json.cap,opts);
+    if(Array.isArray(json.buf)){
+      buffer.buf=json.buf.map(item=>({
+        s:Float32Array.from(item.s),
+        a:item.a,
+        r:item.r,
+        ns:Float32Array.from(item.ns),
+        d:item.d,
+      }));
+      buffer.priorities=new Float32Array(buffer.cap);
+      json.priorities?.forEach((p,i)=>{
+        if(i<buffer.priorities.length) buffer.priorities[i]=p;
       });
-    });
-    buffer.pos=buffer.buf.length%buffer.cap;
-    buffer.maxPriority=buffer.priorityEps;
-    for(let i=0;i<buffer.buf.length;i++){
-      buffer.maxPriority=Math.max(buffer.maxPriority,buffer.priorities[i]);
+      buffer.pos=json.pos??0;
+      buffer.maxPriority=json.maxPriority??buffer.priorityEps;
     }
-    buffer.beta=opts.beta;
-    buffer.betaIncrement=opts.betaIncrement;
     return buffer;
   }
 }
 
-/* ---------------- Dueling Double DQN (djupare nät) ---------------- */
-class DQN{
-  constructor(sDim,aDim,cfg){
-    this.sDim=sDim; this.aDim=aDim;
-    this.gamma=cfg.gamma;
-    this.lr=cfg.lr;
-    this.batch=cfg.batch;
+/* ---------------- Agents ---------------- */
+class DQNAgent{
+  constructor(sDim,aDim,cfg={}){
+    this.kind='dqn';
+    this.sDim=sDim;
+    this.aDim=aDim;
+    this.gamma=cfg.gamma??0.98;
+    this.lr=cfg.lr??0.0005;
+    this.batch=cfg.batch??128;
     this.priorityEps=cfg.priorityEps??0.001;
-    this.buffer=new ReplayBuffer(cfg.bufferSize,{
-      alpha:cfg.priorityAlpha,
-      beta:cfg.priorityBeta,
-      betaIncrement:cfg.priorityBetaIncrement,
+    this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():[256,256,128];
+    this.dueling=cfg.dueling!==undefined?!!cfg.dueling:true;
+    this.double=cfg.double!==undefined?!!cfg.double:true;
+    this.learnRepeats=cfg.learnRepeats??2;
+    this.buffer=new ReplayBuffer(cfg.bufferSize??50000,{
+      alpha:cfg.priorityAlpha??0.6,
+      beta:cfg.priorityBeta??0.4,
+      betaIncrement:cfg.priorityBetaIncrement??0.000002,
       priorityEps:this.priorityEps,
     });
     this.priorityEps=this.buffer.priorityEps;
-    this.epsStart=cfg.epsStart; this.epsEnd=cfg.epsEnd; this.epsDecay=cfg.epsDecay;
-    this.nStep=cfg.nStep??1;
+    this.epsStart=cfg.epsStart??1.0;
+    this.epsEnd=cfg.epsEnd??0.05;
+    this.epsDecay=cfg.epsDecay??40000;
+    this.nStep=cfg.nStep??3;
     this.nStepBuffer=new NStepAccumulator(this.nStep,this.gamma);
-    this.trainStep=0; this.updateEpsilon(0);
-    this.online=this.build(); this.target=this.build(); this.syncTarget();
+    this.trainStep=cfg.trainStep??0;
     this.optimizer=tf.train.adam(this.lr);
+    this.online=this.build();
+    this.target=this.build();
+    this.syncTarget();
+    this.updateEpsilon(this.trainStep);
   }
   build(){
     const input=tf.input({shape:[this.sDim]});
-    const d1=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(input);
-    const d2=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(d1);
-    const d3=tf.layers.dense({units:128,activation:'relu',kernelInitializer:'heNormal'}).apply(d2);
-    const adv=tf.layers.dense({units:128,activation:'relu',kernelInitializer:'heNormal'}).apply(d3);
-    const advOut=tf.layers.dense({units:this.aDim,activation:'linear'}).apply(adv);
-    const val=tf.layers.dense({units:128,activation:'relu',kernelInitializer:'heNormal'}).apply(d3);
-    const valOut=tf.layers.dense({units:1,activation:'linear'}).apply(val);
-    const q=tf.layers.add().apply([advOut,valOut]);
+    let x=input;
+    this.layers.forEach(units=>{
+      x=tf.layers.dense({units,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
+    });
+    let q;
+    if(this.dueling){
+      const adv=tf.layers.dense({units:128,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
+      const advOut=tf.layers.dense({units:this.aDim,activation:'linear'}).apply(adv);
+      const val=tf.layers.dense({units:128,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
+      const valOut=tf.layers.dense({units:1,activation:'linear'}).apply(val);
+      q=tf.layers.add().apply([advOut,valOut]);
+    }else{
+      q=tf.layers.dense({units:this.aDim,activation:'linear'}).apply(x);
+    }
     return tf.model({inputs:input,outputs:q});
   }
   setGamma(val){
@@ -580,11 +1004,24 @@ class DQN{
     const tail=this.nStepBuffer.flush();
     if(tail.length) tail.forEach(t=>this.buffer.push(t));
   }
-  syncTarget(){ this.target.setWeights(this.online.getWeights()); }
-  updateEpsilon(step){ const t=Math.min(1,step/this.epsDecay); this.epsilon=this.epsStart*(1-t)+this.epsEnd*t; return this.epsilon; }
+  syncTarget(){
+    this.target.setWeights(this.online.getWeights());
+  }
+  updateEpsilon(step){
+    const t=Math.min(1,step/this.epsDecay);
+    this.epsilon=this.epsStart*(1-t)+this.epsEnd*t;
+    return this.epsilon;
+  }
   act(s){
     if(Math.random()<this.epsilon) return (Math.random()*this.aDim)|0;
-    return tf.tidy(()=>this.online.predict(tf.tensor2d([s],[1,this.sDim])).argMax(1).dataSync()[0]);
+    return tf.tidy(()=>{
+      return this.online.predict(tf.tensor2d([s],[1,this.sDim])).argMax(1).dataSync()[0];
+    });
+  }
+  greedyAction(s){
+    return tf.tidy(()=>{
+      return this.online.predict(tf.tensor2d([s],[1,this.sDim])).argMax(1).dataSync()[0];
+    });
   }
   async learn(){
     if(this.buffer.size()<this.batch) return null;
@@ -600,12 +1037,18 @@ class DQN{
     let tdErrors;
     const lossTensor=await this.optimizer.minimize(()=>{
       const q=this.online.apply(S);
-      const qPred=tf.sum(q.mul(tf.oneHot(A,this.aDim)),1);
-      const qNextOnline=this.online.apply(NS);
-      const aPrime=tf.argMax(qNextOnline,1);
-      const oh=tf.oneHot(aPrime,this.aDim);
+      const oneHot=tf.oneHot(A,this.aDim);
+      const qPred=tf.sum(q.mul(oneHot),1);
       const qNextTarget=this.target.apply(NS);
-      const qNext=tf.sum(qNextTarget.mul(oh),1);
+      let qNext;
+      if(this.double){
+        const qNextOnline=this.online.apply(NS);
+        const aPrime=tf.argMax(qNextOnline,1);
+        const mask=tf.oneHot(aPrime,this.aDim);
+        qNext=tf.sum(qNextTarget.mul(mask),1);
+      }else{
+        qNext=tf.max(qNextTarget,1);
+      }
       const target=R.add(qNext.mul(tf.scalar(this.gamma)).mul(tf.scalar(1).sub(D)));
       tdErrors=tf.keep(target.sub(qPred));
       const absErr=tdErrors.abs();
@@ -613,7 +1056,7 @@ class DQN{
       const linear=absErr.sub(quadratic);
       const losses=quadratic.square().mul(0.5).add(linear);
       return losses.mul(W).mean();
-    }, true);
+    },true);
     const loss=lossTensor.dataSync()[0];
     lossTensor.dispose();
     const absTd=tdErrors.abs();
@@ -625,33 +1068,53 @@ class DQN{
     this.trainStep++;
     return loss;
   }
+  async finishEpisode(){
+    return null;
+  }
   async exportState(){
     const weights=await Promise.all(this.online.getWeights().map(async w=>({
-      shape:w.shape, dtype:w.dtype, data:typedArrayToBase64(await w.data()),
+      shape:w.shape,
+      dtype:w.dtype,
+      data:typedArrayToBase64(await w.data()),
     })));
     return {
-      version:3,
-      sDim:this.sDim, aDim:this.aDim,
+      version:4,
+      kind:'dqn',
+      sDim:this.sDim,
+      aDim:this.aDim,
       config:{
         gamma:this.gamma,
         lr:this.lr,
         batch:this.batch,
         bufferSize:this.buffer.cap,
-        epsStart:this.epsStart, epsEnd:this.epsEnd, epsDecay:this.epsDecay,
+        epsStart:this.epsStart,
+        epsEnd:this.epsEnd,
+        epsDecay:this.epsDecay,
         nStep:this.nStep,
         priorityAlpha:this.buffer.alpha,
         priorityBeta:this.buffer.beta,
         priorityBetaIncrement:this.buffer.betaIncrement,
         priorityEps:this.buffer.priorityEps,
+        dueling:this.dueling,
+        double:this.double,
+        layers:this.layers,
+        learnRepeats:this.learnRepeats,
       },
-      trainStep:this.trainStep, epsilon:this.epsilon, buffer:this.buffer.toJSON(), weights,
+      trainStep:this.trainStep,
+      epsilon:this.epsilon,
+      buffer:this.buffer.toJSON(),
+      weights,
     };
   }
   async importState(state){
-    if(!state)throw new Error('Ogiltigt tillstånd');
-    if(state.sDim&&state.sDim!==this.sDim)throw new Error('State-dimension matchar inte');
-    if(state.aDim&&state.aDim!==this.aDim)throw new Error('Action-dimension matchar inte');
+    if(!state) throw new Error('Ogiltigt tillstånd');
+    if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
+    if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
     const cfg=state.config??{};
+    this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():this.layers;
+    this.dueling=cfg.dueling!==undefined?!!cfg.dueling:this.dueling;
+    this.double=cfg.double!==undefined?!!cfg.double:this.double;
+    this.learnRepeats=cfg.learnRepeats??this.learnRepeats;
     this.setGamma(cfg.gamma??this.gamma);
     this.setLearningRate(cfg.lr??this.lr);
     this.batch=cfg.batch??this.batch;
@@ -662,36 +1125,565 @@ class DQN{
       priorityEps:cfg.priorityEps,
     });
     this.priorityEps=this.buffer.priorityEps;
-    this.epsStart=cfg.epsStart??this.epsStart; this.epsEnd=cfg.epsEnd??this.epsEnd; this.epsDecay=cfg.epsDecay??this.epsDecay;
+    this.epsStart=cfg.epsStart??this.epsStart;
+    this.epsEnd=cfg.epsEnd??this.epsEnd;
+    this.epsDecay=cfg.epsDecay??this.epsDecay;
     this.nStep=cfg.nStep??this.nStep;
     this.nStepBuffer=new NStepAccumulator(this.nStep,this.gamma);
-    this.trainStep=state.trainStep??this.trainStep;
-    this.optimizer=tf.train.adam(this.lr);
+    this.trainStep=state.trainStep??0;
+    this.online.dispose();
+    this.target.dispose();
+    this.online=this.build();
+    this.target=this.build();
     if(Array.isArray(state.weights)){
       const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
-      this.online.setWeights(tensors); tensors.forEach(t=>t.dispose());
+      this.online.setWeights(tensors);
+      tensors.forEach(t=>t.dispose());
     }
-    this.target=this.build(); this.syncTarget();
-    this.epsilon=state.epsilon??this.updateEpsilon(this.trainStep);
+    this.syncTarget();
+    this.updateEpsilon(this.trainStep);
+  }
+  setEntropy(){}
+}
+class PolicyGradientAgent{
+  constructor(sDim,aDim,cfg={}){
+    this.kind='policy';
+    this.sDim=sDim;
+    this.aDim=aDim;
+    this.gamma=cfg.gamma??0.99;
+    this.lr=cfg.lr??0.0008;
+    this.entropy=cfg.entropy??0.01;
+    this.optimizer=tf.train.adam(this.lr);
+    this.model=this.build();
+    this.trajectory=[];
+    this.learnRepeats=0;
+  }
+  build(){
+    const input=tf.input({shape:[this.sDim]});
+    let x=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(input);
+    x=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
+    const out=tf.layers.dense({units:this.aDim,activation:'softmax'}).apply(x);
+    return tf.model({inputs:input,outputs:out});
+  }
+  setGamma(val){ this.gamma=val; }
+  setLearningRate(val){ this.lr=val; this.optimizer=tf.train.adam(this.lr); }
+  setEntropy(val){ this.entropy=val; }
+  act(s){
+    return tf.tidy(()=>{
+      const probs=this.model.predict(tf.tensor2d([s],[1,this.sDim])).dataSync();
+      const r=Math.random();
+      let acc=0;
+      for(let i=0;i<probs.length;i++){
+        acc+=probs[i];
+        if(r<=acc) return i;
+      }
+      return probs.length-1;
+    });
+  }
+  greedyAction(s){
+    return tf.tidy(()=>{
+      const probs=this.model.predict(tf.tensor2d([s],[1,this.sDim])).dataSync();
+      let best=0,max=-Infinity;
+      probs.forEach((p,i)=>{ if(p>max){max=p;best=i;} });
+      return best;
+    });
+  }
+  recordTransition(s,a,r,ns,d){
+    this.trajectory.push({s:Float32Array.from(s),a,r});
+  }
+  drainPending(){ this.trajectory.length=0; }
+  async learn(){ return null; }
+  async finishEpisode(){
+    if(!this.trajectory.length) return null;
+    const returns=[];
+    let g=0;
+    for(let i=this.trajectory.length-1;i>=0;i--){
+      g=this.trajectory[i].r+this.gamma*g;
+      returns[i]=g;
+    }
+    const states=tf.tensor2d(this.trajectory.map(t=>t.s),[this.trajectory.length,this.sDim]);
+    const actions=tf.tensor1d(this.trajectory.map(t=>t.a),'int32');
+    const returnsTensor=tf.tensor1d(returns);
+    const entropyCoeff=this.entropy;
+    const normalized=standardize1D(returnsTensor);
+    const lossTensor=await this.optimizer.minimize(()=>tf.tidy(()=>{
+      const probs=this.model.apply(states);
+      const mask=tf.oneHot(actions,this.aDim);
+      const selected=probs.mul(mask).sum(1).add(1e-8);
+      const logProbs=tf.log(selected);
+      const policyLoss=tf.neg(logProbs.mul(normalized));
+      const entropy=probs.mul(tf.log(probs.add(1e-8))).sum(1).neg();
+      return policyLoss.sub(entropy.mul(entropyCoeff)).mean();
+    }),true);
+    const loss=lossTensor.dataSync()[0];
+    lossTensor.dispose();
+    states.dispose();
+    actions.dispose();
+    returnsTensor.dispose();
+    normalized.dispose();
+    this.trajectory.length=0;
+    return loss;
+  }
+  async exportState(){
+    const weights=await Promise.all(this.model.getWeights().map(async w=>({
+      shape:w.shape,
+      dtype:w.dtype,
+      data:typedArrayToBase64(await w.data()),
+    })));
+    return {
+      version:4,
+      kind:'policy',
+      sDim:this.sDim,
+      aDim:this.aDim,
+      config:{
+        gamma:this.gamma,
+        lr:this.lr,
+        entropy:this.entropy,
+      },
+      weights,
+    };
+  }
+  async importState(state){
+    if(!state) throw new Error('Ogiltigt tillstånd');
+    if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
+    if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
+    const cfg=state.config??{};
+    this.setGamma(cfg.gamma??this.gamma);
+    this.setLearningRate(cfg.lr??this.lr);
+    this.setEntropy(cfg.entropy??this.entropy);
+    this.model.dispose();
+    this.model=this.build();
+    if(Array.isArray(state.weights)){
+      const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
+      this.model.setWeights(tensors);
+      tensors.forEach(t=>t.dispose());
+    }
   }
 }
+class A2CAgent{
+  constructor(sDim,aDim,cfg={}){
+    this.kind='a2c';
+    this.sDim=sDim;
+    this.aDim=aDim;
+    this.gamma=cfg.gamma??0.99;
+    this.lr=cfg.lr??0.0006;
+    this.entropyCoef=cfg.entropy??0.005;
+    this.valueCoef=cfg.valueCoef??0.5;
+    this.optimizer=tf.train.adam(this.lr);
+    this.model=this.build();
+    this.trajectory=[];
+    this.learnRepeats=0;
+  }
+  build(){
+    const input=tf.input({shape:[this.sDim]});
+    let x=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(input);
+    x=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
+    const policy=tf.layers.dense({units:this.aDim,activation:'softmax'}).apply(x);
+    const value=tf.layers.dense({units:1,activation:'linear'}).apply(x);
+    return tf.model({inputs:input,outputs:[policy,value]});
+  }
+  setGamma(val){ this.gamma=val; }
+  setLearningRate(val){ this.lr=val; this.optimizer=tf.train.adam(this.lr); }
+  setEntropy(val){ this.entropyCoef=val; }
+  setValueCoef(val){ this.valueCoef=val; }
+  act(s){
+    return tf.tidy(()=>{
+      const [policy,value]=this.model.predict(tf.tensor2d([s],[1,this.sDim]));
+      value.dispose();
+      const probs=policy.dataSync();
+      const r=Math.random();
+      let acc=0;
+      let chosen=probs.length-1;
+      for(let i=0;i<probs.length;i++){
+        acc+=probs[i];
+        if(r<=acc){ chosen=i; break; }
+      }
+      policy.dispose();
+      return chosen;
+    });
+  }
+  greedyAction(s){
+    return tf.tidy(()=>{
+      const [policy,value]=this.model.predict(tf.tensor2d([s],[1,this.sDim]));
+      value.dispose();
+      const probs=policy.dataSync();
+      let best=0,max=-Infinity;
+      probs.forEach((p,i)=>{ if(p>max){max=p;best=i;} });
+      policy.dispose();
+      return best;
+    });
+  }
+  recordTransition(s,a,r,ns,d){
+    this.trajectory.push({s:Float32Array.from(s),a,r,ns:Float32Array.from(ns),d});
+  }
+  drainPending(){ this.trajectory.length=0; }
+  async learn(){ return null; }
+  predictValue(state){
+    const input=tf.tensor2d([state],[1,this.sDim]);
+    const [policy,value]=this.model.predict(input);
+    policy.dispose();
+    const val=value.dataSync()[0];
+    value.dispose();
+    input.dispose();
+    return val;
+  }
+  async finishEpisode(){
+    const len=this.trajectory.length;
+    if(!len) return null;
+    const returns=new Array(len);
+    let nextValue=0;
+    if(!this.trajectory[len-1].d){
+      nextValue=this.predictValue(this.trajectory[len-1].ns);
+    }
+    for(let i=len-1;i>=0;i--){
+      const step=this.trajectory[i];
+      nextValue=step.r+this.gamma*nextValue*(step.d?0:1);
+      returns[i]=nextValue;
+      if(step.d) nextValue=0;
+    }
+    const states=tf.tensor2d(this.trajectory.map(t=>t.s),[len,this.sDim]);
+    const actions=tf.tensor1d(this.trajectory.map(t=>t.a),'int32');
+    const returnsTensor=tf.tensor1d(returns);
+    const entropyCoef=this.entropyCoef;
+    const valueCoef=this.valueCoef;
+    const lossTensor=await this.optimizer.minimize(()=>tf.tidy(()=>{
+      const [policy,value]=this.model.apply(states);
+      const mask=tf.oneHot(actions,this.aDim);
+      const probs=policy.mul(mask).sum(1).add(1e-8);
+      const logProbs=tf.log(probs);
+      const values=value.reshape([len]);
+      const rawAdv=returnsTensor.sub(values);
+      const advMean=rawAdv.mean();
+      const advStd=rawAdv.sub(advMean).square().mean().sqrt().add(1e-6);
+      const advantages=rawAdv.sub(advMean).div(advStd);
+      const actorLoss=tf.neg(logProbs.mul(advantages));
+      const criticLoss=rawAdv.square().mul(0.5);
+      const entropy=policy.mul(tf.log(policy.add(1e-8))).sum(1).neg();
+      const total=actorLoss.add(criticLoss.mul(valueCoef)).sub(entropy.mul(entropyCoef));
+      return total.mean();
+    }),true);
+    const loss=lossTensor.dataSync()[0];
+    lossTensor.dispose();
+    states.dispose();
+    actions.dispose();
+    returnsTensor.dispose();
+    this.trajectory.length=0;
+    return loss;
+  }
+  async exportState(){
+    const weights=await Promise.all(this.model.getWeights().map(async w=>({
+      shape:w.shape,
+      dtype:w.dtype,
+      data:typedArrayToBase64(await w.data()),
+    })));
+    return {
+      version:4,
+      kind:'a2c',
+      sDim:this.sDim,
+      aDim:this.aDim,
+      config:{
+        gamma:this.gamma,
+        lr:this.lr,
+        entropy:this.entropyCoef,
+        valueCoef:this.valueCoef,
+      },
+      weights,
+    };
+  }
+  async importState(state){
+    if(!state) throw new Error('Ogiltigt tillstånd');
+    if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
+    if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
+    const cfg=state.config??{};
+    this.setGamma(cfg.gamma??this.gamma);
+    this.setLearningRate(cfg.lr??this.lr);
+    this.setEntropy(cfg.entropy??this.entropyCoef);
+    this.setValueCoef(cfg.valueCoef??this.valueCoef);
+    this.model.dispose();
+    this.model=this.build();
+    if(Array.isArray(state.weights)){
+      const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
+      this.model.setWeights(tensors);
+      tensors.forEach(t=>t.dispose());
+    }
+  }
+}
+class PPOAgent{
+  constructor(sDim,aDim,cfg={}){
+    this.kind='ppo';
+    this.sDim=sDim;
+    this.aDim=aDim;
+    this.gamma=cfg.gamma??0.99;
+    this.lam=cfg.lambda??0.95;
+    this.lr=cfg.lr??0.0003;
+    this.entropyCoef=cfg.entropy??0.003;
+    this.valueCoef=cfg.valueCoef??0.5;
+    this.clip=cfg.clip??0.2;
+    this.batchSize=cfg.batch??256;
+    this.epochs=cfg.epochs??4;
+    this.optimizer=tf.train.adam(this.lr);
+    this.model=this.build();
+    this.trajectory=[];
+    this.learnRepeats=0;
+    this.lastActInfo=null;
+  }
+  build(){
+    const input=tf.input({shape:[this.sDim]});
+    let x=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(input);
+    x=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
+    const policy=tf.layers.dense({units:this.aDim,activation:'softmax'}).apply(x);
+    const value=tf.layers.dense({units:1,activation:'linear'}).apply(x);
+    return tf.model({inputs:input,outputs:[policy,value]});
+  }
+  setGamma(val){ this.gamma=val; }
+  setLearningRate(val){ this.lr=val; this.optimizer=tf.train.adam(this.lr); }
+  setEntropy(val){ this.entropyCoef=val; }
+  setValueCoef(val){ this.valueCoef=val; }
+  setClip(val){ this.clip=val; }
+  setLambda(val){ this.lam=val; }
+  setBatch(val){ this.batchSize=Math.max(16,val|0); }
+  setEpochs(val){ this.epochs=Math.max(1,val|0); }
+  act(s){
+    const input=tf.tensor2d([s],[1,this.sDim]);
+    const [policy,value]=this.model.predict(input);
+    const probs=policy.dataSync();
+    const val=value.dataSync()[0];
+    let r=Math.random();
+    let action=probs.length-1;
+    for(let i=0;i<probs.length;i++){
+      r-=probs[i];
+      if(r<=0){ action=i; break; }
+    }
+    const prob=Math.max(probs[action]??0,1e-8);
+    this.lastActInfo={
+      logProb:Math.log(prob),
+      value:val,
+    };
+    policy.dispose();
+    value.dispose();
+    input.dispose();
+    return action;
+  }
+  greedyAction(s){
+    const input=tf.tensor2d([s],[1,this.sDim]);
+    const [policy,value]=this.model.predict(input);
+    value.dispose();
+    const probs=policy.dataSync();
+    let best=0,max=-Infinity;
+    probs.forEach((p,i)=>{ if(p>max){max=p;best=i;} });
+    policy.dispose();
+    input.dispose();
+    return best;
+  }
+  recordTransition(s,a,r,ns,d){
+    const info=this.lastActInfo||this.evaluateAction(s,a);
+    this.trajectory.push({
+      s:Float32Array.from(s),
+      a,
+      r,
+      ns:Float32Array.from(ns),
+      d,
+      value:info.value,
+      logProb:info.logProb,
+    });
+    this.lastActInfo=null;
+  }
+  drainPending(){
+    this.trajectory.length=0;
+    this.lastActInfo=null;
+  }
+  async learn(){ return null; }
+  evaluateAction(state,action){
+    const input=tf.tensor2d([state],[1,this.sDim]);
+    const [policy,value]=this.model.predict(input);
+    const probs=policy.dataSync();
+    const val=value.dataSync()[0];
+    policy.dispose();
+    value.dispose();
+    input.dispose();
+    const prob=Math.max(probs[action]??0,1e-8);
+    return {logProb:Math.log(prob),value:val};
+  }
+  predictValue(state){
+    const input=tf.tensor2d([state],[1,this.sDim]);
+    const [,value]=this.model.predict(input);
+    const val=value.dataSync()[0];
+    value.dispose();
+    input.dispose();
+    return val;
+  }
+  async finishEpisode(){
+    const len=this.trajectory.length;
+    if(!len) return null;
+    const values=this.trajectory.map(t=>t.value);
+    let nextValue=0;
+    if(!this.trajectory[len-1].d){
+      nextValue=this.predictValue(this.trajectory[len-1].ns);
+    }
+    const advantages=new Array(len);
+    const returns=new Array(len);
+    let gae=0;
+    for(let i=len-1;i>=0;i--){
+      const step=this.trajectory[i];
+      const value=values[i];
+      const nextVal=(i===len-1)?nextValue:values[i+1];
+      const nonTerminal=step.d?0:1;
+      const delta=step.r+this.gamma*nextVal*nonTerminal-value;
+      gae=delta+this.gamma*this.lam*nonTerminal*gae;
+      advantages[i]=gae;
+      returns[i]=gae+value;
+    }
+    const states=tf.tensor2d(this.trajectory.map(t=>t.s),[len,this.sDim]);
+    const actions=tf.tensor1d(this.trajectory.map(t=>t.a),'int32');
+    const oldLog=tf.tensor1d(this.trajectory.map(t=>t.logProb));
+    const returnsTensor=tf.tensor1d(returns);
+    const advRaw=tf.tensor1d(advantages);
+    const advantagesTensor=standardize1D(advRaw);
+    advRaw.dispose();
+    const idxs=[...Array(len).keys()];
+    let lastLoss=null;
+    for(let epoch=0;epoch<this.epochs;epoch++){
+      shuffleInPlace(idxs);
+      for(let start=0;start<len;start+=this.batchSize){
+        const slice=idxs.slice(start,Math.min(len,start+this.batchSize));
+        if(!slice.length) continue;
+        const batchIdx=tf.tensor1d(slice,'int32');
+        const lossTensor=await this.optimizer.minimize(()=>tf.tidy(()=>{
+          const batchStates=tf.gather(states,batchIdx);
+          const batchActions=tf.gather(actions,batchIdx);
+          const batchReturns=tf.gather(returnsTensor,batchIdx);
+          const batchOldLog=tf.gather(oldLog,batchIdx);
+          const batchAdv=tf.gather(advantagesTensor,batchIdx);
+          const [policy,value]=this.model.apply(batchStates);
+          const probs=policy.mul(tf.oneHot(batchActions,this.aDim)).sum(1).add(1e-8);
+          const logProbs=tf.log(probs);
+          const ratio=tf.exp(logProbs.sub(batchOldLog));
+          const clipped=ratio.clipByValue(1-this.clip,1+this.clip);
+          const actor=tf.minimum(ratio.mul(batchAdv),clipped.mul(batchAdv)).neg();
+          const values=value.reshape([slice.length]);
+          const critic=batchReturns.sub(values).square().mul(0.5*this.valueCoef);
+          const entropy=policy.mul(tf.log(policy.add(1e-8))).sum(1).neg();
+          return actor.add(critic).sub(entropy.mul(this.entropyCoef)).mean();
+        }),true);
+        lastLoss=lossTensor.dataSync()[0];
+        lossTensor.dispose();
+        batchIdx.dispose();
+        await tf.nextFrame();
+      }
+    }
+    states.dispose();
+    actions.dispose();
+    oldLog.dispose();
+    returnsTensor.dispose();
+    advantagesTensor.dispose();
+    this.trajectory.length=0;
+    return lastLoss;
+  }
+  async exportState(){
+    const weights=await Promise.all(this.model.getWeights().map(async w=>({
+      shape:w.shape,
+      dtype:w.dtype,
+      data:typedArrayToBase64(await w.data()),
+    })));
+    return {
+      version:4,
+      kind:'ppo',
+      sDim:this.sDim,
+      aDim:this.aDim,
+      config:{
+        gamma:this.gamma,
+        lr:this.lr,
+        entropy:this.entropyCoef,
+        valueCoef:this.valueCoef,
+        clip:this.clip,
+        lambda:this.lam,
+        batch:this.batchSize,
+        epochs:this.epochs,
+      },
+      weights,
+    };
+  }
+  async importState(state){
+    if(!state) throw new Error('Ogiltigt tillstånd');
+    if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
+    if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
+    const cfg=state.config??{};
+    this.setGamma(cfg.gamma??this.gamma);
+    this.setLearningRate(cfg.lr??this.lr);
+    this.setEntropy(cfg.entropy??this.entropyCoef);
+    this.setValueCoef(cfg.valueCoef??this.valueCoef);
+    this.setClip(cfg.clip??this.clip);
+    this.setLambda(cfg.lambda??this.lam);
+    this.setBatch(cfg.batch??this.batchSize);
+    this.setEpochs(cfg.epochs??this.epochs);
+    this.model.dispose();
+    this.model=this.build();
+    if(Array.isArray(state.weights)){
+      const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
+      this.model.setWeights(tensors);
+      tensors.forEach(t=>t.dispose());
+    }
+  }
+}
+function shuffleInPlace(arr){
+  for(let i=arr.length-1;i>0;i--){
+    const j=(Math.random()*(i+1))|0;
+    [arr[i],arr[j]]=[arr[j],arr[i]];
+  }
+}
+function standardize1D(t){
+  return tf.tidy(()=>{
+    const mean=t.mean();
+    const variance=t.sub(mean).square().mean();
+    const std=variance.sqrt().add(1e-6);
+    return t.sub(mean).div(std);
+  });
+}
 
-/* ---------------- Mini chart (samma som tidigare) ---------------- */
+/* ---------------- Mini chart ---------------- */
 class MiniLine{
-  constructor(cv,max=400){this.cv=cv;this.ctx=cv.getContext('2d');this.max=max;this.data=[];}
-  push(v){this.data.push(v);if(this.data.length>this.max)this.data.shift();this.draw();}
-  draw(){ const c=this.ctx,w=this.cv.width,h=this.cv.height;
-    c.clearRect(0,0,w,h);c.fillStyle='#0b1030';c.fillRect(0,0,w,h);
-    c.strokeStyle='#1b1f3a'; for(let i=0;i<=4;i++){c.beginPath();c.moveTo(0,i*h/4);c.lineTo(w,i*h/4);c.stroke();}
-    if(!this.data.length)return; const min=Math.min(...this.data),max=Math.max(...this.data),pad=1e-6;
-    c.beginPath();c.strokeStyle='#6c7bff';c.lineWidth=2;
-    this.data.forEach((v,i)=>{ const x=(i/(this.data.length-1))*w; const y=h-((v-min)/(max-min+pad))*h; if(i===0)c.moveTo(x,y);else c.lineTo(x,y); });
+  constructor(cv,max=400){
+    this.cv=cv;
+    this.ctx=cv.getContext('2d');
+    this.max=max;
+    this.data=[];
+  }
+  push(v){
+    this.data.push(v);
+    if(this.data.length>this.max) this.data.shift();
+    this.draw();
+  }
+  draw(){
+    const c=this.ctx,w=this.cv.width,h=this.cv.height;
+    c.clearRect(0,0,w,h);
+    c.fillStyle='#0b1030';
+    c.fillRect(0,0,w,h);
+    c.strokeStyle='#1b1f3a';
+    for(let i=0;i<=4;i++){
+      c.beginPath();
+      c.moveTo(0,i*h/4);
+      c.lineTo(w,i*h/4);
+      c.stroke();
+    }
+    if(!this.data.length) return;
+    const min=Math.min(...this.data);
+    const max=Math.max(...this.data);
+    const span=max-min||1;
+    c.beginPath();
+    c.strokeStyle='#6c7bff';
+    c.lineWidth=2;
+    this.data.forEach((v,i)=>{
+      const x=(i/(this.data.length-1))*w;
+      const y=h-((v-min)/span)*h;
+      if(i===0) c.moveTo(x,y); else c.lineTo(x,y);
+    });
     c.stroke();
   }
 }
 
-/* ---------------- App wiring ---------------- */
-const board=document.getElementById('board'), bctx=board.getContext('2d');
+/* ---------------- Rendering helpers ---------------- */
+const board=document.getElementById('board');
+const bctx=board.getContext('2d');
 let COLS=20,ROWS=20,CELL=board.width/COLS;
 let env=new SnakeEnv(COLS,ROWS);
 
@@ -701,384 +1693,873 @@ function snapshotEnv(environment){
     fruit:environment.fruit?{x:environment.fruit.x,y:environment.fruit.y}:{x:-1,y:-1},
   };
 }
-const cloneState=state=>({ snake:state.snake.map(p=>({x:p.x,y:p.y})), fruit:{x:state.fruit.x,y:state.fruit.y} });
-
-const BG_COLOR='#0f1328', GRID_COLOR='#17204a', HEAD_COLOR='#23d18b', BODY_COLOR='#6c7bff';
+const cloneState=state=>({
+  snake:state.snake.map(p=>({x:p.x,y:p.y})),
+  fruit:{x:state.fruit.x,y:state.fruit.y},
+});
+const BG_COLOR='#0f1328';
+const GRID_COLOR='#17204a';
+const HEAD_COLOR='#23d18b';
+const BODY_COLOR='#6c7bff';
+const HEAD_GLOW='rgba(35,209,139,0.55)';
+const BODY_GLOW='rgba(108,123,255,0.45)';
 let lastDrawnState=snapshotEnv(env);
-let renderQueue=[], currentAnim=null, renderActive=false, renderToken=0, watching=false;
-const MAX_RENDER_QUEUE=200;
-const queueLimit=()=>watching?MAX_RENDER_QUEUE*3:MAX_RENDER_QUEUE;
+let renderQueue=[];
+let currentAnim=null;
+let renderActive=false;
+let renderToken=0;
+let watching=false;
+const MAX_RENDER_QUEUE=240;
 
+function queueLimit(){ return watching?MAX_RENDER_QUEUE*2:MAX_RENDER_QUEUE; }
 function setImmediateState(environment){
   const state=snapshotEnv(environment);
-  if(renderToken){cancelAnimationFrame(renderToken);renderToken=0;}
-  renderActive=false; renderQueue.length=0; currentAnim=null; lastDrawnState=cloneState(state); drawFrame(state,state,1);
+  if(renderToken){
+    cancelAnimationFrame(renderToken);
+    renderToken=0;
+  }
+  renderActive=false;
+  renderQueue.length=0;
+  currentAnim=null;
+  lastDrawnState=cloneState(state);
+  drawFrame(state,state,1);
 }
-function enqueueRenderFrame(from,to,duration=getAnimDuration()){
-  const entry={from:cloneState(from),to:cloneState(to),start:null,duration};
+function enqueueRenderFrame(from,to,duration){
+  const entry={from:cloneState(from),to:cloneState(to),start:null,duration:Math.max(16,duration||80)};
   renderQueue.push(entry);
   const limit=queueLimit();
   if(renderQueue.length>limit){
     const latest=renderQueue[renderQueue.length-1];
-    renderQueue=[{from:cloneState(lastDrawnState),to:cloneState(latest.to),start:null,duration:Math.max(40,duration*0.5)}];
+    renderQueue=[{from:cloneState(lastDrawnState),to:cloneState(latest.to),start:null,duration:Math.max(40,duration)}];
     currentAnim=null;
   }
-  if(!renderActive){ renderActive=true; renderToken=requestAnimationFrame(stepRender); }
+  if(!renderActive){
+    renderActive=true;
+    renderToken=requestAnimationFrame(stepRender);
+  }
 }
-function getAnimDuration(){ const maxFps=ui&&ui.fpsLimit?+ui.fpsLimit.value:60; return Math.max(16,1000/Math.max(10,maxFps)); }
-function getWatchDuration(){ const maxFps=ui&&ui.fpsLimit?+ui.fpsLimit.value:60; const capped=Math.min(Math.max(10,maxFps),240); return Math.max(12,1000/capped); }
+const easeProgress=t=>{
+  if(t<=0) return 0;
+  if(t>=1) return 1;
+  return t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+};
 function stepRender(ts){
-  if(!currentAnim){ currentAnim=renderQueue.shift(); if(!currentAnim){ renderActive=false; renderToken=0; drawFrame(lastDrawnState,lastDrawnState,1); return; } }
-  if(currentAnim.start===null)currentAnim.start=ts;
-  const duration=currentAnim.duration??getAnimDuration();
+  if(!currentAnim){
+    currentAnim=renderQueue.shift();
+    if(!currentAnim){
+      renderActive=false;
+      renderToken=0;
+      drawFrame(lastDrawnState,lastDrawnState,1);
+      return;
+    }
+  }
+  if(currentAnim.start===null) currentAnim.start=ts;
+  const duration=currentAnim.duration||80;
   const progress=duration<=0?1:Math.min(1,(ts-currentAnim.start)/duration);
-  drawFrame(currentAnim.from,currentAnim.to,progress);
-  if(progress>=1){ lastDrawnState=cloneState(currentAnim.to); currentAnim=null; }
+  drawFrame(currentAnim.from,currentAnim.to,easeProgress(progress));
+  if(progress>=1){
+    lastDrawnState=cloneState(currentAnim.to);
+    currentAnim=null;
+  }
   renderToken=requestAnimationFrame(stepRender);
 }
 const waitAnimationFrame=()=>new Promise(res=>requestAnimationFrame(res));
-async function waitForRenderCapacity(limit=Math.max(10,Math.floor(queueLimit()*0.6))){ while(renderQueue.length>limit){ await waitAnimationFrame(); } }
-async function waitForRenderIdle(){ while(renderQueue.length>0||currentAnim){ await waitAnimationFrame(); } }
-
+async function waitForRenderCapacity(limit=Math.max(10,Math.floor(queueLimit()*0.6))){
+  while(renderQueue.length>limit){
+    await waitAnimationFrame();
+  }
+}
+async function waitForRenderIdle(){
+  while(renderQueue.length>0||currentAnim){
+    await waitAnimationFrame();
+  }
+}
 function drawFrame(from,to,t){
-  bctx.fillStyle=BG_COLOR; bctx.fillRect(0,0,board.width,board.height); drawGrid();
+  bctx.fillStyle=BG_COLOR;
+  bctx.fillRect(0,0,board.width,board.height);
+  drawGrid();
   const sameFruit=from.fruit.x===to.fruit.x&&from.fruit.y===to.fruit.y;
-  if(from.fruit.x>=0&&!sameFruit)drawFruit(from.fruit,1-t);
-  if(to.fruit.x>=0)drawFruit(to.fruit,sameFruit?1:t);
-  const fromSnake=from.snake, toSnake=to.snake;
-  const grew=toSnake.length>fromSnake.length; const shrank=toSnake.length<fromSnake.length; const offset=shrank?fromSnake.length-toSnake.length:0;
+  if(from.fruit.x>=0&&!sameFruit) drawFruit(from.fruit,1-t);
+  if(to.fruit.x>=0) drawFruit(to.fruit,sameFruit?1:t);
+  const fromSnake=from.snake;
+  const toSnake=to.snake;
+  const grew=toSnake.length>fromSnake.length;
+  const shrank=toSnake.length<fromSnake.length;
+  const offset=shrank?fromSnake.length-toSnake.length:0;
   const segments=toSnake.map((seg,i)=>{
     let start;
-    if(grew){ start=i===0?fromSnake[0]:fromSnake[i-1]??fromSnake[fromSnake.length-1]; }
-    else if(shrank){ start=fromSnake[i+offset]??fromSnake[fromSnake.length-1]; }
-    else { start=fromSnake[i]??fromSnake[fromSnake.length-1]; }
-    const sx=(start?.x??seg.x), sy=(start?.y??seg.y);
+    if(grew){
+      start=i===0?fromSnake[0]:fromSnake[i-1]??fromSnake[fromSnake.length-1];
+    }else if(shrank){
+      start=fromSnake[i+offset]??fromSnake[fromSnake.length-1];
+    }else{
+      start=fromSnake[i]??fromSnake[fromSnake.length-1];
+    }
+    const sx=(start?.x??seg.x);
+    const sy=(start?.y??seg.y);
     return {x:sx+(seg.x-sx)*t,y:sy+(seg.y-sy)*t};
   });
   drawSnakeSegments(segments);
 }
-function drawGrid(){ bctx.strokeStyle=GRID_COLOR; bctx.lineWidth=1;
-  for(let x=0;x<=COLS;x++){ bctx.beginPath(); bctx.moveTo(x*CELL,0); bctx.lineTo(x*CELL,board.height); bctx.stroke(); }
-  for(let y=0;y<=ROWS;y++){ bctx.beginPath(); bctx.moveTo(0,y*CELL); bctx.lineTo(board.width,y*CELL); bctx.stroke(); }
+function drawGrid(){
+  bctx.save();
+  bctx.strokeStyle=GRID_COLOR;
+  bctx.lineWidth=1;
+  bctx.shadowBlur=0;
+  for(let x=0;x<=COLS;x++){
+    const px=x*CELL;
+    bctx.beginPath();
+    bctx.moveTo(px,0);
+    bctx.lineTo(px,board.height);
+    bctx.stroke();
+  }
+  for(let y=0;y<=ROWS;y++){
+    const py=y*CELL;
+    bctx.beginPath();
+    bctx.moveTo(0,py);
+    bctx.lineTo(board.width,py);
+    bctx.stroke();
+  }
+  bctx.restore();
 }
-function drawFruit(pos,alpha=1){ if(alpha<=0)return; bctx.save(); bctx.globalAlpha=alpha;
-  const fx=pos.x*CELL+CELL/2, fy=pos.y*CELL+CELL/2; bctx.fillStyle='#ff5aa4'; bctx.beginPath(); bctx.arc(fx,fy,CELL/3,0,2*Math.PI); bctx.fill(); bctx.restore();
+function drawFruit(fruit,alpha=1){
+  if(fruit.x<0||fruit.y<0) return;
+  const cx=(fruit.x+0.5)*CELL;
+  const cy=(fruit.y+0.5)*CELL;
+  const radius=CELL*0.35;
+  const gradient=bctx.createRadialGradient(cx,cy,radius*0.2,cx,cy,radius);
+  gradient.addColorStop(0,`rgba(255,200,120,${alpha})`);
+  gradient.addColorStop(1,`rgba(255,70,150,${alpha})`);
+  bctx.save();
+  bctx.fillStyle=gradient;
+  bctx.shadowBlur=12;
+  bctx.shadowColor='rgba(255,90,160,0.5)';
+  bctx.beginPath();
+  bctx.arc(cx,cy,radius,0,Math.PI*2);
+  bctx.fill();
+  bctx.restore();
 }
-function drawSnakeSegments(segments){ segments.forEach((p,i)=>drawSegment(p.x,p.y,i===0)); }
-function drawSegment(x,y,isHead){ const px=x*CELL+1, py=y*CELL+1, size=CELL-2; const baseRadius=isHead?Math.max(4,CELL*0.3):Math.max(3,CELL*0.25);
-  const radius=Math.min(baseRadius,size/2); bctx.fillStyle=isHead?HEAD_COLOR:BODY_COLOR;
-  if(typeof bctx.roundRect==='function'){ bctx.beginPath(); bctx.roundRect(px,py,size,size,radius); bctx.fill(); } else { bctx.fillRect(px,py,size,size); }
+function drawSnakeSegments(segments){
+  if(!segments.length) return;
+  bctx.save();
+  segments.forEach((seg,i)=>{
+    const color=i===0?HEAD_COLOR:BODY_COLOR;
+    const glow=i===0?HEAD_GLOW:BODY_GLOW;
+    const size=CELL*0.72;
+    const offset=(CELL-size)/2;
+    const radius=Math.min(size*0.45,10);
+    bctx.shadowBlur=i===0?14:8;
+    bctx.shadowColor=glow;
+    bctx.fillStyle=color;
+    drawRoundedRect(seg.x*CELL+offset,seg.y*CELL+offset,size,size,radius);
+  });
+  bctx.restore();
+}
+function drawRoundedRect(x,y,w,h,r){
+  const radius=Math.max(2,Math.min(r,Math.min(w,h)/2));
+  bctx.beginPath();
+  bctx.moveTo(x+radius,y);
+  bctx.arcTo(x+w,y,x+w,y+h,radius);
+  bctx.arcTo(x+w,y+h,x,y+h,radius);
+  bctx.arcTo(x,y+h,x,y,radius);
+  bctx.arcTo(x,y,x+w,y,radius);
+  bctx.closePath();
+  bctx.fill();
 }
 
-/* ---------------- Init agent ---------------- */
-let stateDim=env.getState().length, actionDim=3;
-const cfg={
-  gamma:0.98,
-  lr:0.0005,
-  batch:128,
-  bufferSize:50000,
-  epsStart:1.0,
-  epsEnd:0.05,
-  epsDecay:40000,
-  nStep:3,
-  priorityAlpha:0.6,
-  priorityBeta:0.4,
-  priorityBetaIncrement:0.000002,
-  priorityEps:0.001,
+/* ---------------- App state ---------------- */
+const playbackModes={
+  cinematic:{label:'Mjuk realtid',frameMs:110,stepsPerFrame:1,renderEvery:1,queueTarget:60},
+  fast:{label:'Snabb',frameMs:60,stepsPerFrame:3,renderEvery:1,queueTarget:90},
+  turbo:{label:'Turbo',frameMs:30,stepsPerFrame:6,renderEvery:2,queueTarget:120},
+  watch:{label:'Visning',frameMs:120,stepsPerFrame:1,renderEvery:1,queueTarget:60},
 };
-let agent;
+const AGENT_PRESETS={
+  dueling:{
+    label:'Dueling Double DQN',
+    badge:'Dueling DQN',
+    type:'dqn',
+    defaults:{
+      gamma:0.98,lr:0.0005,
+      epsStart:1.0,epsEnd:0.05,epsDecay:40000,
+      batch:128,bufferSize:50000,targetSync:2000,
+      nStep:3,priorityAlpha:0.6,priorityBeta:0.4,
+      layers:[256,256,128],dueling:true,double:true,learnRepeats:2,
+    },
+    description:'Prioriterad replay, n-step returns och dueling-nät ger stabil och sample-effektiv DQN-träning.',
+    create:(sDim,aDim,cfg)=>new DQNAgent(sDim,aDim,{
+      ...cfg,
+      dueling:true,
+      double:true,
+      layers:cfg.layers??[256,256,128],
+      learnRepeats:cfg.learnRepeats??2,
+    }),
+  },
+  vanilla:{
+    label:'Klassisk DQN',
+    badge:'Vanilla DQN',
+    type:'dqn',
+    defaults:{
+      gamma:0.97,lr:0.00025,
+      epsStart:1.0,epsEnd:0.1,epsDecay:60000,
+      batch:64,bufferSize:40000,targetSync:1500,
+      nStep:1,priorityAlpha:0.4,priorityBeta:0.4,
+      layers:[128,128],dueling:false,double:false,learnRepeats:1,
+    },
+    description:'En enklare DQN utan dueling/double – perfekt för att förstå grundbeteendet.',
+    create:(sDim,aDim,cfg)=>new DQNAgent(sDim,aDim,{
+      ...cfg,
+      dueling:false,
+      double:false,
+      layers:cfg.layers??[128,128],
+      learnRepeats:cfg.learnRepeats??1,
+    }),
+  },
+  policy:{
+    label:'Policy Gradient (REINFORCE)',
+    badge:'Policy Grad',
+    type:'policy',
+    defaults:{
+      gamma:0.99,lr:0.0008,entropy:0.01,
+    },
+    description:'Monte-Carlo policy gradient med entropiregularisering för stabil utforskning.',
+    create:(sDim,aDim,cfg)=>new PolicyGradientAgent(sDim,aDim,cfg),
+  },
+  a2c:{
+    label:'Advantage Actor-Critic',
+    badge:'A2C',
+    type:'a2c',
+    defaults:{
+      gamma:0.99,lr:0.0006,entropy:0.005,valueCoef:0.5,
+    },
+    description:'Gemensamt nät som tränar både policy och värdefunktion för snabbare konvergens.',
+    create:(sDim,aDim,cfg)=>new A2CAgent(sDim,aDim,cfg),
+  },
+  ppo:{
+    label:'Proximal Policy Optimization',
+    badge:'PPO',
+    type:'ppo',
+    defaults:{
+      gamma:0.99,lr:0.0003,entropy:0.003,valueCoef:0.5,clip:0.2,lambda:0.95,batch:256,epochs:4,
+    },
+    description:'Clippad policy-gradient med GAE för stabila uppdateringar även i längre episoder.',
+    create:(sDim,aDim,cfg)=>new PPOAgent(sDim,aDim,cfg),
+  },
+};
 
-/* ---------------- UI refs ---------------- */
 const ui={
-  trainState:document.getElementById('trainState'),epsReadout:document.getElementById('epsReadout'),
-  gamma:document.getElementById('gamma'),gammaReadout:document.getElementById('gammaReadout'),
-  lr:document.getElementById('lr'),lrReadout:document.getElementById('lrReadout'),
-  epsStart:document.getElementById('epsStart'),epsEnd:document.getElementById('epsEnd'),
-  epsDecay:document.getElementById('epsDecay'),batchSize:document.getElementById('batchSize'),
-  bufferSize:document.getElementById('bufferSize'),targetSync:document.getElementById('targetSync'),
-  nStep:document.getElementById('nStep'),nStepReadout:document.getElementById('nStepReadout'),
-  priorityAlpha:document.getElementById('priorityAlpha'),alphaReadout:document.getElementById('alphaReadout'),
-  priorityBeta:document.getElementById('priorityBeta'),betaReadout:document.getElementById('betaReadout'),
-  priorityBetaInc:document.getElementById('priorityBetaInc'),betaIncReadout:document.getElementById('betaIncReadout'),
-  priorityEps:document.getElementById('priorityEps'),priorityEpsReadout:document.getElementById('priorityEpsReadout'),
-  gridSize:document.getElementById('gridSize'),gridLabel:document.getElementById('gridLabel'),
-  renderEvery:document.getElementById('renderEvery'),renderLabel:document.getElementById('renderLabel'),
-  fpsLimit:document.getElementById('fpsLimit'),fpsLabel:document.getElementById('fpsLabel'),
-  kEpisodes:document.getElementById('kEpisodes'),kAvgRw:document.getElementById('kAvgRw'),
-  kBest:document.getElementById('kBest'),kFruitRate:document.getElementById('kFruitRate'),
-  btnTrain:document.getElementById('btnTrain'),btnPause:document.getElementById('btnPause'),
-  btnStep:document.getElementById('btnStep'),btnWatch:document.getElementById('btnWatch'),
+  trainState:document.getElementById('trainState'),
+  algoBadge:document.getElementById('algoBadge'),
+  epsReadout:document.getElementById('epsReadout'),
+  gammaBadge:document.getElementById('gammaBadge'),
+  lrBadge:document.getElementById('lrBadge'),
+  playbackLabel:document.getElementById('playbackLabel'),
+  playbackButtons:Array.from(document.querySelectorAll('#playbackGroup .pill')),
+  gridSize:document.getElementById('gridSize'),
+  gridLabel:document.getElementById('gridLabel'),
+  btnTrain:document.getElementById('btnTrain'),
+  btnPause:document.getElementById('btnPause'),
+  btnStep:document.getElementById('btnStep'),
+  btnWatch:document.getElementById('btnWatch'),
   btnReset:document.getElementById('btnReset'),
-  btnSave:document.getElementById('btnSave'),btnLoad:document.getElementById('btnLoad'),
+  btnSave:document.getElementById('btnSave'),
+  btnLoad:document.getElementById('btnLoad'),
   btnClear:document.getElementById('btnClear'),
-  tabTraining:document.getElementById('tabTraining'),tabGuide:document.getElementById('tabGuide'),
-  trainingView:document.getElementById('trainingView'),guideView:document.getElementById('guideView'),
-  fileLoader:document.getElementById('fileLoader'),
+  algoSelect:document.getElementById('algoSelect'),
+  algoDescription:document.getElementById('algoDescription'),
+  gamma:document.getElementById('gamma'),
+  gammaReadout:document.getElementById('gammaReadout'),
+  lr:document.getElementById('lr'),
+  lrReadout:document.getElementById('lrReadout'),
+  epsStart:document.getElementById('epsStart'),
+  epsStartReadout:document.getElementById('epsStartReadout'),
+  epsEnd:document.getElementById('epsEnd'),
+  epsEndReadout:document.getElementById('epsEndReadout'),
+  epsDecay:document.getElementById('epsDecay'),
+  epsDecayReadout:document.getElementById('epsDecayReadout'),
+  batchSize:document.getElementById('batchSize'),
+  batchReadout:document.getElementById('batchReadout'),
+  bufferSize:document.getElementById('bufferSize'),
+  bufferReadout:document.getElementById('bufferReadout'),
+  targetSync:document.getElementById('targetSync'),
+  targetSyncReadout:document.getElementById('targetSyncReadout'),
+  nStep:document.getElementById('nStep'),
+  nStepReadout:document.getElementById('nStepReadout'),
+  priorityAlpha:document.getElementById('priorityAlpha'),
+  alphaReadout:document.getElementById('alphaReadout'),
+  priorityBeta:document.getElementById('priorityBeta'),
+  betaReadout:document.getElementById('betaReadout'),
+  pgEntropy:document.getElementById('pgEntropy'),
+  pgEntropyReadout:document.getElementById('pgEntropyReadout'),
+  acEntropy:document.getElementById('acEntropy'),
+  acEntropyReadout:document.getElementById('acEntropyReadout'),
+  acValueCoef:document.getElementById('acValueCoef'),
+  acValueCoefReadout:document.getElementById('acValueCoefReadout'),
+  ppoEntropy:document.getElementById('ppoEntropy'),
+  ppoEntropyReadout:document.getElementById('ppoEntropyReadout'),
+  ppoClip:document.getElementById('ppoClip'),
+  ppoClipReadout:document.getElementById('ppoClipReadout'),
+  ppoLambda:document.getElementById('ppoLambda'),
+  ppoLambdaReadout:document.getElementById('ppoLambdaReadout'),
+  ppoBatch:document.getElementById('ppoBatch'),
+  ppoBatchReadout:document.getElementById('ppoBatchReadout'),
+  ppoEpochs:document.getElementById('ppoEpochs'),
+  ppoEpochsReadout:document.getElementById('ppoEpochsReadout'),
+  ppoValueCoef:document.getElementById('ppoValueCoef'),
+  ppoValueCoefReadout:document.getElementById('ppoValueCoefReadout'),
+  kEpisodes:document.getElementById('kEpisodes'),
+  kAvgRw:document.getElementById('kAvgRw'),
+  kBest:document.getElementById('kBest'),
+  kFruitRate:document.getElementById('kFruitRate'),
   chartReward:new MiniLine(document.getElementById('chartReward')),
   chartLoss:new MiniLine(document.getElementById('chartLoss')),
+  tabTraining:document.getElementById('tabTraining'),
+  tabGuide:document.getElementById('tabGuide'),
+  trainingView:document.getElementById('trainingView'),
+  guideView:document.getElementById('guideView'),
+  fileLoader:document.getElementById('fileLoader'),
+  advancedPanel:document.getElementById('advancedPanel'),
+  advancedSections:{
+    dqn:document.querySelector('[data-config="dqn"]'),
+    policy:document.querySelector('[data-config="policy"]'),
+    a2c:document.querySelector('[data-config="a2c"]'),
+    ppo:document.querySelector('[data-config="ppo"]'),
+  },
 };
 
-let activeTab='training';
+let agent=null;
+let stateDim=env.getState().length;
+let actionDim=3;
+let currentAlgoKey='dueling';
+let playbackMode='cinematic';
+let training=false;
+let trainingToken=0;
+let lastFrame=0;
+let currentEpisode=null;
+let targetSyncSteps=2000;
+let episode=0,totalSteps=0,bestLen=0;
+const rwHist=[],fruitHist=[],lossHist=[];
+function avg(arr,n){
+  if(!arr.length) return 0;
+  const slice=arr.slice(-n);
+  return slice.reduce((a,b)=>a+b,0)/slice.length;
+}
+
+function bindUI(){
+  ui.playbackButtons.forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      setPlaybackMode(btn.dataset.speed);
+    });
+  });
+  ui.gridSize.addEventListener('input',()=>{
+    updateGridLabel();
+    resetEnvironment(+ui.gridSize.value);
+  });
+  ui.btnReset.addEventListener('click',()=>resetEnvironment(+ui.gridSize.value,true));
+  ui.btnTrain.addEventListener('click',startTraining);
+  ui.btnPause.addEventListener('click',stopTraining);
+  ui.btnStep.addEventListener('click',async()=>{ await playSingleEpisode(); });
+  ui.btnWatch.addEventListener('click',watchSmoothEpisode);
+  ui.btnSave.addEventListener('click',saveTrainingToFile);
+  ui.btnLoad.addEventListener('click',()=>ui.fileLoader?.click());
+  ui.btnClear.addEventListener('click',()=>{
+    for(const k in localStorage){
+      if(k.includes('tensorflowjs')) localStorage.removeItem(k);
+    }
+    flash('Rensade lokal lagring');
+  });
+  ui.fileLoader?.addEventListener('change',async ev=>{
+    const [file]=ev.target.files||[];
+    if(file) await loadTrainingFromFile(file);
+    ev.target.value='';
+  });
+  ui.algoSelect.addEventListener('change',()=>{
+    if(watching) return;
+    const wasTraining=training;
+    if(wasTraining) stopTraining();
+    instantiateAgent(ui.algoSelect.value);
+  });
+  const updateAndApply=()=>{ updateReadouts(); applyConfigToAgent(); };
+  ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync','nStep','priorityAlpha','priorityBeta','pgEntropy','acEntropy','acValueCoef','ppoEntropy','ppoClip','ppoLambda','ppoBatch','ppoEpochs','ppoValueCoef']
+    .forEach(id=>ui[id]?.addEventListener('input',updateAndApply));
+  ui.tabTraining.addEventListener('click',()=>setActiveTab('training'));
+  ui.tabGuide.addEventListener('click',()=>setActiveTab('guide'));
+  updateReadouts();
+  updateGridLabel();
+}
 function setActiveTab(tab){
-  const showGuide=tab==='guide'; activeTab=showGuide?'guide':'training';
+  const showGuide=tab==='guide';
   ui.tabTraining.classList.toggle('active',!showGuide);
   ui.tabGuide.classList.toggle('active',showGuide);
   ui.trainingView.classList.toggle('hidden',showGuide);
   ui.guideView.classList.toggle('hidden',!showGuide);
 }
-
-window.addEventListener('load',async()=>{
-  agent=new DQN(stateDim,actionDim,cfg);
-  bindUI();
-  setImmediateState(env);
-});
-
-function bindUI(){
-  const update=()=>{
-    const gammaVal=+ui.gamma.value;
-    agent.setGamma(gammaVal);
-    ui.gammaReadout.textContent=gammaVal.toFixed(3);
-
-    const lrVal=+ui.lr.value;
-    agent.setLearningRate(lrVal);
-    ui.lrReadout.textContent=lrVal.toFixed(4);
-
+function updateGridLabel(){
+  const val=+ui.gridSize.value;
+  ui.gridLabel.textContent=`${val}×${val}`;
+}
+function setPlaybackMode(mode){
+  if(!playbackModes[mode]) mode='cinematic';
+  playbackMode=mode;
+  ui.playbackButtons.forEach(btn=>{
+    btn.classList.toggle('active',btn.dataset.speed===mode);
+  });
+  ui.playbackLabel.textContent=playbackModes[mode].label;
+}
+function applyConfigToAgent(){
+  if(!agent) return;
+  const shared={
+    gamma:+ui.gamma.value,
+    lr:+ui.lr.value,
+  };
+  agent.setGamma(shared.gamma);
+  agent.setLearningRate(shared.lr);
+  if(agent.kind==='dqn'){
     agent.epsStart=+ui.epsStart.value;
     agent.epsEnd=+ui.epsEnd.value;
     agent.epsDecay=+ui.epsDecay.value;
-
     agent.batch=+ui.batchSize.value;
     agent.buffer.setCapacity(+ui.bufferSize.value);
-
-    const nStepVal=+ui.nStep.value;
-    agent.setNStep(nStepVal);
-    ui.nStepReadout.textContent=nStepVal.toString();
-
-    const alphaVal=+ui.priorityAlpha.value;
-    agent.buffer.setAlpha(alphaVal);
-    ui.alphaReadout.textContent=alphaVal.toFixed(2);
-
-    const betaVal=+ui.priorityBeta.value;
-    agent.buffer.setBeta(betaVal);
-    ui.betaReadout.textContent=betaVal.toFixed(2);
-
-    const betaIncVal=+ui.priorityBetaInc.value;
-    agent.buffer.setBetaIncrement(betaIncVal/1000);
-    ui.betaIncReadout.textContent=betaIncVal.toFixed(3);
-
-    const priorityEpsVal=+ui.priorityEps.value;
-    agent.buffer.setPriorityEps(priorityEpsVal);
-    ui.priorityEpsReadout.textContent=priorityEpsVal.toFixed(4);
-
-    ui.epsReadout.textContent=agent.epsilon.toFixed(2);
-  };
-  ui.applyConfigFromInputs=update;
-  ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync','nStep','priorityAlpha','priorityBeta','priorityBetaInc','priorityEps'].forEach(id=>ui[id].addEventListener('input',update));
-  ui.gridSize.addEventListener('input',()=>ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`);
-  const updateRenderEvery=()=>{
-    const val=+ui.renderEvery.value; ui.renderLabel.textContent=val===1?'1 step':`${val} steps`; renderEvery=val;
-  };
-  ui.updateRenderEvery=updateRenderEvery; ui.renderEvery.addEventListener('input',updateRenderEvery);
-  ui.fpsLimit.addEventListener('input',()=>ui.fpsLabel.textContent=ui.fpsLimit.value);
-
-  ui.btnReset.onclick=()=>{env=new SnakeEnv(+ui.gridSize.value,+ui.gridSize.value);
-    COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS; setImmediateState(env); stateDim=env.getState().length;};
-
-  ui.btnTrain.onclick=startTraining;
-  ui.btnPause.onclick=stopTraining;
-  ui.btnStep.onclick=async()=>{await runEpisodes(1);};
-  ui.btnWatch.onclick=watchSmoothEpisode;
-  ui.btnSave.onclick=saveTrainingToFile;
-  ui.btnLoad.onclick=()=>{ui.fileLoader?.click();};
-  ui.fileLoader?.addEventListener('change',async ev=>{
-    const [file]=ev.target.files||[]; if(file)await loadTrainingFromFile(file); ev.target.value='';
+    agent.buffer.setAlpha(+ui.priorityAlpha.value);
+    agent.buffer.setBeta(+ui.priorityBeta.value);
+    agent.setNStep(+ui.nStep.value);
+    targetSyncSteps=+ui.targetSync.value||2000;
+  }else if(agent.kind==='policy'){
+    agent.setEntropy(+ui.pgEntropy.value);
+    targetSyncSteps=Infinity;
+  }else if(agent.kind==='a2c'){
+    agent.setEntropy(+ui.acEntropy.value);
+    agent.setValueCoef(+ui.acValueCoef.value);
+    targetSyncSteps=Infinity;
+  }else if(agent.kind==='ppo'){
+    agent.setEntropy(+ui.ppoEntropy.value);
+    agent.setValueCoef(+ui.ppoValueCoef.value);
+    agent.setClip(+ui.ppoClip.value);
+    agent.setLambda(+ui.ppoLambda.value);
+    agent.setBatch(+ui.ppoBatch.value);
+    agent.setEpochs(+ui.ppoEpochs.value);
+    targetSyncSteps=Infinity;
+  }
+  updateBadgeMetrics();
+}
+function updateReadouts(){
+  updateBadgeMetrics();
+}
+function updateBadgeMetrics(){
+  ui.gammaReadout.textContent=(+ui.gamma.value).toFixed(3);
+  ui.gammaBadge.textContent=(+ui.gamma.value).toFixed(3);
+  ui.lrReadout.textContent=(+ui.lr.value).toFixed(4);
+  ui.lrBadge.textContent=(+ui.lr.value).toFixed(4);
+  if(agent?.kind==='dqn'){
+    ui.epsReadout.textContent=(agent.epsilon??1).toFixed(2);
+  }else{
+    ui.epsReadout.textContent='—';
+  }
+  ui.epsStartReadout.textContent=(+ui.epsStart.value).toFixed(2);
+  ui.epsEndReadout.textContent=(+ui.epsEnd.value).toFixed(2);
+  ui.epsDecayReadout.textContent=`${(+ui.epsDecay.value)|0}`;
+  ui.batchReadout.textContent=`${(+ui.batchSize.value)|0}`;
+  ui.bufferReadout.textContent=`${(+ui.bufferSize.value)|0}`;
+  ui.targetSyncReadout.textContent=`${(+ui.targetSync.value)|0}`;
+  ui.nStepReadout.textContent=`${(+ui.nStep.value)|0}`;
+  ui.alphaReadout.textContent=(+ui.priorityAlpha.value).toFixed(2);
+  ui.betaReadout.textContent=(+ui.priorityBeta.value).toFixed(2);
+  ui.pgEntropyReadout.textContent=(+ui.pgEntropy.value).toFixed(3);
+  ui.acEntropyReadout.textContent=(+ui.acEntropy.value).toFixed(3);
+  ui.acValueCoefReadout.textContent=(+ui.acValueCoef.value).toFixed(2);
+  ui.ppoEntropyReadout.textContent=(+ui.ppoEntropy.value).toFixed(3);
+  ui.ppoClipReadout.textContent=(+ui.ppoClip.value).toFixed(2);
+  ui.ppoLambdaReadout.textContent=(+ui.ppoLambda.value).toFixed(2);
+  ui.ppoBatchReadout.textContent=`${(+ui.ppoBatch.value)|0}`;
+  ui.ppoEpochsReadout.textContent=`${(+ui.ppoEpochs.value)|0}`;
+  ui.ppoValueCoefReadout.textContent=(+ui.ppoValueCoef.value).toFixed(2);
+}
+function updateAdvancedVisibility(){
+  const type=AGENT_PRESETS[currentAlgoKey]?.type||'dqn';
+  Object.entries(ui.advancedSections).forEach(([key,el])=>{
+    if(!el) return;
+    el.classList.toggle('hidden',key!==type);
   });
-  ui.btnClear.onclick=()=>{for(const k in localStorage){if(k.includes('tensorflowjs'))localStorage.removeItem(k);}flash('Rensade lokal lagring');};
-  ui.tabTraining.onclick=()=>setActiveTab('training');
-  ui.tabGuide.onclick=()=>setActiveTab('guide');
-
-  update(); updateRenderEvery();
-  ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`;
-  ui.fpsLabel.textContent=ui.fpsLimit.value;
-  setActiveTab('training');
+}
+function instantiateAgent(key,opts={}){
+  currentAlgoKey=AGENT_PRESETS[key]?key:'dueling';
+  ui.algoSelect.value=currentAlgoKey;
+  const preset=AGENT_PRESETS[currentAlgoKey];
+  if(!opts.useCurrentUI){
+    applyPresetToUI(preset.defaults);
+  }
+  agent=preset.create(stateDim,actionDim,{
+    gamma:+ui.gamma.value,
+    lr:+ui.lr.value,
+    epsStart:+ui.epsStart.value,
+    epsEnd:+ui.epsEnd.value,
+    epsDecay:+ui.epsDecay.value,
+    batch:+ui.batchSize.value,
+    bufferSize:+ui.bufferSize.value,
+    priorityAlpha:+ui.priorityAlpha.value,
+    priorityBeta:+ui.priorityBeta.value,
+    nStep:+ui.nStep.value,
+    targetSync:+ui.targetSync.value,
+    entropy:+ui.pgEntropy.value,
+    valueCoef:+ui.acValueCoef.value,
+    clip:+ui.ppoClip.value,
+    lambda:+ui.ppoLambda.value,
+    batch:+ui.ppoBatch.value,
+    epochs:+ui.ppoEpochs.value,
+    learnRepeats:preset.defaults.learnRepeats,
+    layers:preset.defaults.layers,
+    dueling:preset.defaults.dueling,
+    double:preset.defaults.double,
+  });
+  agent.learnRepeats=preset.defaults.learnRepeats??agent.learnRepeats??1;
+  targetSyncSteps=agent.kind==='dqn'? (+ui.targetSync.value||2000):Infinity;
+  updateAdvancedVisibility();
+  ui.algoBadge.textContent=preset.badge||preset.label;
+  ui.algoDescription.textContent=preset.description;
+  updateBadgeMetrics();
+  resetTrainingStats();
+  currentEpisode=null;
+  setImmediateState(env);
+}
+function applyPresetToUI(config){
+  if(config.gamma!==undefined) ui.gamma.value=config.gamma;
+  if(config.lr!==undefined) ui.lr.value=config.lr;
+  if(config.epsStart!==undefined) ui.epsStart.value=config.epsStart;
+  if(config.epsEnd!==undefined) ui.epsEnd.value=config.epsEnd;
+  if(config.epsDecay!==undefined) ui.epsDecay.value=config.epsDecay;
+  if(config.batch!==undefined) ui.batchSize.value=config.batch;
+  if(config.bufferSize!==undefined) ui.bufferSize.value=config.bufferSize;
+  if(config.targetSync!==undefined) ui.targetSync.value=config.targetSync;
+  if(config.nStep!==undefined) ui.nStep.value=config.nStep;
+  if(config.priorityAlpha!==undefined) ui.priorityAlpha.value=config.priorityAlpha;
+  if(config.priorityBeta!==undefined) ui.priorityBeta.value=config.priorityBeta;
+  if(config.entropy!==undefined){
+    ui.pgEntropy.value=config.entropy;
+    ui.acEntropy.value=config.entropy;
+    ui.ppoEntropy.value=config.entropy;
+  }
+  if(config.valueCoef!==undefined){
+    ui.acValueCoef.value=config.valueCoef;
+    ui.ppoValueCoef.value=config.valueCoef;
+  }
+  if(config.clip!==undefined) ui.ppoClip.value=config.clip;
+  if(config.lambda!==undefined) ui.ppoLambda.value=config.lambda;
+  if(config.batch!==undefined) ui.ppoBatch.value=config.batch;
+  if(config.epochs!==undefined) ui.ppoEpochs.value=config.epochs;
+  updateReadouts();
+}
+function resetEnvironment(size=COLS,force){
+  const n=+size|0;
+  if(!force && env.cols===n && env.rows===n) return;
+  env=new SnakeEnv(n,n);
+  COLS=env.cols;
+  ROWS=env.rows;
+  CELL=board.width/COLS;
+  stateDim=env.getState().length;
+  setImmediateState(env);
+  currentEpisode=null;
+}
+function resetTrainingStats(){
+  episode=0;
+  totalSteps=0;
+  bestLen=0;
+  rwHist.length=0;
+  fruitHist.length=0;
+  lossHist.length=0;
+  ui.chartReward.data=[];
+  ui.chartReward.draw();
+  ui.chartLoss.data=[];
+  ui.chartLoss.draw();
+  updateStatsUI();
+}
+function updateStatsUI(){
+  ui.kEpisodes.textContent=episode;
+  ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2);
+  ui.kBest.textContent=bestLen;
+  ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2);
+}
+function flash(message,danger=false){
+  ui.trainState.textContent=message;
+  ui.trainState.style.background=danger?'var(--danger)':'#1a1f46';
+  ui.trainState.style.borderColor=danger?'#ff8da4':'#2a2f61';
+  setTimeout(()=>{
+    ui.trainState.textContent=watching?'watching':(training?'training':'idle');
+    ui.trainState.style.background='#1a1f46';
+    ui.trainState.style.borderColor='#2a2f61';
+  },1200);
 }
 
+/* ---------------- Training loop ---------------- */
+function maybeGrowBoard(){
+  const frRate=avg(fruitHist,100);
+  const current=+ui.gridSize.value;
+  if(frRate>0.6 && current<+ui.gridSize.max){
+    const next=Math.min(+ui.gridSize.max,current+2);
+    ui.gridSize.value=next;
+    updateGridLabel();
+    resetEnvironment(next);
+  }
+}
+function createEpisodeContext(){
+  const desired=+ui.gridSize.value;
+  if(env.cols!==desired||env.rows!==desired){
+    resetEnvironment(desired,true);
+  }
+  const state=env.reset();
+  const resetState=snapshotEnv(env);
+  enqueueRenderFrame(lastDrawnState,resetState,0);
+  return {state,totalReward:0,fruits:0,steps:0,done:false,renderCounter:0};
+}
+async function performStep(ctx,mode,{respectStop=false}={}){
+  if(respectStop && (!training||watching)) return false;
+  const before=snapshotEnv(env);
+  const action=agent.act(ctx.state);
+  const {state:nextState,reward,done,ateFruit}=env.step(action);
+  const after=snapshotEnv(env);
+  agent.recordTransition(ctx.state,action,reward,nextState,done);
+  ctx.state=nextState;
+  ctx.totalReward+=reward;
+  if(ateFruit||reward>1) ctx.fruits++;
+  ctx.steps++;
+  totalSteps++;
+  const repeats=agent.learnRepeats??1;
+  for(let i=0;i<repeats;i++){
+    const loss=await agent.learn();
+    if(loss!==null && loss!==undefined){
+      lossHist.push(loss);
+      ui.chartLoss.push(avg(lossHist,30));
+    }
+  }
+  if(agent.kind==='dqn' && targetSyncSteps>0 && totalSteps%targetSyncSteps===0){
+    agent.syncTarget();
+  }
+  const eps=agent.updateEpsilon?agent.updateEpsilon(totalSteps):null;
+  if(agent.kind==='dqn' && eps!==undefined){
+    ui.epsReadout.textContent=eps.toFixed(2);
+  }else if(agent.kind!=='dqn'){
+    ui.epsReadout.textContent='—';
+  }
+  ctx.renderCounter=(ctx.renderCounter||0)+1;
+  if(ctx.renderCounter%mode.renderEvery===0 || done){
+    enqueueRenderFrame(before,after,mode.frameMs);
+    await waitForRenderCapacity(mode.queueTarget);
+  }
+  if(ctx.steps%16===0) await tf.nextFrame();
+  ctx.done=done;
+  return !done;
+}
+async function finalizeEpisode(ctx){
+  agent.drainPending?.();
+  const loss=await agent.finishEpisode(ctx);
+  if(loss!==null && loss!==undefined){
+    lossHist.push(loss);
+    ui.chartLoss.push(avg(lossHist,30));
+  }
+  episode++;
+  rwHist.push(ctx.totalReward);
+  if(rwHist.length>1000) rwHist.shift();
+  fruitHist.push(ctx.fruits);
+  if(fruitHist.length>1000) fruitHist.shift();
+  bestLen=Math.max(bestLen,env.snake.length);
+  ui.chartReward.push(ctx.totalReward);
+  updateStatsUI();
+  await tf.nextFrame();
+  maybeGrowBoard();
+}
+async function trainingLoop(ts){
+  if(!training||watching){
+    trainingToken=0;
+    return;
+  }
+  const mode=playbackModes[playbackMode];
+  if(ts-lastFrame<mode.frameMs){
+    trainingToken=requestAnimationFrame(trainingLoop);
+    return;
+  }
+  lastFrame=ts;
+  if(!currentEpisode){
+    currentEpisode=createEpisodeContext();
+  }
+  for(let i=0;i<mode.stepsPerFrame;i++){
+    const cont=await performStep(currentEpisode,mode,{respectStop:true});
+    if(!cont){
+      await finalizeEpisode(currentEpisode);
+      currentEpisode=null;
+      if(!training||watching) break;
+      currentEpisode=createEpisodeContext();
+    }
+  }
+  if(training&&!watching){
+    trainingToken=requestAnimationFrame(trainingLoop);
+  }else{
+    trainingToken=0;
+  }
+}
+function startTraining(){
+  if(training||watching||!agent) return;
+  training=true;
+  ui.trainState.textContent='training';
+  lastFrame=0;
+  if(!trainingToken) trainingToken=requestAnimationFrame(trainingLoop);
+}
+function stopTraining(){
+  if(!training) return;
+  training=false;
+  if(trainingToken){
+    cancelAnimationFrame(trainingToken);
+    trainingToken=0;
+  }
+  ui.trainState.textContent='idle';
+}
+async function playSingleEpisode(){
+  if(training||watching) return;
+  const ctx=createEpisodeContext();
+  const mode=playbackModes.cinematic;
+  while(!ctx.done){
+    await performStep(ctx,mode);
+  }
+  await finalizeEpisode(ctx);
+}
+async function watchSmoothEpisode(){
+  if(watching||!agent) return;
+  const wasTraining=training;
+  if(wasTraining) stopTraining();
+  watching=true;
+  ui.trainState.textContent='watching';
+  ui.btnWatch.disabled=true;
+  try{
+    await waitForRenderIdle();
+    const desired=+ui.gridSize.value;
+    if(env.cols!==desired||env.rows!==desired){
+      resetEnvironment(desired,true);
+    }
+    let state=env.reset();
+    setImmediateState(env);
+    const mode=playbackModes.watch;
+    const maxSteps=COLS*ROWS*6;
+    let steps=0;
+    let done=false;
+    while(!done && steps<maxSteps){
+      const before=snapshotEnv(env);
+      const action=agent.greedyAction(state);
+      const {state:nextState,done:finished}=env.step(action);
+      const after=snapshotEnv(env);
+      enqueueRenderFrame(before,after,mode.frameMs);
+      await waitForRenderCapacity(mode.queueTarget);
+      await tf.nextFrame();
+      state=nextState;
+      done=finished;
+      steps++;
+    }
+    await waitForRenderIdle();
+    bestLen=Math.max(bestLen,env.snake.length);
+    ui.kBest.textContent=bestLen;
+  }finally{
+    watching=false;
+    ui.btnWatch.disabled=false;
+    ui.trainState.textContent=wasTraining?'training':'idle';
+    if(wasTraining) startTraining();
+  }
+}
+
+/* ---------------- Save / load ---------------- */
 async function buildAppState(){
   const agentState=await agent.exportState();
   return {
-    version:2, createdAt:new Date().toISOString(),
+    version:3,
+    createdAt:new Date().toISOString(),
+    algo:currentAlgoKey,
+    playback:playbackMode,
+    gridSize:+ui.gridSize.value,
     agent:agentState,
-    meta:{ episode,totalSteps,bestLen,rwHist:Array.from(rwHist),fruitHist:Array.from(fruitHist),lossHist:Array.from(lossHist),
-      chartReward:Array.from(ui.chartReward.data), chartLoss:Array.from(ui.chartLoss.data),
-      targetSync:+ui.targetSync.value, gridSize:+ui.gridSize.value, renderEvery:+ui.renderEvery.value, fpsLimit:+ui.fpsLimit.value,
+    meta:{
+      episode,totalSteps,bestLen,
+      rwHist:Array.from(rwHist),
+      fruitHist:Array.from(fruitHist),
+      lossHist:Array.from(lossHist),
+      chartReward:Array.from(ui.chartReward.data),
+      chartLoss:Array.from(ui.chartLoss.data),
     },
   };
 }
-function applyLoadedConfig(config={}){ if(config.gamma!==undefined)ui.gamma.value=config.gamma;
-  if(config.lr!==undefined)ui.lr.value=config.lr; if(config.batch!==undefined)ui.batchSize.value=config.batch;
-  if(config.bufferSize!==undefined)ui.bufferSize.value=config.bufferSize;
-  if(config.epsStart!==undefined)ui.epsStart.value=config.epsStart;
-  if(config.epsEnd!==undefined)ui.epsEnd.value=config.epsEnd;
-  if(config.epsDecay!==undefined)ui.epsDecay.value=config.epsDecay;
-  if(config.nStep!==undefined)ui.nStep.value=config.nStep;
-  if(config.priorityAlpha!==undefined)ui.priorityAlpha.value=config.priorityAlpha;
-  if(config.priorityBeta!==undefined)ui.priorityBeta.value=config.priorityBeta;
-  if(config.priorityBetaIncrement!==undefined)ui.priorityBetaInc.value=(+config.priorityBetaIncrement)*1000;
-  if(config.priorityEps!==undefined)ui.priorityEps.value=config.priorityEps;
-  ui.applyConfigFromInputs?.();
-}
-function applyMeta(meta={}){ episode=+meta.episode||0; totalSteps=+meta.totalSteps||0; bestLen=+meta.bestLen||0;
-  assignArray(rwHist,meta.rwHist,v=>+v||0); assignArray(fruitHist,meta.fruitHist,v=>+v||0); assignArray(lossHist,meta.lossHist,v=>+v||0);
-  ui.chartReward.data=Array.isArray(meta.chartReward)?meta.chartReward.map(v=>+v||0):[]; ui.chartReward.draw();
-  ui.chartLoss.data=Array.isArray(meta.chartLoss)?meta.chartLoss.map(v=>+v||0):[]; ui.chartLoss.draw();
-  ui.kEpisodes.textContent=episode; ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2); ui.kBest.textContent=bestLen; ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2);
-  if(typeof meta.targetSync==='number')ui.targetSync.value=meta.targetSync;
-  if(typeof meta.gridSize==='number'){ ui.gridSize.value=meta.gridSize; ui.gridLabel.textContent=`${meta.gridSize}×${meta.gridSize}`;
-    env=new SnakeEnv(meta.gridSize,meta.gridSize); COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS;
-  } else { ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`; }
-  if(typeof meta.renderEvery==='number') ui.renderEvery.value=meta.renderEvery; ui.updateRenderEvery?.();
-  if(typeof meta.fpsLimit==='number') ui.fpsLimit.value=meta.fpsLimit; ui.fpsLabel.textContent=ui.fpsLimit.value;
-  env.reset(); setImmediateState(env);
+function applyMeta(meta={}){
+  episode=+meta.episode||0;
+  totalSteps=+meta.totalSteps||0;
+  bestLen=+meta.bestLen||0;
+  assignArray(rwHist,meta.rwHist,v=>+v||0);
+  assignArray(fruitHist,meta.fruitHist,v=>+v||0);
+  assignArray(lossHist,meta.lossHist,v=>+v||0);
+  ui.chartReward.data=Array.isArray(meta.chartReward)?meta.chartReward.map(v=>+v||0):[];
+  ui.chartReward.draw();
+  ui.chartLoss.data=Array.isArray(meta.chartLoss)?meta.chartLoss.map(v=>+v||0):[];
+  ui.chartLoss.draw();
+  updateStatsUI();
 }
 async function saveTrainingToFile(){
-  if(!agent)return; const resume=training; if(resume)stopTraining();
+  if(!agent) return;
+  const resume=training;
+  if(resume) stopTraining();
   try{
-    await waitForRenderIdle(); const state=await buildAppState();
+    await waitForRenderIdle();
+    const state=await buildAppState();
     const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});
     const stamp=new Date().toISOString().replace(/[:.]/g,'-');
-    const url=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=url; a.download=`snake-training-${stamp}.json`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); setTimeout(()=>URL.revokeObjectURL(url),1000);
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement('a');
+    a.href=url;
+    a.download=`snake-training-${stamp}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
     flash('Sparat till fil');
-  } catch(err){ console.error(err); flash('Kunde inte spara',true); }
-  finally{ if(resume&&!watching)startTraining(); }
+  }catch(err){
+    console.error(err);
+    flash('Kunde inte spara',true);
+  }finally{
+    if(resume&&!watching) startTraining();
+  }
 }
 async function loadTrainingFromFile(file){
-  if(!agent||!file)return; if(watching){ flash('Avsluta visningsläget först',true); return; }
-  const resume=training; if(resume)stopTraining();
+  if(!agent||!file) return;
+  if(watching){
+    flash('Avsluta visning först',true);
+    return;
+  }
+  const resume=training;
+  if(resume) stopTraining();
   try{
-    const text=await file.text(); const data=JSON.parse(text);
-    if(!data||!data.agent)throw new Error('Ogiltig sparfil');
-    await agent.importState(data.agent); applyLoadedConfig(data.agent.config||{}); applyMeta(data.meta||{});
-    ui.epsReadout.textContent=agent.epsilon.toFixed(2); flash('Laddat från fil');
-  } catch(err){ console.error(err); flash('Kunde inte ladda',true); }
-  finally{ if(resume&&!watching)startTraining(); }
-}
-
-/* ---------------- Training loop + curriculum ---------------- */
-let training=false,animToken=0,lastFrame=0,renderEvery=1;
-let episode=0,totalSteps=0,bestLen=0;
-const rwHist=[],fruitHist=[],lossHist=[];
-function avg(a,n){return a.slice(-n).reduce((x,y)=>x+y,0)/Math.max(1,Math.min(a.length,n));}
-function flash(m,d=false){ ui.trainState.textContent=m; ui.trainState.style.background=d?'#ff4b6e':'#1a1f46';
-  setTimeout(()=>{ if(watching){ ui.trainState.textContent='watching'; ui.trainState.style.background='#1a1f46'; return; }
-    ui.trainState.textContent=training?'training':'idle'; ui.trainState.style.background='#1a1f46'; },1200);
-}
-
-async function startTraining(){ if(training||watching)return;
-  training=true; ui.trainState.textContent='training'; ui.trainState.style.background='#1a1f46';
-  renderEvery=+ui.renderEvery.value; lastFrame=0; animToken=requestAnimationFrame(loopTrain);
-}
-function stopTraining(){ if(!training)return; training=false; cancelAnimationFrame(animToken); animToken=0; ui.trainState.textContent='idle'; ui.trainState.style.background='#1a1f46'; }
-
-async function loopTrain(ts){
-  if(!training||watching){animToken=0;return;}
-  const maxFps=+ui.fpsLimit.value;
-  if(ts-lastFrame<1000/maxFps){ animToken=requestAnimationFrame(loopTrain); return; }
-  lastFrame=ts;
-  // kör korta episoder per frame för jämnare UI
-  await runEpisodes(1,true);
-  if(!training||watching){animToken=0;return;}
-  animToken=requestAnimationFrame(loopTrain);
-}
-
-async function runEpisodes(count=1,respectStop=false){
-  if(watching)return;
-  const targetSync=+ui.targetSync.value;
-  for(let e=0;e<count;e++){
-    if(respectStop&&(!training||watching))break;
-
-    // Curriculum: öka brädet när frukt-rate (100) > 0.6
-    const frRate=avg(fruitHist,100);
-    const current=+ui.gridSize.value;
-    if(frRate>0.6 && current<+ui.gridSize.max){
-      ui.gridSize.value = Math.min(+ui.gridSize.max, current+2);
-      ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`;
+    const text=await file.text();
+    const data=JSON.parse(text);
+    if(!data||!data.agent) throw new Error('Ogiltig sparfil');
+    const algo=data.algo&&AGENT_PRESETS[data.algo]?data.algo:'dueling';
+    applyPresetToUI({...AGENT_PRESETS[algo].defaults,...data.agent.config});
+    if(typeof data.gridSize==='number'){
+      ui.gridSize.value=data.gridSize;
+      updateGridLabel();
+      resetEnvironment(data.gridSize,true);
     }
-
-    const n=+ui.gridSize.value;
-    if(n!==env.cols){ env=new SnakeEnv(n,n); COLS=n; ROWS=n; CELL=board.width/COLS; setImmediateState(env); stateDim=env.getState().length; }
-
-    let s=env.reset(),done=false,R=0,fr=0,steps=0;
-    const resetState=snapshotEnv(env); enqueueRenderFrame(lastDrawnState,resetState,0);
-    let aborted=false;
-    while(!done){
-      if(respectStop&&(!training||watching)){aborted=true;break;}
-      const before=snapshotEnv(env);
-      const a=agent.act(s);
-      const {state:ns,reward:r,done:d}=env.step(a);
-      const after=snapshotEnv(env);
-      agent.recordTransition(s,a,r,ns,d);
-      s=ns; done=d; R+=r; steps++; totalSteps++;
-      if(r>1)fr++;
-
-      // lite mer läro-tryck men tidskiva UI-vänligt
-      for(let k=0;k<2;k++){
-        const loss=await agent.learn();
-        if(loss!==null){ lossHist.push(loss); ui.chartLoss.push(avg(lossHist,30)); }
-      }
-      if(totalSteps%targetSync===0) agent.syncTarget();
-      agent.updateEpsilon(totalSteps);
-      ui.epsReadout.textContent=agent.epsilon.toFixed(2);
-
-      if(steps%renderEvery===0||d) enqueueRenderFrame(before,after);
-      if(steps%24===0) await tf.nextFrame();
-    }
-    agent.drainPending();
-    if(aborted) return;
-    episode++;
-    rwHist.push(R); if(rwHist.length>1000)rwHist.shift();
-    fruitHist.push(fr); if(fruitHist.length>1000)fruitHist.shift();
-    bestLen=Math.max(bestLen,env.snake.length);
-    ui.kEpisodes.textContent=episode;
-    ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2);
-    ui.kBest.textContent=bestLen;
-    ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2);
-    ui.chartReward.push(R);
-    await tf.nextFrame();
-    if(respectStop&&(!training||watching))return;
+    instantiateAgent(algo,{useCurrentUI:true});
+    await agent.importState(data.agent);
+    applyConfigToAgent();
+    if(data.playback) setPlaybackMode(data.playback);
+    applyMeta(data.meta||{});
+    flash('Laddat från fil');
+  }catch(err){
+    console.error(err);
+    flash('Kunde inte ladda',true);
+  }finally{
+    if(resume&&!watching) startTraining();
   }
 }
 
-async function watchSmoothEpisode(){
-  if(watching||!agent)return;
-  const wasTraining=training; if(wasTraining)stopTraining();
-  watching=true; ui.trainState.textContent='watching'; ui.trainState.style.background='#1a1f46';
-  ui.btnWatch && (ui.btnWatch.disabled=true);
-  try{
-    await waitForRenderIdle();
-    const n=+ui.gridSize.value;
-    if(n!==env.cols){ env=new SnakeEnv(n,n); COLS=n; ROWS=n; CELL=board.width/COLS; }
-    let state=env.reset(); setImmediateState(env);
-    const greedyAction=s=>tf.tidy(()=>agent.online.predict(tf.tensor2d([s],[1,stateDim])).argMax(1).dataSync()[0]);
-    const maxSteps=COLS*ROWS*6;
-    const frameDuration=getWatchDuration();
-    let done=false,steps=0;
-    while(!done&&steps<maxSteps){
-      const before=snapshotEnv(env);
-      const action=greedyAction(state);
-      const {state:nextState,done:finished}=env.step(action);
-      const after=snapshotEnv(env);
-      enqueueRenderFrame(before,after,frameDuration);
-      state=nextState; done=finished; steps++;
-      await waitForRenderCapacity(); await tf.nextFrame();
-    }
-    await waitForRenderIdle();
-    bestLen=Math.max(bestLen,env.snake.length); ui.kBest.textContent=bestLen;
-  } finally {
-    watching=false; ui.btnWatch && (ui.btnWatch.disabled=false); ui.trainState.style.background='#1a1f46';
-    if(wasTraining){ startTraining(); } else { ui.trainState.textContent='idle'; }
-  }
-}
+/* ---------------- Init ---------------- */
+window.addEventListener('load',()=>{
+  bindUI();
+  setPlaybackMode('cinematic');
+  instantiateAgent('dueling');
+  setImmediateState(env);
+});
 </script>
 </body>
 </html>
