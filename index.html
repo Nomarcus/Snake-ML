@@ -16,17 +16,22 @@ main{max-width:1200px;margin:24px auto;padding:0 16px;display:grid;grid-template
 .card{background:var(--panel);border:1px solid #1b1f3a;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
 h2{margin:0 0 10px;font-size:16px;color:#dfe3ff}
 canvas#board{width:500px;height:500px;image-rendering:pixelated;border-radius:12px;background:#0f1328;border:1px solid #1b1f3a}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-start}
 button{appearance:none;border:none;padding:10px 14px;border-radius:10px;color:#fff;background:linear-gradient(135deg,var(--a),var(--b));font-weight:700;cursor:pointer;transition:.2s transform,.2s box-shadow;box-shadow:0 6px 20px rgba(108,123,255,.35)}
 button:hover{transform:translateY(-1px)}
 button.secondary{background:#23284f;box-shadow:none;color:#cfd6ff;border:1px solid #2a2f61}
 button.danger{background:linear-gradient(135deg,#ff6b6b,#ff3d77)}
-label{color:var(--muted);font-size:12px}
-input[type="range"]{width:220px}
-.kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-.kpi .item{background:#111533;padding:12px;border-radius:12px;border:1px solid #1b1f3a}
+label{color:var(--muted);font-size:12px;display:block}
+input[type="range"]{width:100%}
+.kpi{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.kpi .item{background:#111533;padding:12px;border-radius:12px;border:1px solid #1b1f3a;display:flex;flex-direction:column;gap:6px}
 .kpi .item b{display:block;font-size:12px;color:#9aa3c7;font-weight:600}
-.kpi .item span{font-weight:900;font-size:18px}
+.kpi .item span{font-weight:900;font-size:17px;line-height:1.2}
+.kpi .item span.muted{font-size:11px;font-weight:600;color:#7f89b3}
+.row label.control{background:rgba(17,21,51,.45);padding:12px;border-radius:10px;border:1px solid #1b1f3a;flex:1 1 220px;display:flex;flex-direction:column;gap:6px;color:#dfe3ff}
+.row label.control .control-title{display:flex;align-items:center;gap:6px;font-weight:700;font-size:12px;color:#dfe3ff}
+.row label.control .control-hint{color:#8f97c7;font-size:11px;line-height:1.4}
+.row label.control .mono{color:#c7d2fe}
 .split{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 canvas.chart{width:100%;height:140px;background:#0b1030;border-radius:10px;border:1px solid #1b1f3a}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c7d2fe}
@@ -84,29 +89,37 @@ footer{opacity:.7;text-align:center;padding:18px}
     </div>
 
     <div class="row" style="margin-top:6px">
-      <label>Cells:
+      <label class="control"> 
+        <span class="control-title">Rutnät <span class="mono" id="gridLabel">20×20</span></span>
         <input type="range" id="gridSize" min="10" max="30" step="2" value="20">
-        <span class="mono" id="gridLabel">20×20</span>
+        <span class="control-hint">Antal rutor på planen. Större bräde ger högre maxlängd men är svårare att täcka.</span>
       </label>
-      <label>Render every:
+      <label class="control">
+        <span class="control-title">Rita var <span class="mono" id="renderLabel">1 steg</span></span>
         <input type="range" id="renderEvery" min="1" max="200" step="1" value="1">
-        <span class="mono" id="renderLabel">1 step</span>
+        <span class="control-hint">Hur ofta vi ritar under träning. Högre värde = snabbare träning men hackigare animation.</span>
       </label>
-      <label>FPS limit:
+      <label class="control">
+        <span class="control-title">FPS-gräns <span class="mono" id="fpsLabel">180</span></span>
         <input type="range" id="fpsLimit" min="10" max="240" step="10" value="180">
-        <span class="mono" id="fpsLabel">180</span>
+        <span class="control-hint">Maximalt antal uppdateringar per sekund vid träning och visning.</span>
       </label>
     </div>
-    <p class="hint">Lägre “Render every” eller högre “FPS limit” = mjukare. Träningen skalar upp brädet automatiskt med bra resultat.</p>
+    <p class="hint">Lägre "Rita var" eller högre "FPS-gräns" ger mjukare visning. Träningen ökar automatiskt rutnätet när modellen presterar bra.</p>
   </div>
 
   <div class="card">
     <h2>Training Stats</h2>
     <div class="kpi">
-      <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
-      <div class="item"><b>Avg Reward (100)</b><span id="kAvgRw">0.0</span></div>
-      <div class="item"><b>Best Length</b><span id="kBest">0</span></div>
-      <div class="item"><b>Fruit Rate</b><span id="kFruitRate">0%</span></div>
+      <div class="item"><b>Avsnitt</b><span id="kEpisodes">0</span></div>
+      <div class="item"><b>Snittbelöning (100)</b><span id="kAvgRw">0.0</span></div>
+      <div class="item"><b>Bästa längd</b><span id="kBest">0</span></div>
+      <div class="item"><b>Frukter / ep (100)</b><span id="kFruitRate">0.0</span></div>
+      <div class="item"><b>Längd nu</b><span id="kLength">0</span></div>
+      <div class="item"><b>Täckning (bäst)</b><span id="kCoverage">0%</span></div>
+      <div class="item"><b>Steg / ep (50)</b><span id="kStepsAvg">–</span></div>
+      <div class="item"><b>Tid / ep (50)</b><span id="kEpisodeTime">–</span></div>
+      <div class="item"><b>Tid till fullt</b><span id="kTimeToSolve">–</span></div>
     </div>
     <div class="split" style="margin-top:10px">
       <div><h2>Reward / Ep</h2><canvas id="chartReward" class="chart" width="400" height="140"></canvas></div>
@@ -115,27 +128,79 @@ footer{opacity:.7;text-align:center;padding:18px}
 
     <h2 style="margin-top:14px">Hyperparameters</h2>
     <div class="row">
-      <label>γ (discount): <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98"></label>
-      <label>LR: <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005"></label>
+      <label class="control">
+        <span class="control-title">γ (discount)</span>
+        <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
+        <span class="control-hint">Diskonteringsfaktorn. Högre värde gör att agenten planerar längre fram.</span>
+      </label>
+      <label class="control">
+        <span class="control-title">LR</span>
+        <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005">
+        <span class="control-hint">Inlärningshastighet. Höga värden kan ge instabilitet, låga gör träningen långsam.</span>
+      </label>
     </div>
     <div class="row" style="margin-top:6px">
-      <label>ε start: <input type="range" id="epsStart" min="0.2" max="1.0" step="0.05" value="1.0"></label>
-      <label>ε end: <input type="range" id="epsEnd" min="0.01" max="0.2" step="0.01" value="0.05"></label>
-      <label>ε decay (steps): <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="40000"></label>
+      <label class="control">
+        <span class="control-title">ε start</span>
+        <input type="range" id="epsStart" min="0.2" max="1.0" step="0.05" value="1.0">
+        <span class="control-hint">Utforskningsnivån i början. 1.0 innebär helt slumpmässiga drag.</span>
+      </label>
+      <label class="control">
+        <span class="control-title">ε slut</span>
+        <input type="range" id="epsEnd" min="0.01" max="0.2" step="0.01" value="0.05">
+        <span class="control-hint">Utforskning när agenten är tränad. Lägre värde = mer förtroende för policyn.</span>
+      </label>
+      <label class="control">
+        <span class="control-title">ε decay (steg)</span>
+        <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="40000">
+        <span class="control-hint">Hur snabbt utforskningen minskar. Fler steg = långsammare övergång.</span>
+      </label>
     </div>
     <div class="row" style="margin-top:6px">
-      <label>Batch: <input type="range" id="batchSize" min="32" max="512" step="32" value="128"></label>
-      <label>Replay size: <input type="range" id="bufferSize" min="5000" max="200000" step="5000" value="50000"></label>
-      <label>Target sync (steps): <input type="range" id="targetSync" min="500" max="10000" step="500" value="2000"></label>
+      <label class="control">
+        <span class="control-title">Batch</span>
+        <input type="range" id="batchSize" min="32" max="512" step="32" value="128">
+        <span class="control-hint">Hur många erfarenheter vi tränar på varje uppdatering.</span>
+      </label>
+      <label class="control">
+        <span class="control-title">Replay-minne</span>
+        <input type="range" id="bufferSize" min="5000" max="200000" step="5000" value="50000">
+        <span class="control-hint">Storleken på minnet av tidigare upplevelser.</span>
+      </label>
+      <label class="control">
+        <span class="control-title">Target sync (steg)</span>
+        <input type="range" id="targetSync" min="500" max="10000" step="500" value="2000">
+        <span class="control-hint">Hur ofta målnätverket uppdateras.</span>
+      </label>
     </div>
     <div class="row" style="margin-top:6px">
-      <label>n-step <span class="mono" id="nStepReadout">3</span>: <input type="range" id="nStep" min="1" max="5" step="1" value="3"></label>
-      <label>PER alpha <span class="mono" id="alphaReadout">0.60</span>: <input type="range" id="priorityAlpha" min="0.1" max="1" step="0.05" value="0.6"></label>
-      <label>PER beta <span class="mono" id="betaReadout">0.40</span>: <input type="range" id="priorityBeta" min="0.1" max="1" step="0.05" value="0.4"></label>
+      <label class="control">
+        <span class="control-title">n-step <span class="mono" id="nStepReadout">3</span></span>
+        <input type="range" id="nStep" min="1" max="5" step="1" value="3">
+        <span class="control-hint">Hur många steg belöningen summeras över. Högre värde ger mer kontext men långsammare uppdatering.</span>
+      </label>
+      <label class="control">
+        <span class="control-title">PER α <span class="mono" id="alphaReadout">0.60</span></span>
+        <input type="range" id="priorityAlpha" min="0.1" max="1" step="0.05" value="0.6">
+        <span class="control-hint">Styr hur starkt replay-minnet prioriterar oväntade exempel.</span>
+      </label>
+      <label class="control">
+        <span class="control-title">PER β <span class="mono" id="betaReadout">0.40</span></span>
+        <input type="range" id="priorityBeta" min="0.1" max="1" step="0.05" value="0.4">
+        <span class="control-hint">Hur mycket vi kompenserar för bias i prioriterad sampling.</span>
+      </label>
     </div>
     <div class="row" style="margin-top:6px">
-      <label>Beta inc/1k <span class="mono" id="betaIncReadout">0.002</span>: <input type="range" id="priorityBetaInc" min="0" max="0.02" step="0.0005" value="0.002"></label>
-      <label>Priority eps <span class="mono" id="priorityEpsReadout">0.0010</span>: <input type="range" id="priorityEps" min="0.0001" max="0.02" step="0.0001" value="0.001"></label>
+      <label class="control">
+        <span class="control-title">β-ökning / 1k <span class="mono" id="betaIncReadout">0.002</span></span>
+        <input type="range" id="priorityBetaInc" min="0" max="0.02" step="0.0005" value="0.002">
+        <span class="control-hint">Hur snabbt β ökar varje 1000 steg. Högre värde = snabbare mot viktad sampling.</span>
+      </label>
+      <label class="control">
+        <span class="control-title">Priority ε <span class="mono" id="priorityEpsReadout">0.0010</span></span>
+        <input type="range" id="priorityEps" min="0.0001" max="0.02" step="0.0001" value="0.001">
+        <span class="control-hint">Litet golv för prioriteringar så att inget exempel får sannolikheten noll.</span>
+      </label>
     </div>
   </div>
 </main>
@@ -806,6 +871,9 @@ const ui={
   fpsLimit:document.getElementById('fpsLimit'),fpsLabel:document.getElementById('fpsLabel'),
   kEpisodes:document.getElementById('kEpisodes'),kAvgRw:document.getElementById('kAvgRw'),
   kBest:document.getElementById('kBest'),kFruitRate:document.getElementById('kFruitRate'),
+  kLength:document.getElementById('kLength'),kCoverage:document.getElementById('kCoverage'),
+  kStepsAvg:document.getElementById('kStepsAvg'),kEpisodeTime:document.getElementById('kEpisodeTime'),
+  kTimeToSolve:document.getElementById('kTimeToSolve'),
   btnTrain:document.getElementById('btnTrain'),btnPause:document.getElementById('btnPause'),
   btnStep:document.getElementById('btnStep'),btnWatch:document.getElementById('btnWatch'),
   btnReset:document.getElementById('btnReset'),
@@ -831,6 +899,8 @@ window.addEventListener('load',async()=>{
   agent=new DQN(stateDim,actionDim,cfg);
   bindUI();
   setImmediateState(env);
+  updateLiveLength(env.snake.length);
+  refreshKpis();
 });
 
 function bindUI(){
@@ -876,13 +946,14 @@ function bindUI(){
   ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync','nStep','priorityAlpha','priorityBeta','priorityBetaInc','priorityEps'].forEach(id=>ui[id].addEventListener('input',update));
   ui.gridSize.addEventListener('input',()=>ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`);
   const updateRenderEvery=()=>{
-    const val=+ui.renderEvery.value; ui.renderLabel.textContent=val===1?'1 step':`${val} steps`; renderEvery=val;
+    const val=+ui.renderEvery.value; ui.renderLabel.textContent=val===1?'1 steg':`${val} steg`; renderEvery=val;
   };
   ui.updateRenderEvery=updateRenderEvery; ui.renderEvery.addEventListener('input',updateRenderEvery);
   ui.fpsLimit.addEventListener('input',()=>ui.fpsLabel.textContent=ui.fpsLimit.value);
 
   ui.btnReset.onclick=()=>{env=new SnakeEnv(+ui.gridSize.value,+ui.gridSize.value);
-    COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS; setImmediateState(env); stateDim=env.getState().length;};
+    COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS; setImmediateState(env); stateDim=env.getState().length;
+    updateLiveLength(env.snake.length); refreshKpis();};
 
   ui.btnTrain.onclick=startTraining;
   ui.btnPause.onclick=stopTraining;
@@ -901,6 +972,7 @@ function bindUI(){
   ui.gridLabel.textContent=`${ui.gridSize.value}×${ui.gridSize.value}`;
   ui.fpsLabel.textContent=ui.fpsLimit.value;
   setActiveTab('training');
+  refreshKpis();
 }
 
 async function buildAppState(){
@@ -910,6 +982,7 @@ async function buildAppState(){
     agent:agentState,
     meta:{ episode,totalSteps,bestLen,rwHist:Array.from(rwHist),fruitHist:Array.from(fruitHist),lossHist:Array.from(lossHist),
       chartReward:Array.from(ui.chartReward.data), chartLoss:Array.from(ui.chartLoss.data),
+      stepsHist:Array.from(stepsHist), durationHist:Array.from(durationHist),
       targetSync:+ui.targetSync.value, gridSize:+ui.gridSize.value, renderEvery:+ui.renderEvery.value, fpsLimit:+ui.fpsLimit.value,
     },
   };
@@ -929,9 +1002,9 @@ function applyLoadedConfig(config={}){ if(config.gamma!==undefined)ui.gamma.valu
 }
 function applyMeta(meta={}){ episode=+meta.episode||0; totalSteps=+meta.totalSteps||0; bestLen=+meta.bestLen||0;
   assignArray(rwHist,meta.rwHist,v=>+v||0); assignArray(fruitHist,meta.fruitHist,v=>+v||0); assignArray(lossHist,meta.lossHist,v=>+v||0);
+  assignArray(stepsHist,meta.stepsHist,v=>+v||0); assignArray(durationHist,meta.durationHist,v=>+v||0);
   ui.chartReward.data=Array.isArray(meta.chartReward)?meta.chartReward.map(v=>+v||0):[]; ui.chartReward.draw();
   ui.chartLoss.data=Array.isArray(meta.chartLoss)?meta.chartLoss.map(v=>+v||0):[]; ui.chartLoss.draw();
-  ui.kEpisodes.textContent=episode; ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2); ui.kBest.textContent=bestLen; ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2);
   if(typeof meta.targetSync==='number')ui.targetSync.value=meta.targetSync;
   if(typeof meta.gridSize==='number'){ ui.gridSize.value=meta.gridSize; ui.gridLabel.textContent=`${meta.gridSize}×${meta.gridSize}`;
     env=new SnakeEnv(meta.gridSize,meta.gridSize); COLS=env.cols;ROWS=env.rows;CELL=board.width/COLS;
@@ -939,6 +1012,7 @@ function applyMeta(meta={}){ episode=+meta.episode||0; totalSteps=+meta.totalSte
   if(typeof meta.renderEvery==='number') ui.renderEvery.value=meta.renderEvery; ui.updateRenderEvery?.();
   if(typeof meta.fpsLimit==='number') ui.fpsLimit.value=meta.fpsLimit; ui.fpsLabel.textContent=ui.fpsLimit.value;
   env.reset(); setImmediateState(env);
+  updateLiveLength(env.snake.length); refreshKpis();
 }
 async function saveTrainingToFile(){
   if(!agent)return; const resume=training; if(resume)stopTraining();
@@ -967,8 +1041,64 @@ async function loadTrainingFromFile(file){
 /* ---------------- Training loop + curriculum ---------------- */
 let training=false,animToken=0,lastFrame=0,renderEvery=1;
 let episode=0,totalSteps=0,bestLen=0;
-const rwHist=[],fruitHist=[],lossHist=[];
+let lastReportedLength=0;
+const rwHist=[],fruitHist=[],lossHist=[],stepsHist=[],durationHist=[];
 function avg(a,n){return a.slice(-n).reduce((x,y)=>x+y,0)/Math.max(1,Math.min(a.length,n));}
+function formatShortDuration(seconds){
+  if(!Number.isFinite(seconds)||seconds<=0)return '–';
+  if(seconds>86400*999)return '>999d';
+  if(seconds<1)return `${Math.round(seconds*1000)} ms`;
+  if(seconds<60)return `${seconds.toFixed(1)} s`;
+  const minutes=Math.floor(seconds/60);
+  const secs=Math.round(seconds%60);
+  if(minutes<60)return secs?`${minutes}m ${secs}s`:`${minutes}m`;
+  const hours=Math.floor(minutes/60);
+  const mins=minutes%60;
+  if(hours<24)return mins?`${hours}h ${mins}m`:`${hours}h`;
+  const days=Math.floor(hours/24);
+  const hrs=hours%24;
+  return hrs?`${days}d ${hrs}h`:`${days}d`;
+}
+function updateLiveLength(len){
+  if(!ui||!ui.kLength)return;
+  if(len!==lastReportedLength){
+    lastReportedLength=len;
+    ui.kLength.textContent=len.toString();
+  }
+}
+function refreshKpis(){
+  if(!ui||!env)return;
+  const currentLen=env.snake?.length??0;
+  updateLiveLength(currentLen);
+  ui.kEpisodes.textContent=episode;
+  ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2);
+  ui.kBest.textContent=bestLen;
+  ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(1);
+  const boardCells=env.cols*env.rows||1;
+  const coverage=Math.min(1,Math.max(bestLen,currentLen)/boardCells);
+  ui.kCoverage.textContent=`${(coverage*100).toFixed(1)}%`;
+  if(stepsHist.length){
+    ui.kStepsAvg.textContent=avg(stepsHist,50).toFixed(0);
+  } else {
+    ui.kStepsAvg.textContent='–';
+  }
+  const avgDuration=durationHist.length?avg(durationHist,50):0;
+  ui.kEpisodeTime.textContent=durationHist.length?formatShortDuration(avgDuration):'–';
+  const cappedBest=Math.min(bestLen,boardCells);
+  const fruitsRemaining=Math.max(0,boardCells-cappedBest);
+  if(fruitsRemaining===0){
+    ui.kTimeToSolve.textContent='Klar 🎉';
+  } else {
+    const avgFruit=fruitHist.length?avg(fruitHist,100):0;
+    if(avgFruit>0.0001&&avgDuration>0){
+      const episodesLeft=fruitsRemaining/Math.max(avgFruit,1e-6);
+      const secondsLeft=episodesLeft*avgDuration;
+      ui.kTimeToSolve.textContent=formatShortDuration(secondsLeft);
+    } else {
+      ui.kTimeToSolve.textContent='–';
+    }
+  }
+}
 function flash(m,d=false){ ui.trainState.textContent=m; ui.trainState.style.background=d?'#ff4b6e':'#1a1f46';
   setTimeout(()=>{ if(watching){ ui.trainState.textContent='watching'; ui.trainState.style.background='#1a1f46'; return; }
     ui.trainState.textContent=training?'training':'idle'; ui.trainState.style.background='#1a1f46'; },1200);
@@ -1006,10 +1136,12 @@ async function runEpisodes(count=1,respectStop=false){
     }
 
     const n=+ui.gridSize.value;
-    if(n!==env.cols){ env=new SnakeEnv(n,n); COLS=n; ROWS=n; CELL=board.width/COLS; setImmediateState(env); stateDim=env.getState().length; }
+    if(n!==env.cols){ env=new SnakeEnv(n,n); COLS=n; ROWS=n; CELL=board.width/COLS; setImmediateState(env); stateDim=env.getState().length; updateLiveLength(env.snake.length); refreshKpis(); }
 
     let s=env.reset(),done=false,R=0,fr=0,steps=0;
     const resetState=snapshotEnv(env); enqueueRenderFrame(lastDrawnState,resetState,0);
+    updateLiveLength(env.snake.length);
+    const epStart=performance.now();
     let aborted=false;
     while(!done){
       if(respectStop&&(!training||watching)){aborted=true;break;}
@@ -1020,6 +1152,7 @@ async function runEpisodes(count=1,respectStop=false){
       agent.recordTransition(s,a,r,ns,d);
       s=ns; done=d; R+=r; steps++; totalSteps++;
       if(r>1)fr++;
+      updateLiveLength(env.snake.length);
 
       // lite mer läro-tryck men tidskiva UI-vänligt
       for(let k=0;k<2;k++){
@@ -1038,11 +1171,11 @@ async function runEpisodes(count=1,respectStop=false){
     episode++;
     rwHist.push(R); if(rwHist.length>1000)rwHist.shift();
     fruitHist.push(fr); if(fruitHist.length>1000)fruitHist.shift();
+    stepsHist.push(steps); if(stepsHist.length>1000)stepsHist.shift();
+    const epDuration=(performance.now()-epStart)/1000;
+    durationHist.push(epDuration); if(durationHist.length>1000)durationHist.shift();
     bestLen=Math.max(bestLen,env.snake.length);
-    ui.kEpisodes.textContent=episode;
-    ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2);
-    ui.kBest.textContent=bestLen;
-    ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2);
+    refreshKpis();
     ui.chartReward.push(R);
     await tf.nextFrame();
     if(respectStop&&(!training||watching))return;
@@ -1059,6 +1192,7 @@ async function watchSmoothEpisode(){
     const n=+ui.gridSize.value;
     if(n!==env.cols){ env=new SnakeEnv(n,n); COLS=n; ROWS=n; CELL=board.width/COLS; }
     let state=env.reset(); setImmediateState(env);
+    updateLiveLength(env.snake.length); refreshKpis();
     const greedyAction=s=>tf.tidy(()=>agent.online.predict(tf.tensor2d([s],[1,stateDim])).argMax(1).dataSync()[0]);
     const maxSteps=COLS*ROWS*6;
     const frameDuration=getWatchDuration();
@@ -1070,10 +1204,11 @@ async function watchSmoothEpisode(){
       const after=snapshotEnv(env);
       enqueueRenderFrame(before,after,frameDuration);
       state=nextState; done=finished; steps++;
+      updateLiveLength(env.snake.length);
       await waitForRenderCapacity(); await tf.nextFrame();
     }
     await waitForRenderIdle();
-    bestLen=Math.max(bestLen,env.snake.length); ui.kBest.textContent=bestLen;
+    bestLen=Math.max(bestLen,env.snake.length); refreshKpis();
   } finally {
     watching=false; ui.btnWatch && (ui.btnWatch.disabled=false); ui.trainState.style.background='#1a1f46';
     if(wasTraining){ startTraining(); } else { ui.trainState.textContent='idle'; }
