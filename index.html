@@ -587,16 +587,124 @@ footer{
 
 <section id="guideView" class="hidden">
   <div class="card">
-    <h2>Vad är nytt?</h2>
+    <h2>Lärfilé – överblick</h2>
+    <p>Den här lärfilén samlar hur träningsmiljön fungerar och varför de olika reinforcement learning-strategierna i Snake-ML beter sig som de gör. Läs den sida vid sida med kontrollerna för att fatta säkra beslut när du experimenterar.</p>
     <ul>
-      <li>Ny renderingloop synkad med inlärningen – masken rör sig mjukt utan att du behöver pilla på inställningar.</li>
-      <li>Tre visningslägen (Mjuk, Snabb, Turbo) som styr hur ofta vi visar frames medan träningen fortsätter.</li>
-      <li>Fem RL-strategier: dueling DQN, klassisk DQN, policy gradient, advantage actor-critic och PPO.</li>
-      <li>Förbättrade spar/ladda-funktioner och diagram för reward och förlust.</li>
+      <li><strong>Bakgrund:</strong> vad som händer på brädet och hur belöningar genereras.</li>
+      <li><strong>Algoritmer:</strong> teoretisk förklaring av DQN, policy gradient, A2C och PPO.</li>
+      <li><strong>Sliders:</strong> praktiska riktlinjer för varje reglage och hur du justerar dem.</li>
     </ul>
-    <h3>Tips</h3>
-    <p>Starta med “Mjuk”-läget för att se hur nätverket beter sig. När du vill öka farten kan du växla till “Snabb” eller “Turbo”.</p>
-    <p>Varje algoritm har sina egna sliders i <em>Avancerade inställningar</em>. Testa gärna olika kombinationer och spara din favorit som JSON.</p>
+  </div>
+
+  <div class="card">
+    <h2>Snabbstart</h2>
+    <ol>
+      <li>Välj ett visningsläge i pill-gruppen <em>Mjuk/Snabb/Turbo</em>. Mjuk visar varje rörelse och är perfekt för att se beteenden, Turbo hoppar över rendering för maximal träningshastighet.</li>
+      <li>Tryck <strong>Starta träning</strong>. KPI-rutorna visar hur belöningen och längden utvecklas.</li>
+      <li>Justera ett reglage i taget. Byt till <strong>Steg 1 runda</strong> för att se effekten av ett beslut utan att låta modellen lära vidare.</li>
+      <li>Spara dina parametrar med <strong>Spara</strong>. Filen som laddas ned kan importeras igen med <strong>Ladda</strong>.</li>
+    </ol>
+    <p>Brädstorleken styr hur många rutor ormen har att arbeta med. Större bräde betyder längre avstånd mellan frukter och mer komplexa strategier, men kräver också fler träningssteg.</p>
+  </div>
+
+  <div class="card">
+    <h2>Algoritmer och varför de fungerar</h2>
+    <details open>
+      <summary>Dueling Double DQN</summary>
+      <p>Dueling Double DQN är standardläget. Nätverket delar upp tillståndsvärdet V(s) och fördelen A(s,a) och kombinerar dem till <code>Q(s,a) = V(s) + A(s,a) - \bar{A}(s)</code>. Double-uppdateringen använder det aktuella nätverket för att välja handling men target-nätet för att beräkna dess värde, vilket minskar överskattning.</p>
+      <ul>
+        <li><strong>Dueling-arkitektur:</strong> hjälpsam när vissa handlingar inte ändrar utfallet, till exempel att fortsätta rakt fram i tomma korridorer.</li>
+        <li><strong>Dubbla nät:</strong> <code>targetSync</code>-reglaget bestämmer hur ofta target-nätet kopieras och gör lärandet stabilare.</li>
+        <li><strong>Prioriterad replay:</strong> bufferten väljer erfarenheter med hög TD-förlust oftare. Reglagen <strong>PER α</strong> och <strong>PER β</strong> styr hur stark den prioriteringen är.</li>
+        <li><strong>n-step returns:</strong> sammanfattar belöningar över flera drag för att ge snabbare signaler när ormen är på väg mot en frukt.</li>
+      </ul>
+      <p>Rekommenderad start är LR 5e-4, γ = 0,98, batch 128 och replay 50&nbsp;000. Höj <strong>ε decay</strong> om du behöver mer utforskning i större världar.</p>
+    </details>
+    <details>
+      <summary>Klassisk DQN</summary>
+      <p>Den klassiska DQN:n använder ett enklare Q-nät utan dueling-huvud. Uppdateringen följer Bellman-ekvationen <code>Q(s,a) \leftarrow r + γ · \max_{a'} Q_{target}(s',a')</code>. Den är lätt att förstå och fungerar bra på mindre bräden.</p>
+      <ul>
+        <li><strong>Epsilon-greedy:</strong> samma reglage för ε start/slut/decay används här. Hög start ger fler slumpdrag i början.</li>
+        <li><strong>Replay-bufferten:</strong> håll bufferten stor nog (≥ 20&nbsp;000) för att undvika korrelerade upplevelser.</li>
+        <li><strong>n-step:</strong> kan sänkas till 1 om du vill jämföra med den originala DQN-artikeln.</li>
+      </ul>
+      <p>Om förlustkurvan oscillerar kraftigt, sänk learning rate eller öka target sync-intervall.</p>
+    </details>
+    <details>
+      <summary>Policy Gradient (REINFORCE)</summary>
+      <p>Policy gradient lär en direkt policy π(a|s) och maximerar den förväntade returens log-sannolikhet: <code>∇θ J(θ) = E[ G_t ∇θ log π_θ(a_t|s_t) ]</code>. Variansen är hög, därför används en baseline i form av genomsnittlig retur.</p>
+      <ul>
+        <li><strong>Entropy-vikt:</strong> högre värde uppmuntrar slumpmässigare policies och motverkar att modellen fastnar för tidigt.</li>
+        <li>Ingen replay-buffert används; varje episod påverkar vikterna direkt. Kör gärna Turbo-läget för fler episoder.</li>
+        <li>Håll learning rate runt 1e-3. Om belöningen svänger, sänk LR eller öka entropivikten något.</li>
+      </ul>
+    </details>
+    <details>
+      <summary>Advantage Actor-Critic</summary>
+      <p>A2C tränar två nät samtidigt: aktören lär π(a|s) medan kritikern uppskattar V(s). Uppdateringen använder fördelen A(s,a) = Q(s,a) − V(s) för att minska varians.</p>
+      <ul>
+        <li><strong>Entropy-vikt:</strong> samma effekt som i policy gradient men brukar ligga lägre (0,003–0,01).</li>
+        <li><strong>Värdevikt:</strong> väger hur starkt kritikerns MSE-förlust påverkar den totala förlusten. Hög vikt stabiliserar men kan göra policyn trög.</li>
+        <li>Gemensamma reglage γ och LR gäller även här. γ runt 0,99 hjälper modellen att planera flera steg framåt.</li>
+      </ul>
+      <p>A2C är snabb när du har korta episoder. Om kritikerförlusten divergerar, sänk värdevikten eller LR.</p>
+    </details>
+    <details>
+      <summary>Proximal Policy Optimization</summary>
+      <p>PPO använder en klippt objektivfunktion: <code>L_{clip}(θ) = E[\min(r_t(θ)A_t, \operatorname{clip}(r_t(θ), 1-ε, 1+ε) A_t)]</code>. Detta hindrar uppdateringar från att göra stora policyförändringar.</p>
+      <ul>
+        <li><strong>Clip-faktor:</strong> motsvarar ε i formeln. Lägre värden (~0,1) ger försiktiga uppdateringar, högre värden (~0,3) tillåter mer förändring.</li>
+        <li><strong>GAE λ:</strong> styr balans mellan bias och varians i generalized advantage estimation. 0,95 är ett bra standardvärde; sänk för mer responsivitet.</li>
+        <li><strong>Batch</strong> och <strong>Epochs:</strong> PPO gör flera gradientsteg per uppsamlad batch. Mindre batch + fler epoch ger snabbare anpassning men riskerar överträning på datan.</li>
+        <li><strong>Värdevikt</strong> och <strong>Entropy-vikt:</strong> styr samma saker som i A2C men i PPO:s sammansatta förlust.</li>
+      </ul>
+      <p>Om policyn blir instabil, minska clip-faktorn eller antalet epoch per batch.</p>
+    </details>
+  </div>
+
+  <div class="card">
+    <h2>Reglage &amp; hur de påverkar träningen</h2>
+    <h3>Miljö och visning</h3>
+    <ul>
+      <li><strong>Visningsläge:</strong> <em>Mjuk</em> visar varje rörelse, <em>Snabb</em> hoppar över varannan frame och <em>Turbo</em> stänger av rendering. Alla lägen fortsätter uppdatera nätverket.</li>
+      <li><strong>Brädstorlek:</strong> 10×10 ger korta episoder och snabb feedback. 30×30 kräver längre episoder men belönar planering.</li>
+    </ul>
+    <h3>Gemensamma hyperparametrar</h3>
+    <ul>
+      <li><strong>γ (discount):</strong> högt värde (0,97–0,995) prioriterar långsiktiga frukter. Sänk till 0,94–0,96 om ormen ofta kraschar innan den hinner få belöning.</li>
+      <li><strong>LR:</strong> bestämmer gradientens stegstorlek. 0,0005 fungerar för DQN; sänk mot 0,0003 för PPO/A2C om förlusten oscillerar.</li>
+    </ul>
+    <h3>DQN-familjen</h3>
+    <ul>
+      <li><strong>ε start/slut/decay:</strong> styr utforskning. Längre decay (≥ 80&nbsp;000) ger långsam övergång till exploatering. Höj slutvärdet (t.ex. 0,10) om ormen fastnar i repetitiva slingor.</li>
+      <li><strong>Batch:</strong> större batch minskar variansen men kräver större buffert. 256 kräver minst 100&nbsp;000 replay-poster.</li>
+      <li><strong>Replay-storlek:</strong> standard 50&nbsp;000. Öka för att lära i stora bräden, men kom ihåg att äldre erfarenheter kan bli irrelevanta.</li>
+      <li><strong>Target sync:</strong> hur ofta policy-nätet kopieras till target-nätet. Lägre värde (1000) ger snabbare anpassning men kan bli instabilt.</li>
+      <li><strong>n-step:</strong> fler steg ger starkare signaler men ökar risken att blandade belöningar introducerar brus. Prova 2–3 för små bräden och 4–5 för stora.</li>
+      <li><strong>PER α:</strong> hur starkt TD-fel påverkar prioriteringen. Högre (0,8–1,0) fokuserar på svåra erfarenheter; sänk till 0,5 för mer mångfald.</li>
+      <li><strong>PER β:</strong> korrigerar bias från prioriteringen. Höj gradvis mot 1,0 när träningen pågår länge.</li>
+    </ul>
+    <h3>Policybaserade metoder</h3>
+    <ul>
+      <li><strong>Entropy-vikt (Policy/A2C/PPO):</strong> lägre värde ger beslutsamma policies, högre värde hindrar tidig konvergens. Sänk när modellen hittar en stabil strategi.</li>
+      <li><strong>Värdevikt (A2C/PPO):</strong> styr hur mycket värdeförlusten påverkar. Hög vikt hjälper kritikern att hålla reda på långsiktiga belöningar.</li>
+      <li><strong>Clip-faktor (PPO):</strong> håll mellan 0,1–0,25 för stabilitet. Kombinera med lägre LR om du ökar den.</li>
+      <li><strong>GAE λ (PPO):</strong> lägre (0,90) reagerar snabbare på nya signaler; högre (0,97) ger jämnare estimat.</li>
+      <li><strong>PPO Batch/Epochs:</strong> fler epoch på samma data riskerar överanpassning. Om policyn gungar, sänk epoch eller öka batchstorleken.</li>
+    </ul>
+    <p>Justera alltid ett reglage i taget och observera diagrammen för reward och förlust. När rewardens 100-episodersmedel planar ut kan du prova en ändring, köra några hundra episoder och jämföra.</p>
+  </div>
+
+  <div class="card">
+    <h2>Diagnostik och vanliga mönster</h2>
+    <ul>
+      <li><strong>Belöningen sjunker efter att ha stigit:</strong> höj ε slut eller entropivikten för att återintroducera utforskning.</li>
+      <li><strong>Förlusten exploderar:</strong> sänk learning rate, öka target sync-intervall eller minska batchstorleken.</li>
+      <li><strong>Ormen går i cirklar:</strong> prova högre entropi (policy/A2C/PPO) eller längre ε-decay i DQN så att modellen vågar bryta mönstret.</li>
+      <li><strong>Ingen förbättring på stort bräde:</strong> öka n-step och replay-storlek, och kör Turbo-läge för att samla fler erfarenheter.</li>
+      <li><strong>Stora skillnader mellan episoder:</strong> kontrollera KPI-rutorna. Om snittrewarden är låg men bästa längd hög tyder det på instabil policy — justera utforskning eller sänk LR.</li>
+    </ul>
+    <p>Använd <strong>Paus</strong> och <strong>Steg 1 runda</strong> för att analysera enskilda sekvenser. <strong>Återställ</strong> startar om episoden, medan <strong>Rensa cache</strong> tar bort sparade vikter från webbläsaren om du vill börja helt från noll.</p>
   </div>
 </section>
 
