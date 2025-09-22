@@ -1,0 +1,12 @@
+{
+  "name": "snake-ml",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "train": "node train.js"
+  },
+  "dependencies": {
+    "@tensorflow/tfjs-node": "^4.20.0"
+  }
+}

@@ -2359,6 +2359,7 @@ let currentAlgoKey='dueling';
 let playbackMode='cinematic';
 let training=false;
 let trainingToken=0;
+let checkpointDirHandle=null;
 let lastFrame=0;
 let currentEpisode=null;
 let targetSyncSteps=2000;
@@ -2814,6 +2815,14 @@ async function watchSmoothEpisode(){
   ui.btnWatch.disabled=true;
   try{
     await waitForRenderIdle();
+    if(window.showDirectoryPicker){
+      try{
+        const checkpoint=await readLatestCheckpoint();
+        await applyCheckpointData(checkpoint);
+      }catch(err){
+        console.warn('Kunde inte läsa latest-checkpoint',err);
+      }
+    }
     const desired=+ui.gridSize.value;
     if(env.cols!==desired||env.rows!==desired){
       resetEnvironment(desired,true);
@@ -2908,6 +2917,44 @@ async function saveTrainingToFile(){
     if(resume&&!watching) startTraining();
   }
 }
+async function ensureCheckpointDirectory(){
+  if(!window.showDirectoryPicker) throw new Error('Filåtkomst stöds inte i denna webbläsare');
+  if(!checkpointDirHandle){
+    checkpointDirHandle=await window.showDirectoryPicker({mode:'read'});
+  }
+  return checkpointDirHandle;
+}
+async function readLatestCheckpoint(){
+  const handle=await ensureCheckpointDirectory();
+  const latest=await handle.getDirectoryHandle('latest');
+  const fileHandle=await latest.getFileHandle('checkpoint.json');
+  const file=await fileHandle.getFile();
+  const text=await file.text();
+  return JSON.parse(text);
+}
+async function applyCheckpointData(data){
+  if(!data||!data.agent) throw new Error('Ogiltig checkpoint');
+  const kind=(data.agent.kind==='dqn')?'dueling':(AGENT_PRESETS[data.agent.kind]?data.agent.kind:'dueling');
+  const preset=AGENT_PRESETS[kind];
+  if(preset){
+    applyPresetToUI({...preset.defaults,...(data.agent.config||{})});
+  }
+  if(data.rewardConfig) applyRewardConfigToUI(data.rewardConfig);
+  if(typeof data.meta?.boardSize==='number'){
+    ui.gridSize.value=data.meta.boardSize;
+    updateGridLabel();
+    resetEnvironment(data.meta.boardSize,true);
+  }
+  instantiateAgent(kind,{useCurrentUI:true});
+  await agent.importState(data.agent);
+  applyConfigToAgent();
+  if(data.meta){
+    episode=+data.meta.episode||0;
+    totalSteps=+data.meta.totalSteps||+data.meta.steps||0;
+    updateStatsUI();
+  }
+}
+
 async function loadTrainingFromFile(file){
   if(!agent||!file) return;
   if(watching){
