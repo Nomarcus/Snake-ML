@@ -314,13 +314,6 @@ select{
 .telemetry-table td.trend.negative{
   color:#ff8da4;
 }
-canvas.chart{
-  width:100%;
-  height:140px;
-  background:#0b1030;
-  border-radius:10px;
-  border:1px solid #1b1f3a;
-}
 .mono{
   font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
   color:#c7d2fe;
@@ -638,10 +631,6 @@ footer{
     </div>
 
     <div class="split charts">
-      <div>
-        <h2>Reward / episode</h2>
-        <canvas id="chartReward" class="chart" width="400" height="140"></canvas>
-      </div>
       <div class="telemetry-panel" id="rewardTelemetryPanel">
         <div class="telemetry-panel__header">
           <h2>Reward telemetry</h2>
@@ -2333,53 +2322,6 @@ function standardize1D(t){
   });
 }
 
-/* ---------------- Mini chart ---------------- */
-class MiniLine{
-  constructor(cv,max=400){
-    this.cv=cv;
-    this.ctx=cv.getContext('2d');
-    this.max=max;
-    this.data=[];
-  }
-  push(v){
-    this.data.push(v);
-    if(this.data.length>this.max) this.data.shift();
-    this.draw();
-  }
-  draw(){
-    const c=this.ctx,w=this.cv.width,h=this.cv.height;
-    c.clearRect(0,0,w,h);
-    c.fillStyle='#0b1030';
-    c.fillRect(0,0,w,h);
-    c.strokeStyle='#1b1f3a';
-    for(let i=0;i<=4;i++){
-      c.beginPath();
-      c.moveTo(0,i*h/4);
-      c.lineTo(w,i*h/4);
-      c.stroke();
-    }
-    if(!this.data.length) return;
-    let min=Infinity,max=-Infinity;
-    for(let i=0;i<this.data.length;i++){
-      const v=this.data[i];
-      if(v<min) min=v;
-      if(v>max) max=v;
-    }
-    const span=max-min||1;
-    c.beginPath();
-    c.strokeStyle='#6c7bff';
-    c.lineWidth=2;
-    const denom=Math.max(1,this.data.length-1);
-    for(let i=0;i<this.data.length;i++){
-      const v=this.data[i];
-      const x=(i/denom)*w;
-      const y=h-((v-min)/span)*h;
-      if(i===0) c.moveTo(x,y); else c.lineTo(x,y);
-    }
-    c.stroke();
-  }
-}
-
 function createRewardTelemetry(max=1200){
   const capacity=Math.max(10,max|0);
   const keys=[...REWARD_COMPONENT_KEYS,'total'];
@@ -2804,7 +2746,6 @@ const ui={
   kAvgRw:document.getElementById('kAvgRw'),
   kBest:document.getElementById('kBest'),
   kFruitRate:document.getElementById('kFruitRate'),
-  chartReward:new MiniLine(document.getElementById('chartReward')),
   rewardTelemetryBody:document.getElementById('rewardTelemetryBody'),
   rewardTelemetrySummary:document.getElementById('rewardTelemetrySummary'),
   rewardTelemetryPanel:document.getElementById('rewardTelemetryPanel'),
@@ -3721,8 +3662,6 @@ function resetTrainingStats(){
   fruitHist.length=0;
   lossHist.length=0;
   rewardTelemetry.reset();
-  ui.chartReward.data=[];
-  ui.chartReward.draw();
   updateStatsUI();
   updateRewardTelemetryUI();
   renderTick=0;
@@ -3811,7 +3750,6 @@ async function finalizeContextEpisode(ctx,envIndex){
   const crashType=envRef?.lastCrash??null;
   const timeToFruitTotal=envRef?.timeToFruitAccum??0;
   const timeToFruitCount=envRef?.timeToFruitCount??0;
-  ui.chartReward.push(ctx.totalReward);
   updateStatsUI();
   rewardTelemetry.record(breakdown);
   updateRewardTelemetryUI();
@@ -4104,7 +4042,6 @@ async function buildAppState(){
       rwHist:Array.from(rwHist),
       fruitHist:Array.from(fruitHist),
       lossHist:Array.from(lossHist),
-      chartReward:Array.from(ui.chartReward.data),
       rewardTelemetry:rewardTelemetry.toJSON(),
     },
   };
@@ -4116,8 +4053,6 @@ function applyMeta(meta={}){
   assignArray(rwHist,meta.rwHist,v=>+v||0);
   assignArray(fruitHist,meta.fruitHist,v=>+v||0);
   assignArray(lossHist,meta.lossHist,v=>+v||0);
-  ui.chartReward.data=Array.isArray(meta.chartReward)?meta.chartReward.map(v=>+v||0):[];
-  ui.chartReward.draw();
   if(meta.rewardTelemetry){
     rewardTelemetry.fromJSON(meta.rewardTelemetry);
   }else{
