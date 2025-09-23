@@ -2645,6 +2645,14 @@ const REWARD_DECIMALS={
   approachBonus:3,
   retreatPenalty:3,
 };
+function describeRewardDetail(adj){
+  if(!adj||typeof adj!=='object') return 'Reward';
+  const key=adj.key;
+  const label=REWARD_LABELS[key]||key||'Reward';
+  if(adj.value===undefined) return label;
+  const decimals=key in REWARD_DECIMALS?REWARD_DECIMALS[key]:3;
+  return `${label} → ${formatMetric(adj.value,decimals)}`;
+}
 function humanizeAutoReason(reason){
   if(!reason) return '';
   const text=AUTO_REASON_LABELS[reason]||reason;
@@ -2729,12 +2737,6 @@ function describeAutoAdjustment(adj={}){
       res.tone='lr';
       break;
     case 'reward':{
-      if(adj.value!==undefined){
-        const decimals=REWARD_DECIMALS[adj.key]??3;
-        res.detail=`${keyLabel} → ${formatMetric(adj.value,decimals)}`;
-      }else{
-        res.detail=`${keyLabel}`;
-      }
       res.tone='reward';
       break;
     }
