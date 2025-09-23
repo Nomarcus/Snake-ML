@@ -229,6 +229,91 @@ select{
   gap:12px;
   grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
 }
+.telemetry-panel{
+  background:#111533;
+  border:1px solid #1b1f3a;
+  border-radius:12px;
+  padding:12px 14px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+}
+.telemetry-panel__header{
+  display:flex;
+  align-items:flex-end;
+  justify-content:space-between;
+  gap:8px;
+}
+.telemetry-panel__header h2{
+  margin:0;
+  font-size:14px;
+  color:#dfe3ff;
+}
+.telemetry-panel__header .hint{
+  font-size:11px;
+  color:#9aa3c7;
+}
+.telemetry-summary{
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  font-size:12px;
+  color:#9aa3c7;
+}
+.telemetry-summary .mono{
+  color:#c7d2fe;
+}
+.telemetry-summary .positive{
+  color:#5ad1a7;
+}
+.telemetry-summary .negative{
+  color:#ff8da4;
+}
+.telemetry-table{
+  width:100%;
+  border-collapse:collapse;
+  font-size:12px;
+  color:#c3caef;
+}
+.telemetry-table thead th{
+  text-align:left;
+  padding-bottom:6px;
+  font-size:10px;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+  color:#7d86c6;
+}
+.telemetry-table tbody td{
+  padding:6px 4px;
+  border-top:1px solid #1b1f3a;
+}
+.telemetry-table tbody tr:first-child td{
+  border-top:none;
+}
+.telemetry-table td.mono{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+.telemetry-table td.positive{
+  color:#5ad1a7;
+}
+.telemetry-table td.negative{
+  color:#ff8da4;
+}
+.telemetry-table td.neutral{
+  color:#c7cdef;
+}
+.telemetry-table td.share{
+  color:#9aa3c7;
+}
+.telemetry-table td.trend{
+  color:#9aa3c7;
+}
+.telemetry-table td.trend.positive{
+  color:#5ad1a7;
+}
+.telemetry-table td.trend.negative{
+  color:#ff8da4;
+}
 canvas.chart{
   width:100%;
   height:140px;
@@ -556,6 +641,29 @@ footer{
       <div>
         <h2>Reward / episode</h2>
         <canvas id="chartReward" class="chart" width="400" height="140"></canvas>
+      </div>
+      <div class="telemetry-panel" id="rewardTelemetryPanel">
+        <div class="telemetry-panel__header">
+          <h2>Reward telemetry</h2>
+          <span class="hint">Rolling averages per component</span>
+        </div>
+        <div class="telemetry-summary">
+          <span class="hint">Net reward (avg 100)</span>
+          <span id="rewardTelemetrySummary" class="mono neutral">0.00 (trend +0.00)</span>
+        </div>
+        <table class="telemetry-table">
+          <thead>
+            <tr>
+              <th>Component</th>
+              <th>Last</th>
+              <th>Avg 100</th>
+              <th>Avg 500</th>
+              <th>Share</th>
+              <th>Trend</th>
+            </tr>
+          </thead>
+          <tbody id="rewardTelemetryBody"></tbody>
+        </table>
       </div>
     </div>
 
@@ -933,6 +1041,38 @@ const REWARD_DEFAULTS={
   trapPenalty:0.5,
   spaceGainBonus:0.05,
 };
+const REWARD_COMPONENTS=[
+  {key:'fruitReward',label:'Fruit bonus',sign:'positive'},
+  {key:'approachBonus',label:'Toward fruit bonus',sign:'positive'},
+  {key:'spaceGainBonus',label:'Open space bonus',sign:'positive'},
+  {key:'compactness',label:'Compactness bonus',sign:'neutral'},
+  {key:'stepPenalty',label:'Step penalty',sign:'negative'},
+  {key:'turnPenalty',label:'Turn penalty',sign:'negative'},
+  {key:'retreatPenalty',label:'Retreat penalty',sign:'negative'},
+  {key:'loopPenalty',label:'Loop penalty',sign:'negative'},
+  {key:'revisitPenalty',label:'Revisit penalty',sign:'negative'},
+  {key:'trapPenalty',label:'Trap penalty',sign:'negative'},
+  {key:'selfPenalty',label:'Self crash penalty',sign:'negative'},
+  {key:'wallPenalty',label:'Wall crash penalty',sign:'negative'},
+  {key:'timeoutPenalty',label:'Timeout penalty',sign:'negative'},
+];
+const REWARD_COMPONENT_KEYS=REWARD_COMPONENTS.map(item=>item.key);
+const REWARD_LABELS={
+  stepPenalty:'Step penalty',
+  turnPenalty:'Turn penalty',
+  approachBonus:'Toward fruit bonus',
+  retreatPenalty:'Retreat penalty',
+  loopPenalty:'Loop penalty',
+  revisitPenalty:'Revisit penalty',
+  trapPenalty:'Trap penalty',
+  spaceGainBonus:'Space bonus',
+  wallPenalty:'Wall crash penalty',
+  selfPenalty:'Self crash penalty',
+  timeoutPenalty:'Timeout penalty',
+  fruitReward:'Fruit reward',
+  compactWeight:'Compactness weight',
+  compactness:'Compactness bonus',
+};
 let rewardConfig={...REWARD_DEFAULTS};
 const LOOP_PATTERNS=new Set(['1,2,1,2','2,1,2,1']);
 
@@ -971,6 +1111,11 @@ class SnakeEnv{
     this.rows=rows;
     this.setRewardConfig(rewardOverrides);
     this.reset();
+  }
+  _makeRewardBreakdown(){
+    const base={total:0};
+    REWARD_COMPONENT_KEYS.forEach(key=>{ base[key]=0; });
+    return base;
   }
   setRewardConfig(cfg={}){
     this.reward={...REWARD_DEFAULTS,...cfg};
@@ -1026,6 +1171,7 @@ class SnakeEnv{
     this.visit=new Float32Array(this.cols*this.rows).fill(0);
     this.actionHist=[];
     this.spawnFruit();
+    this.rewardBreakdown=this._makeRewardBreakdown();
     this.steps=0;
     this.stepsSinceFruit=0;
     this.alive=true;
@@ -1056,6 +1202,7 @@ class SnakeEnv{
   step(a){
     if(!this.alive) return {state:this.getState(),reward:0,done:true,ateFruit:false};
     const R=this.reward;
+    const breakdown=this.rewardBreakdown||(this.rewardBreakdown=this._makeRewardBreakdown());
     this.lastCrash=null;
     this.turn(a);
     const h=this.snake[0];
@@ -1071,6 +1218,9 @@ class SnakeEnv{
     if(hitsWall||hitsBody){
       this.alive=false;
       const crashReward=hitsWall?-R.wallPenalty:-R.selfPenalty;
+      if(hitsWall) breakdown.wallPenalty+=crashReward;
+      else breakdown.selfPenalty+=crashReward;
+      breakdown.total+=crashReward;
       this.lastCrash=hitsWall?'wall':'self';
       return {state:this.getState(),reward:crashReward,done:true,ateFruit:false};
     }
@@ -1091,8 +1241,14 @@ class SnakeEnv{
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
     this.snake.unshift({x:nx,y:ny});
     let r=-R.stepPenalty;
+    breakdown.stepPenalty-=R.stepPenalty;
     r+=spaceReward;
-    if(a!==0) r-=R.turnPenalty;
+    if(spaceReward>0) breakdown.spaceGainBonus+=spaceReward;
+    else if(spaceReward<0) breakdown.trapPenalty+=spaceReward;
+    if(a!==0){
+      r-=R.turnPenalty;
+      breakdown.turnPenalty-=R.turnPenalty;
+    }
     this.actionHist.push(a);
     if(this.actionHist.length>6) this.actionHist.shift();
     if(this.actionHist.length>=4){
@@ -1100,16 +1256,19 @@ class SnakeEnv{
       if(LOOP_PATTERNS.has(last4)){
         r-=R.loopPenalty;
         this.loopHits++;
+        breakdown.loopPenalty-=R.loopPenalty;
       }
     }
     const vidx=this.idx(nx,ny);
     const revisitPenalty=this.visit[vidx]*R.revisitPenalty;
     r-=revisitPenalty;
     this.revisitAccum+=revisitPenalty;
+    if(revisitPenalty) breakdown.revisitPenalty-=revisitPenalty;
     let ateFruit=false;
     if(nx===this.fruit.x && ny===this.fruit.y){
       ateFruit=true;
       r+=R.fruitReward;
+      breakdown.fruitReward+=R.fruitReward;
       this.snakeSet.add(`${nx},${ny}`);
       this.spawnFruit();
       this.timeToFruitAccum+=this.stepsSinceFruit;
@@ -1123,22 +1282,40 @@ class SnakeEnv{
       this.visit[vidx]=Math.min(1,this.visit[vidx]+0.3);
       const pd=Math.abs(h.x-this.fruit.x)+Math.abs(h.y-this.fruit.y);
       const nd=Math.abs(nx-this.fruit.x)+Math.abs(ny-this.fruit.y);
-      if(nd<pd) r+=R.approachBonus;
-      else if(nd>pd) r-=R.retreatPenalty;
+      if(nd<pd){
+        r+=R.approachBonus;
+        breakdown.approachBonus+=R.approachBonus;
+      }else if(nd>pd){
+        r-=R.retreatPenalty;
+        breakdown.retreatPenalty-=R.retreatPenalty;
+      }
     }
     const slack=this.computeSlack();
     const slackDelta=this.prevSlack-slack;
     if(R.compactWeight!==0){
-      r+=slackDelta*R.compactWeight;
+      const compactReward=slackDelta*R.compactWeight;
+      if(compactReward!==0){
+        r+=compactReward;
+        breakdown.compactness+=compactReward;
+      }
     }
     this.prevSlack=slack;
     if(this.stepsSinceFruit>this.cols*this.rows*2){
       this.alive=false;
       r-=R.timeoutPenalty;
       this.lastCrash='timeout';
+      this.rewardBreakdown.timeoutPenalty-=R.timeoutPenalty;
+      this.rewardBreakdown.total+=r;
       return {state:this.getState(),reward:r,done:true,ateFruit:false};
     }
+    this.rewardBreakdown.total+=r;
     return {state:this.getState(),reward:r,done:false,ateFruit};
+  }
+  getEpisodeBreakdown(){
+    const src=this.rewardBreakdown||{};
+    const copy={total:src.total??0};
+    REWARD_COMPONENT_KEYS.forEach(key=>{ copy[key]=src[key]??0; });
+    return copy;
   }
   getVisit(x,y){
     if(x<0||y<0||x>=this.cols||y>=this.rows) return 1;
@@ -2182,19 +2359,86 @@ class MiniLine{
       c.stroke();
     }
     if(!this.data.length) return;
-    const min=Math.min(...this.data);
-    const max=Math.max(...this.data);
+    let min=Infinity,max=-Infinity;
+    for(let i=0;i<this.data.length;i++){
+      const v=this.data[i];
+      if(v<min) min=v;
+      if(v>max) max=v;
+    }
     const span=max-min||1;
     c.beginPath();
     c.strokeStyle='#6c7bff';
     c.lineWidth=2;
-    this.data.forEach((v,i)=>{
-      const x=(i/(this.data.length-1))*w;
+    const denom=Math.max(1,this.data.length-1);
+    for(let i=0;i<this.data.length;i++){
+      const v=this.data[i];
+      const x=(i/denom)*w;
       const y=h-((v-min)/span)*h;
       if(i===0) c.moveTo(x,y); else c.lineTo(x,y);
-    });
+    }
     c.stroke();
   }
+}
+
+function createRewardTelemetry(max=1200){
+  const capacity=Math.max(10,max|0);
+  const keys=[...REWARD_COMPONENT_KEYS,'total'];
+  const store=Object.fromEntries(keys.map(key=>[key,[]]));
+  return {
+    record(breakdown){
+      if(!breakdown) return;
+      keys.forEach(key=>{
+        const arr=store[key];
+        const value=+breakdown[key]||0;
+        arr.push(value);
+        if(arr.length>capacity) arr.shift();
+      });
+    },
+    summary(){
+      const rows=REWARD_COMPONENTS.map(comp=>{
+        const arr=store[comp.key];
+        const last=arr.length?arr[arr.length-1]:0;
+        const avg100=movingAverage(arr,100);
+        const avg500=movingAverage(arr,500);
+        const trend=avg100-movingAverage(arr,100,100);
+        return {...comp,last,avg100,avg500,trend};
+      });
+      const totalArr=store.total;
+      const total={
+        key:'total',
+        label:'Net reward',
+        last:totalArr.length?totalArr[totalArr.length-1]:0,
+        avg100:movingAverage(totalArr,100),
+        avg500:movingAverage(totalArr,500),
+        trend:movingAverage(totalArr,100)-movingAverage(totalArr,100,100),
+      };
+      const absSum=rows.reduce((acc,row)=>acc+Math.abs(row.avg100||0),0);
+      rows.forEach(row=>{
+        row.share=absSum?Math.abs(row.avg100)/absSum:0;
+      });
+      rows.sort((a,b)=>Math.abs(b.avg100)-Math.abs(a.avg100));
+      return {rows,total};
+    },
+    toJSON(){
+      const out={};
+      keys.forEach(key=>{ out[key]=Array.from(store[key]); });
+      return out;
+    },
+    fromJSON(data){
+      keys.forEach(key=>{
+        const arr=Array.isArray(data?.[key])?data[key].map(v=>+v||0):[];
+        store[key].length=0;
+        const slice=arr.slice(-capacity);
+        slice.forEach(v=>store[key].push(v));
+      });
+    },
+    reset(){
+      keys.forEach(key=>{ store[key].length=0; });
+    },
+    getHistory(){
+      return store;
+    },
+  };
 }
 
 /* ---------------- Rendering helpers ---------------- */
@@ -2561,6 +2805,9 @@ const ui={
   kBest:document.getElementById('kBest'),
   kFruitRate:document.getElementById('kFruitRate'),
   chartReward:new MiniLine(document.getElementById('chartReward')),
+  rewardTelemetryBody:document.getElementById('rewardTelemetryBody'),
+  rewardTelemetrySummary:document.getElementById('rewardTelemetrySummary'),
+  rewardTelemetryPanel:document.getElementById('rewardTelemetryPanel'),
   tabTraining:document.getElementById('tabTraining'),
   tabGuide:document.getElementById('tabGuide'),
   trainingView:document.getElementById('trainingView'),
@@ -2591,6 +2838,7 @@ let lastFrame=0;
 let targetSyncSteps=2000;
 let episode=0,totalSteps=0,bestLen=0;
 const rwHist=[],fruitHist=[],lossHist=[];
+const rewardTelemetry=createRewardTelemetry(1200);
 let contexts=[];
 let renderTick=0;
 let trainingMode='manual';
@@ -2627,6 +2875,10 @@ function formatMetric(value,decimals=2){
   const num=+value;
   return num.toFixed(decimals);
 }
+function formatPercent(value,decimals=1){
+  if(value===null||value===undefined||Number.isNaN(value)) return '—';
+  return `${(+value*100).toFixed(decimals)}%`;
+}
 function formatSigned(value,decimals=2){
   if(value===null||value===undefined||Number.isNaN(value)) return '—';
   const num=+value;
@@ -2637,6 +2889,17 @@ const AUTO_REASON_LABELS={
   stagnation:'stagnation',
   recovery:'recovery',
   regression:'regression',
+  loss_ratio:'loss ratio',
+  slow_fruit:'slow fruit',
+  step_drag:'step drag',
+  retreat_load:'retreat load',
+  fruit_support:'fruit support',
+  loop_penalty:'loop penalty',
+  loop_relax:'loop relax',
+  revisit_penalty:'revisit penalty',
+  revisit_relax:'revisit relax',
+  recover:'recover',
+  self_penalty:'self penalty',
 };
 const REWARD_DECIMALS={
   loopPenalty:2,
@@ -2644,6 +2907,12 @@ const REWARD_DECIMALS={
   selfPenalty:1,
   approachBonus:3,
   retreatPenalty:3,
+  stepPenalty:3,
+  turnPenalty:3,
+  fruitReward:1,
+  trapPenalty:3,
+  spaceGainBonus:3,
+  timeoutPenalty:1,
 };
 function describeRewardDetail(adj){
   if(!adj||typeof adj!=='object') return 'Reward';
@@ -2738,6 +3007,7 @@ function describeAutoAdjustment(adj={}){
       break;
     case 'reward':{
       res.tone='reward';
+      res.detail=describeRewardDetail(adj);
       break;
     }
     default:
@@ -2963,6 +3233,7 @@ function setTrainingMode(mode){
     if(stageIdx>=0) autoPilot.stageIndex=stageIdx;
     lastAutoMetrics=null;
     lastAutoSummaryEpisode=autoPilot?.episode||0;
+    autoPilot.lastEvaluationEpisode=autoPilot.episode||0;
     if(firstActivation){
       resetAutoLog();
       updateAutoLogVisibility();
@@ -3143,6 +3414,9 @@ class BrowserAutoPilot{
     this.lastAdjust={};
     this.bestFruit=0;
     this.agent=null;
+    this.evaluationInterval=50;
+    this.minEpisodesForAdjust=200;
+    this.lastEvaluationEpisode=0;
   }
   setAgent(agent){
     this.agent=agent;
@@ -3163,8 +3437,19 @@ class BrowserAutoPilot{
     crash=null,
     timeToFruitTotal=0,
     timeToFruitCount=0,
+    rewardBreakdown=null,
   }={}){
-    this.history.push({fruits,reward,steps,loopHits,revisitPenalty,crash,timeToFruitTotal,timeToFruitCount});
+    this.history.push({
+      fruits,
+      reward,
+      steps,
+      loopHits,
+      revisitPenalty,
+      crash,
+      timeToFruitTotal,
+      timeToFruitCount,
+      breakdown:rewardBreakdown?{...rewardBreakdown}:null,
+    });
     if(this.history.length>6000) this.history.shift();
     if(loss!==null && loss!==undefined){
       this.lossHistory.push(loss);
@@ -3177,6 +3462,22 @@ class BrowserAutoPilot{
     if(this.episode-last<cooldown) return false;
     this.lastAdjust[key]=this.episode;
     return true;
+  }
+  _averageBreakdown(window=200){
+    const recent=this.history.slice(-window).filter(item=>item.breakdown);
+    if(!recent.length) return null;
+    const totals=Object.fromEntries(REWARD_COMPONENT_KEYS.map(key=>[key,0]));
+    recent.forEach(item=>{
+      const data=item.breakdown;
+      REWARD_COMPONENT_KEYS.forEach(key=>{
+        totals[key]+=data[key]??0;
+      });
+    });
+    const scale=1/recent.length;
+    REWARD_COMPONENT_KEYS.forEach(key=>{
+      totals[key]*=scale;
+    });
+    return totals;
   }
   getMetrics(){
     const fruits=this.history.map(item=>item.fruits);
@@ -3232,6 +3533,14 @@ class BrowserAutoPilot{
     if(!actor||actor.kind!=='dqn'){
       return {adjustments,metrics};
     }
+    if(this.episode<this.minEpisodesForAdjust){
+      return {adjustments,metrics};
+    }
+    if(this.episode-this.lastEvaluationEpisode<this.evaluationInterval){
+      return {adjustments,metrics};
+    }
+    this.lastEvaluationEpisode=this.episode;
+    const breakdownAvg=this._averageBreakdown(240);
     if(metrics.fruitSlope<=0 && metrics.improvement2000<2 && this._canAdjust('epsilon-up',500)){
       const newEnd=clamp(actor.epsEnd+0.03,0.01,0.3);
       const newDecay=clamp(actor.epsDecay*1.2,5000,200000);
@@ -3259,10 +3568,10 @@ class BrowserAutoPilot{
       actor.setLearningRate(newLr);
       adjustments.push({type:'lr',value:newLr,reason:'recover'});
     }
-    this._adjustRewards(actor,metrics,adjustments);
+    this._adjustRewards(actor,metrics,adjustments,breakdownAvg);
     return {adjustments,metrics};
   }
-  _adjustRewards(actor,metrics,adjustments){
+  _adjustRewards(actor,metrics,adjustments,breakdownAvg){
     if(!metrics) return;
     const rewardConfig=this.rewardConfig||{};
     if(metrics.loopHitRate>0.01 && metrics.fruitSlope<=0 && this._canAdjust('reward-loop',500)){
@@ -3282,11 +3591,37 @@ class BrowserAutoPilot{
       rewardConfig.turnPenalty=clamp((rewardConfig.turnPenalty??0.001)-0.0002,0,0.02);
       adjustments.push({type:'reward',key:'selfPenalty',value:rewardConfig.selfPenalty,reason:'self_penalty'});
     }
+    let approachAdjusted=false;
+    let retreatAdjusted=false;
     if(metrics.timeToFruitAvg>200 && metrics.loopHitRate<0.005 && metrics.revisitRate<0.005 && this._canAdjust('reward-fruit',500)){
       rewardConfig.approachBonus=clamp((rewardConfig.approachBonus??0.03)+0.005,0,0.1);
       rewardConfig.retreatPenalty=clamp((rewardConfig.retreatPenalty??0.03)+0.005,0,0.1);
       adjustments.push({type:'reward',key:'approachBonus',value:rewardConfig.approachBonus,reason:'slow_fruit'});
       adjustments.push({type:'reward',key:'retreatPenalty',value:rewardConfig.retreatPenalty,reason:'slow_fruit'});
+      approachAdjusted=true;
+      retreatAdjusted=true;
+    }
+    if(breakdownAvg){
+      const avgFruit=breakdownAvg.fruitReward??0;
+      const avgStep=breakdownAvg.stepPenalty??0;
+      const avgRetreat=breakdownAvg.retreatPenalty??0;
+      const avgApproach=breakdownAvg.approachBonus??0;
+      if(avgStep<0 && Math.abs(avgStep)>Math.max(0.5,Math.abs(avgFruit))*1.3 && this._canAdjust('reward-step-down',900)){
+        rewardConfig.stepPenalty=clamp((rewardConfig.stepPenalty??0.01)*0.9,0.001,0.05);
+        adjustments.push({type:'reward',key:'stepPenalty',value:rewardConfig.stepPenalty,reason:'step_drag'});
+      }
+      if(!retreatAdjusted && Math.abs(avgRetreat)>(Math.abs(avgApproach)+0.5) && this._canAdjust('reward-retreat-down',900)){
+        rewardConfig.retreatPenalty=Math.max(0,(rewardConfig.retreatPenalty??0.03)-0.005);
+        adjustments.push({type:'reward',key:'retreatPenalty',value:rewardConfig.retreatPenalty,reason:'retreat_load'});
+      }
+      if(avgFruit<3 && metrics.timeToFruitAvg>160 && this._canAdjust('reward-fruit-extra',1200)){
+        rewardConfig.fruitReward=clamp((rewardConfig.fruitReward??10)+1,0,30);
+        adjustments.push({type:'reward',key:'fruitReward',value:rewardConfig.fruitReward,reason:'fruit_support'});
+      }
+      if(!approachAdjusted && avgApproach<1 && metrics.timeToFruitAvg>150 && this._canAdjust('reward-approach-boost',1200)){
+        rewardConfig.approachBonus=clamp((rewardConfig.approachBonus??0.03)+0.005,0,0.1);
+        adjustments.push({type:'reward',key:'approachBonus',value:rewardConfig.approachBonus,reason:'fruit_support'});
+      }
     }
     this.rewardConfig={...rewardConfig};
   }
@@ -3385,17 +3720,64 @@ function resetTrainingStats(){
   rwHist.length=0;
   fruitHist.length=0;
   lossHist.length=0;
+  rewardTelemetry.reset();
   ui.chartReward.data=[];
   ui.chartReward.draw();
   updateStatsUI();
+  updateRewardTelemetryUI();
   renderTick=0;
   contexts.forEach(ctx=>ctx.needsReset=true);
+  if(autoPilot){
+    autoPilot.history.length=0;
+    autoPilot.lossHistory.length=0;
+    autoPilot.episode=0;
+    autoPilot.bestFruit=0;
+    autoPilot.lastAdjust={};
+    autoPilot.lastEvaluationEpisode=0;
+    autoPilot.rewardConfig={...rewardConfig};
+  }
+  lastAutoMetrics=null;
+  lastAutoSummaryEpisode=0;
 }
 function updateStatsUI(){
   ui.kEpisodes.textContent=episode;
   ui.kAvgRw.textContent=avg(rwHist,100).toFixed(2);
   ui.kBest.textContent=bestLen;
   ui.kFruitRate.textContent=avg(fruitHist,100).toFixed(2);
+}
+function updateRewardTelemetryUI(){
+  if(!ui.rewardTelemetryBody) return;
+  const {rows,total}=rewardTelemetry.summary();
+  const frag=document.createDocumentFragment();
+  const valueClass=value=>{
+    if(value>1e-3) return 'positive';
+    if(value<-1e-3) return 'negative';
+    return 'neutral';
+  };
+  rows.forEach(row=>{
+    const tr=document.createElement('tr');
+    const lastClass=valueClass(row.last);
+    const avgClass=valueClass(row.avg100);
+    const trendClass=valueClass(row.trend);
+    tr.innerHTML=`
+      <td>${row.label}</td>
+      <td class="mono ${lastClass}">${formatMetric(row.last,2)}</td>
+      <td class="mono ${avgClass}">${formatMetric(row.avg100,2)}</td>
+      <td class="mono ${avgClass}">${formatMetric(row.avg500,2)}</td>
+      <td class="mono share">${formatPercent(row.share,1)}</td>
+      <td class="mono trend ${trendClass}">${formatSigned(row.trend,2)}</td>
+    `;
+    frag.appendChild(tr);
+  });
+  ui.rewardTelemetryBody.innerHTML='';
+  ui.rewardTelemetryBody.appendChild(frag);
+  if(ui.rewardTelemetrySummary){
+    const netClass=valueClass(total.avg100);
+    const trendClass=valueClass(total.trend);
+    ui.rewardTelemetrySummary.textContent=`${formatMetric(total.avg100,2)} (trend ${formatSigned(total.trend,2)})`;
+    ui.rewardTelemetrySummary.className=`mono ${netClass}`;
+    ui.rewardTelemetrySummary.dataset.trend=trendClass;
+  }
 }
 function flash(message,danger=false){
   ui.trainState.textContent=message;
@@ -3423,6 +3805,7 @@ async function finalizeContextEpisode(ctx,envIndex){
   if(fruitHist.length>1000) fruitHist.shift();
   const envRef=vecEnv.getEnv(envIndex);
   if(envRef) bestLen=Math.max(bestLen,envRef.snake.length);
+  const breakdown=envRef?.getEpisodeBreakdown?.();
   const loopHits=envRef?.loopHits??0;
   const revisitPenalty=envRef?.revisitAccum??0;
   const crashType=envRef?.lastCrash??null;
@@ -3430,6 +3813,8 @@ async function finalizeContextEpisode(ctx,envIndex){
   const timeToFruitCount=envRef?.timeToFruitCount??0;
   ui.chartReward.push(ctx.totalReward);
   updateStatsUI();
+  rewardTelemetry.record(breakdown);
+  updateRewardTelemetryUI();
   const latestLoss=lossHist.length?lossHist[lossHist.length-1]:null;
   let adjustments=[];
   if(trainingMode==='auto' && autoPilot){
@@ -3444,6 +3829,7 @@ async function finalizeContextEpisode(ctx,envIndex){
       crash:crashType,
       timeToFruitTotal,
       timeToFruitCount,
+      rewardBreakdown:breakdown,
     });
     const res=autoPilot.maybeAdjust({agent});
     const metrics=res?.metrics||null;
@@ -3719,6 +4105,7 @@ async function buildAppState(){
       fruitHist:Array.from(fruitHist),
       lossHist:Array.from(lossHist),
       chartReward:Array.from(ui.chartReward.data),
+      rewardTelemetry:rewardTelemetry.toJSON(),
     },
   };
 }
@@ -3731,6 +4118,12 @@ function applyMeta(meta={}){
   assignArray(lossHist,meta.lossHist,v=>+v||0);
   ui.chartReward.data=Array.isArray(meta.chartReward)?meta.chartReward.map(v=>+v||0):[];
   ui.chartReward.draw();
+  if(meta.rewardTelemetry){
+    rewardTelemetry.fromJSON(meta.rewardTelemetry);
+  }else{
+    rewardTelemetry.reset();
+  }
+  updateRewardTelemetryUI();
   const hasMetaCount=typeof meta.envCount==='number';
   let nextCount=hasMetaCount?meta.envCount:envCount;
   if(trainingMode==='auto'){
