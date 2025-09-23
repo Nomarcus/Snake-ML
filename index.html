@@ -277,6 +277,78 @@ canvas.chart{
   outline:2px solid var(--accent-a);
   outline-offset:2px;
 }
+.auto-log{
+  background:#111533;
+  border:1px solid #1b1f3a;
+  border-radius:12px;
+  padding:12px 14px;
+  display:flex;
+  flex-direction:column;
+  gap:10px;
+  font-size:12px;
+  color:#c7cdef;
+}
+.auto-log__header{
+  display:flex;
+  align-items:center;
+  gap:10px;
+}
+.auto-log__header h3{
+  margin:0;
+  font-size:12px;
+  color:#dfe3ff;
+  letter-spacing:.08em;
+  text-transform:uppercase;
+}
+.auto-log__stream{
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  max-height:160px;
+  overflow-y:auto;
+  padding-right:4px;
+}
+.auto-log__entry{
+  background:rgba(17,21,60,.9);
+  border:1px solid #202652;
+  border-left:3px solid var(--accent-a);
+  border-radius:10px;
+  padding:8px 10px;
+  display:flex;
+  flex-direction:column;
+  gap:3px;
+  line-height:1.4;
+}
+.auto-log__entry--board{border-left-color:var(--accent-b);}
+.auto-log__entry--epsilon{border-left-color:#5ad1a7;}
+.auto-log__entry--lr{border-left-color:#f9c74f;}
+.auto-log__entry--summary{border-left-color:#8d99ff;}
+.auto-log__entry--info{border-left-color:var(--accent-a);}
+.auto-log__title{
+  font-weight:600;
+  color:#e5e9ff;
+}
+.auto-log__detail{color:#c3caef;}
+.auto-log__metrics{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:11px;
+  color:#9aa3c7;
+}
+.auto-log__tag{
+  align-self:flex-end;
+  font-size:10px;
+  color:#a0a8dc;
+  background:#1e2450;
+  border-radius:999px;
+  padding:2px 8px;
+  margin-top:4px;
+}
+button.micro{
+  padding:4px 8px;
+  font-size:11px;
+  border-radius:6px;
+  box-shadow:none;
+}
 details{
   background:#111533;
   border-radius:12px;
@@ -463,6 +535,14 @@ footer{
       </select>
     </div>
     <p class="hint" id="algoDescription">Prioriterad replay, n-step returns och dueling-nät gör DQN stabilt och sample-effektivt.</p>
+
+    <div id="autoLogPanel" class="auto-log hidden">
+      <div class="auto-log__header">
+        <h3>Autojusteringar</h3>
+        <button type="button" id="autoLogClear" class="secondary micro">Rensa</button>
+      </div>
+      <div id="autoLogStream" class="auto-log__stream" role="log" aria-live="polite"></div>
+    </div>
 
     <div class="kpi">
       <div class="item"><b>Episoder</b><span id="kEpisodes">0</span></div>
@@ -2467,6 +2547,9 @@ const ui={
   tabGuide:document.getElementById('tabGuide'),
   trainingView:document.getElementById('trainingView'),
   guideView:document.getElementById('guideView'),
+  autoLogPanel:document.getElementById('autoLogPanel'),
+  autoLogStream:document.getElementById('autoLogStream'),
+  autoLogClear:document.getElementById('autoLogClear'),
   fileLoader:document.getElementById('fileLoader'),
   modelLoader:document.getElementById('modelLoader'),
   advancedPanel:document.getElementById('advancedPanel'),
@@ -2494,6 +2577,10 @@ let contexts=[];
 let renderTick=0;
 let trainingMode='manual';
 let autoPilot=null;
+const autoLogEntries=[];
+const MAX_AUTO_LOG_ENTRIES=24;
+let lastAutoMetrics=null;
+let lastAutoSummaryEpisode=0;
 function avg(arr,n){
   if(!arr.length) return 0;
   const slice=arr.slice(-n);
@@ -2516,6 +2603,135 @@ function stddev(arr=[]){
   const mean=arr.reduce((a,b)=>a+b,0)/arr.length;
   const variance=arr.reduce((a,b)=>a+(b-mean)**2,0)/arr.length;
   return Math.sqrt(variance);
+}
+function formatMetric(value,decimals=2){
+  if(value===null||value===undefined||Number.isNaN(value)) return '—';
+  const num=+value;
+  return num.toFixed(decimals);
+}
+function formatSigned(value,decimals=2){
+  if(value===null||value===undefined||Number.isNaN(value)) return '—';
+  const num=+value;
+  const out=num.toFixed(decimals);
+  return num>0?`+${out}`:out;
+}
+const AUTO_REASON_LABELS={
+  stagnation:'stagnation',
+  recovery:'återhämtning',
+  regression:'regression',
+  loss_ratio:'hög varians',
+  recover:'återhämtning',
+};
+function humanizeAutoReason(reason){
+  if(!reason) return '';
+  const text=AUTO_REASON_LABELS[reason]||reason;
+  return text.charAt(0).toUpperCase()+text.slice(1);
+}
+function buildMetricsLine(metrics){
+  if(!metrics) return '';
+  const parts=[];
+  if(metrics.maFruit100!==undefined) parts.push(`ma100 ${formatMetric(metrics.maFruit100,1)}`);
+  if(metrics.maFruit500!==undefined) parts.push(`ma500 ${formatMetric(metrics.maFruit500,1)}`);
+  if(metrics.fruitSlope!==undefined) parts.push(`trend ${formatSigned(metrics.fruitSlope,2)}`);
+  if(metrics.lossRatio!==undefined) parts.push(`lossσ/μ ${formatMetric(metrics.lossRatio,2)}`);
+  return parts.join(' • ');
+}
+function resetAutoLog(){
+  autoLogEntries.length=0;
+  if(ui.autoLogStream) ui.autoLogStream.innerHTML='';
+  lastAutoMetrics=null;
+  lastAutoSummaryEpisode=autoPilot?.episode||0;
+}
+function updateAutoLogVisibility(){
+  if(!ui.autoLogPanel) return;
+  ui.autoLogPanel.classList.toggle('hidden',trainingMode!=='auto');
+}
+function logAutoEvent({title='',detail='',metrics=null,tone='info',episode=null}={}){
+  if(!ui.autoLogStream) return;
+  const entry=document.createElement('div');
+  entry.className=`auto-log__entry auto-log__entry--${tone}`;
+  if(episode!==null&&episode!==undefined){
+    const tag=document.createElement('div');
+    tag.className='auto-log__tag';
+    tag.textContent=`Episod ${episode}`;
+    entry.appendChild(tag);
+  }
+  if(title){
+    const titleEl=document.createElement('div');
+    titleEl.className='auto-log__title';
+    titleEl.textContent=title;
+    entry.appendChild(titleEl);
+  }
+  if(detail){
+    const detailEl=document.createElement('div');
+    detailEl.className='auto-log__detail';
+    detailEl.textContent=detail;
+    entry.appendChild(detailEl);
+  }
+  const metricsLine=buildMetricsLine(metrics);
+  if(metricsLine){
+    const metricsEl=document.createElement('div');
+    metricsEl.className='auto-log__metrics';
+    metricsEl.textContent=metricsLine;
+    entry.appendChild(metricsEl);
+  }
+  ui.autoLogStream.prepend(entry);
+  autoLogEntries.unshift(entry);
+  while(autoLogEntries.length>MAX_AUTO_LOG_ENTRIES){
+    const old=autoLogEntries.pop();
+    old?.remove();
+  }
+}
+function describeAutoAdjustment(adj={}){
+  const res={title:'Autojustering',detail:'',tone:'info'};
+  if(!adj||typeof adj!=='object') return res;
+  switch(adj.type){
+    case 'board':
+      res.title='Curriculum';
+      res.detail=`Bräde → ${adj.size}×${adj.size}`;
+      res.tone='board';
+      break;
+    case 'epsilon':{
+      res.title='Utforskning';
+      const parts=[];
+      if(adj.end!==undefined) parts.push(`ε slut → ${formatMetric(adj.end,2)}`);
+      if(adj.decay!==undefined) parts.push(`decay → ${Math.round(+adj.decay)}`);
+      res.detail=parts.join(' • ');
+      res.tone='epsilon';
+      break;
+    }
+    case 'lr':
+      res.title='Learning rate';
+      res.detail=`LR → ${formatMetric(adj.value,4)}`;
+      res.tone='lr';
+      break;
+    default:
+      res.title='Autojustering';
+      res.detail=adj.type?`${adj.type}`:'';
+      res.tone='info';
+  }
+  const reason=humanizeAutoReason(adj.reason);
+  if(reason){
+    res.detail=res.detail?`${res.detail} — ${reason}`:reason;
+  }
+  return res;
+}
+function logAutoAdjustments(adjustments=[]){
+  if(trainingMode!=='auto') return;
+  if(!Array.isArray(adjustments)||!adjustments.length) return;
+  adjustments.forEach(adj=>{
+    const metrics=adj.metrics||lastAutoMetrics;
+    const episodeNumber=adj.episode??autoPilot?.episode??0;
+    const {title,detail,tone}=describeAutoAdjustment(adj);
+    logAutoEvent({title,detail,metrics,tone,episode:episodeNumber});
+    if(metrics) lastAutoMetrics=metrics;
+    lastAutoSummaryEpisode=episodeNumber;
+  });
+}
+function logAutoSummary(metrics,episodeNumber){
+  if(trainingMode!=='auto') return;
+  if(!metrics) return;
+  logAutoEvent({title:'Auto-kontroll',detail:'Inga nya justeringar',metrics,tone:'summary',episode:episodeNumber});
 }
 
 function bindUI(){
@@ -2546,6 +2762,9 @@ function bindUI(){
       if(k.includes('tensorflowjs')) localStorage.removeItem(k);
     }
     flash('Rensade lokal lagring');
+  });
+  ui.autoLogClear?.addEventListener('click',()=>{
+    resetAutoLog();
   });
   ui.fileLoader?.addEventListener('change',async ev=>{
     const [file]=ev.target.files||[];
@@ -2593,6 +2812,7 @@ function bindUI(){
   applyRewardsToEnv();
   updateControlAvailability();
   setTrainingMode(trainingMode);
+  updateAutoLogVisibility();
 }
 function setActiveTab(tab){
   const showGuide=tab==='guide';
@@ -2691,11 +2911,12 @@ function setTrainingMode(mode){
   trainingMode=next;
   ui.modeButtons.forEach(btn=>btn.classList.toggle('active',btn.dataset.mode===trainingMode));
   if(trainingMode==='auto'){
+    const firstActivation=prevMode!=='auto';
     autoPilot=new BrowserAutoPilot({rewardConfig:{...rewardConfig}});
     autoPilot.setAgent(agent);
     const desiredCount=Math.max(12,envCount);
     ui.envCount.value=`${desiredCount}`;
-    if(prevMode!=='auto'){
+    if(firstActivation){
       ui.gridSize.value='10';
       updateGridLabel();
       reconfigureEnvironment({count:desiredCount,size:10,force:true});
@@ -2705,9 +2926,27 @@ function setTrainingMode(mode){
     updateReadouts();
     const stageIdx=autoPilot.boardStages.findIndex(stage=>stage.size===COLS);
     if(stageIdx>=0) autoPilot.stageIndex=stageIdx;
+    lastAutoMetrics=null;
+    lastAutoSummaryEpisode=autoPilot?.episode||0;
+    if(firstActivation){
+      resetAutoLog();
+      updateAutoLogVisibility();
+      logAutoEvent({
+        title:'Auto-läge aktiverat',
+        detail:`${envCount} miljöer • ${COLS}×${ROWS}`,
+        tone:'info',
+        episode:autoPilot?.episode||0,
+      });
+    }else{
+      updateAutoLogVisibility();
+    }
+    ui.envCount.disabled=true;
   }else{
     autoPilot=null;
     ui.envCount.disabled=agent?.kind!=='dqn';
+    lastAutoMetrics=null;
+    lastAutoSummaryEpisode=0;
+    updateAutoLogVisibility();
   }
   if(trainingMode==='auto') ui.envCount.disabled=true;
   updateControlAvailability();
@@ -3094,7 +3333,20 @@ async function finalizeContextEpisode(ctx,envIndex){
       loss:latestLoss,
     });
     const res=autoPilot.maybeAdjust({agent});
-    adjustments=res?.adjustments||[];
+    const metrics=res?.metrics||null;
+    const autoEpisode=autoPilot?.episode||0;
+    if(metrics) lastAutoMetrics=metrics;
+    if(res?.adjustments?.length){
+      adjustments=res.adjustments.map(adj=>({
+        ...adj,
+        metrics,
+        episode:autoEpisode,
+      }));
+      lastAutoSummaryEpisode=autoEpisode;
+    }else if(metrics && autoEpisode-lastAutoSummaryEpisode>=200){
+      logAutoSummary(metrics,autoEpisode);
+      lastAutoSummaryEpisode=autoEpisode;
+    }
   }
   ctx.totalReward=0;
   ctx.fruits=0;
@@ -3124,6 +3376,7 @@ async function applyAutoAdjustments(adjustments){
     ui.lr.value=agent.lr.toFixed(4);
   }
   updateReadouts();
+  logAutoAdjustments(adjustments);
 }
 async function performVectorStep(mode){
   ensureContextPool();
