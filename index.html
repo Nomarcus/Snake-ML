@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="sv">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-<title>Snake — RL-studio med mjuk rendering</title>
+<title>Snake — RL studio with smooth rendering</title>
 <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <style>
 :root {
@@ -465,7 +465,7 @@ footer{
 </head>
 <body>
 <header>
-  <div class="logo">Snake • RL-studio</div>
+  <div class="logo">Snake • RL Studio</div>
   <div class="status-group">
     <span class="badge" id="trainState">idle</span>
     <span class="badge" id="algoBadge">Dueling DQN</span>
@@ -474,7 +474,7 @@ footer{
     <span class="badge">LR <span id="lrBadge">0.0005</span></span>
   </div>
   <nav class="tabs">
-    <button type="button" id="tabTraining" class="active">Träning</button>
+    <button type="button" id="tabTraining" class="active">Training</button>
     <button type="button" id="tabGuide">Guide</button>
   </nav>
 </header>
@@ -483,155 +483,155 @@ footer{
   <section class="card game-card">
     <div class="card-head">
       <h2>Live-board</h2>
-      <span class="badge soft" id="playbackLabel">Mjuk realtid</span>
+      <span class="badge soft" id="playbackLabel">Smooth realtime</span>
     </div>
     <canvas id="board" width="500" height="500"></canvas>
     <div class="controls primary">
-      <button id="btnTrain">▶ Starta träning</button>
-      <button id="btnPause" class="secondary">⏸ Paus</button>
-      <button id="btnStep" class="secondary">Steg 1 runda</button>
-      <button id="btnWatch" class="secondary">Titta</button>
-      <button id="btnReset" class="secondary">Återställ</button>
+      <button id="btnTrain">▶ Start training</button>
+      <button id="btnPause" class="secondary">⏸ Pause</button>
+      <button id="btnStep" class="secondary">Step one episode</button>
+      <button id="btnWatch" class="secondary">Watch</button>
+      <button id="btnReset" class="secondary">Reset</button>
     </div>
     <div class="controls secondary">
-      <div class="pill-group" id="playbackGroup" role="group" aria-label="Visningsläge">
-        <button type="button" class="pill active" data-speed="cinematic">Mjuk</button>
-        <button type="button" class="pill" data-speed="fast">Snabb</button>
+      <div class="pill-group" id="playbackGroup" role="group" aria-label="Playback mode">
+        <button type="button" class="pill active" data-speed="cinematic">Smooth</button>
+        <button type="button" class="pill" data-speed="fast">Fast</button>
         <button type="button" class="pill" data-speed="turbo">Turbo</button>
       </div>
       <div class="field compact">
-        <label for="gridSize">Brädstorlek</label>
+        <label for="gridSize">Board size</label>
         <input type="range" id="gridSize" min="10" max="30" step="2" value="20">
         <span class="mono" id="gridLabel">20×20</span>
       </div>
     </div>
-    <p class="hint">Varje episod renderas mjukt utan extra inställningar. Turbo hoppar över vissa frames men fortsätter lära.</p>
+    <p class="hint">Each episode renders smoothly without extra tweaks. Turbo skips some frames but keeps learning.</p>
   </section>
 
   <section class="card control-card">
     <div class="card-head">
-      <h2>Lärande</h2>
+      <h2>Learning</h2>
       <div class="card-actions">
-        <button id="btnSave" class="secondary">Spara</button>
-        <button id="btnLoad" class="secondary">Ladda</button>
+        <button id="btnSave" class="secondary">Save</button>
+        <button id="btnLoad" class="secondary">Load</button>
         <button id="btnLoadModel" class="secondary">Load model</button>
-        <button id="btnClear" class="danger">Rensa cache</button>
+        <button id="btnClear" class="danger">Clear cache</button>
       </div>
     </div>
     <div class="controls tertiary">
-      <div class="pill-group" id="modeGroup" role="group" aria-label="Träningsläge">
-        <button type="button" class="pill active" data-mode="manual">Manuell</button>
+      <div class="pill-group" id="modeGroup" role="group" aria-label="Training mode">
+        <button type="button" class="pill active" data-mode="manual">Manual</button>
         <button type="button" class="pill" data-mode="auto">Auto</button>
       </div>
-      <span class="hint">Auto driver curriculum, sparlogik och hyperparametrar åt dig.</span>
+      <span class="hint">Auto handles the curriculum, save logic, and hyperparameters for you.</span>
     </div>
     <div class="field block">
-      <label for="algoSelect">Algoritm</label>
+      <label for="algoSelect">Algorithm</label>
       <select id="algoSelect">
         <option value="dueling">Dueling Double DQN</option>
-        <option value="vanilla">Klassisk DQN</option>
+        <option value="vanilla">Classic DQN</option>
         <option value="policy">Policy Gradient (REINFORCE)</option>
         <option value="a2c">Advantage Actor-Critic</option>
         <option value="ppo">Proximal Policy Optimization</option>
       </select>
     </div>
-    <p class="hint" id="algoDescription">Prioriterad replay, n-step returns och dueling-nät gör DQN stabilt och sample-effektivt.</p>
+    <p class="hint" id="algoDescription">Prioritized replay, n-step returns, and dueling heads make DQN stable and sample efficient.</p>
 
     <div id="autoLogPanel" class="auto-log hidden">
       <div class="auto-log__header">
-        <h3>Autojusteringar</h3>
-        <button type="button" id="autoLogClear" class="secondary micro">Rensa</button>
+        <h3>Auto adjustments</h3>
+        <button type="button" id="autoLogClear" class="secondary micro">Clear</button>
       </div>
       <div id="autoLogStream" class="auto-log__stream" role="log" aria-live="polite"></div>
     </div>
 
     <div class="kpi">
-      <div class="item"><b>Episoder</b><span id="kEpisodes">0</span></div>
-      <div class="item"><b>Snittreward (100)</b><span id="kAvgRw">0.0</span></div>
-      <div class="item"><b>Bästa längd</b><span id="kBest">0</span></div>
-      <div class="item"><b>Frukt / ep</b><span id="kFruitRate">0.0</span></div>
+      <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
+      <div class="item"><b>Avg reward (100)</b><span id="kAvgRw">0.0</span></div>
+      <div class="item"><b>Best length</b><span id="kBest">0</span></div>
+      <div class="item"><b>Fruit / ep</b><span id="kFruitRate">0.0</span></div>
     </div>
 
     <div class="split charts">
       <div>
-        <h2>Reward / episod</h2>
+        <h2>Reward / episode</h2>
         <canvas id="chartReward" class="chart" width="400" height="140"></canvas>
       </div>
     </div>
 
     <details id="rewardPanel" open>
-      <summary>Belöningsmodell</summary>
+      <summary>Reward model</summary>
       <div class="stack">
-        <h3>Tempo &amp; riktning</h3>
+        <h3>Tempo &amp; direction</h3>
         <div class="row">
-          <label>Stegstraff
+          <label>Step penalty
             <input type="range" id="rewardStep" min="0" max="0.05" step="0.001" value="0.010">
             <span class="mono" id="rewardStepReadout">0.010</span>
           </label>
-          <label>Svängstraff
+          <label>Turn penalty
             <input type="range" id="rewardTurn" min="0" max="0.02" step="0.001" value="0.001">
             <span class="mono" id="rewardTurnReadout">0.001</span>
           </label>
-          <label>Mot frukt-bonus
+          <label>Toward fruit bonus
             <input type="range" id="rewardApproach" min="0" max="0.1" step="0.005" value="0.030">
             <span class="mono" id="rewardApproachReadout">0.030</span>
           </label>
         </div>
         <div class="row">
-          <label>Från frukt-straff
+          <label>Away from fruit penalty
             <input type="range" id="rewardRetreat" min="0" max="0.1" step="0.005" value="0.030">
             <span class="mono" id="rewardRetreatReadout">0.030</span>
           </label>
         </div>
       </div>
       <div class="stack">
-        <h3>Loopar &amp; upprepningar</h3>
+        <h3>Loops &amp; revisits</h3>
         <div class="row">
-          <label>Loopstraff
+          <label>Loop penalty
             <input type="range" id="rewardLoop" min="0" max="1" step="0.01" value="0.50">
             <span class="mono" id="rewardLoopReadout">0.50</span>
           </label>
-          <label>Upprepad ruta-straff
+          <label>Revisit penalty
             <input type="range" id="rewardRevisit" min="0" max="0.1" step="0.001" value="0.050">
             <span class="mono" id="rewardRevisitReadout">0.050</span>
           </label>
         </div>
       </div>
       <div class="stack">
-        <h3>Krascher &amp; fastna</h3>
+        <h3>Crashes &amp; stalling</h3>
         <div class="row">
-          <label>Väggkrasch
+          <label>Wall crash
             <input type="range" id="rewardWall" min="0" max="30" step="0.5" value="10">
             <span class="mono" id="rewardWallReadout">10.0</span>
           </label>
-          <label>Kroppskrasch
+          <label>Self crash
             <input type="range" id="rewardSelf" min="0" max="30" step="0.5" value="25.5">
             <span class="mono" id="rewardSelfReadout">25.5</span>
           </label>
-          <label>Fastna-straff
+          <label>Timeout penalty
             <input type="range" id="rewardTimeout" min="0" max="20" step="0.5" value="5">
             <span class="mono" id="rewardTimeoutReadout">5.0</span>
           </label>
         </div>
         <div class="row">
-          <label>Instängningsstraff
+          <label>Trap penalty
             <input type="range" id="rewardTrap" min="0" max="2" step="0.05" value="0.50">
             <span class="mono" id="rewardTrapReadout">0.50</span>
           </label>
-          <label>Fri yta-bonus
+          <label>Open space bonus
             <input type="range" id="rewardSpace" min="0" max="0.2" step="0.01" value="0.05">
             <span class="mono" id="rewardSpaceReadout">0.05</span>
           </label>
         </div>
       </div>
       <div class="stack">
-        <h3>Starka belöningar</h3>
+        <h3>High-impact rewards</h3>
         <div class="row">
-          <label>Äppelbelöning
+          <label>Fruit reward
             <input type="range" id="rewardFruit" min="0" max="30" step="0.5" value="10">
             <span class="mono" id="rewardFruitReadout">10.0</span>
           </label>
-          <label>Kompakthetsbonus
+          <label>Compactness bonus
             <input type="range" id="rewardCompact" min="0" max="0.1" step="0.001" value="0.000">
             <span class="mono" id="rewardCompactReadout">0.000</span>
           </label>
@@ -640,11 +640,11 @@ footer{
     </details>
 
     <details id="advancedPanel" open>
-      <summary>Avancerade inställningar</summary>
+      <summary>Advanced settings</summary>
       <div class="stack" data-config="shared">
-        <h3>Gemensamt</h3>
+        <h3>Shared</h3>
       <div class="row">
-        <label>Parallella miljöer
+        <label>Parallel environments
           <input type="range" id="envCount" min="1" max="24" step="1" value="1">
           <span class="mono" id="envCountReadout">1</span>
         </label>
@@ -659,17 +659,17 @@ footer{
         </div>
       </div>
       <div class="stack" data-config="dqn">
-        <h3>DQN-familjen</h3>
+        <h3>DQN family</h3>
         <div class="row">
           <label>ε start
             <input type="range" id="epsStart" min="0.2" max="1.0" step="0.05" value="1.0">
             <span class="mono" id="epsStartReadout">1.00</span>
           </label>
-          <label>ε slut
+          <label>ε end
             <input type="range" id="epsEnd" min="0.01" max="0.3" step="0.01" value="0.12">
             <span class="mono" id="epsEndReadout">0.12</span>
           </label>
-          <label>ε decay (steg)
+          <label>ε decay (steps)
             <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="80000">
             <span class="mono" id="epsDecayReadout">80000</span>
           </label>
@@ -679,11 +679,11 @@ footer{
             <input type="range" id="batchSize" min="32" max="512" step="32" value="128">
             <span class="mono" id="batchReadout">128</span>
           </label>
-          <label>Replay-storlek
+          <label>Replay size
             <input type="range" id="bufferSize" min="5000" max="200000" step="5000" value="50000">
             <span class="mono" id="bufferReadout">50000</span>
           </label>
-          <label>Target sync (steg)
+          <label>Target sync (steps)
             <input type="range" id="targetSync" min="500" max="10000" step="500" value="2000">
             <span class="mono" id="targetSyncReadout">2000</span>
           </label>
@@ -706,7 +706,7 @@ footer{
       <div class="stack hidden" data-config="policy">
         <h3>Policy Gradient</h3>
         <div class="row">
-          <label>Entropy-vikt
+          <label>Entropy weight
             <input type="range" id="pgEntropy" min="0" max="0.05" step="0.001" value="0.01">
             <span class="mono" id="pgEntropyReadout">0.010</span>
           </label>
@@ -715,11 +715,11 @@ footer{
       <div class="stack hidden" data-config="a2c">
         <h3>Actor-Critic</h3>
         <div class="row">
-          <label>Entropy-vikt
+          <label>Entropy weight
             <input type="range" id="acEntropy" min="0" max="0.05" step="0.001" value="0.005">
             <span class="mono" id="acEntropyReadout">0.005</span>
           </label>
-          <label>Värdevikt
+          <label>Value weight
             <input type="range" id="acValueCoef" min="0.1" max="1.0" step="0.05" value="0.5">
             <span class="mono" id="acValueCoefReadout">0.50</span>
           </label>
@@ -728,11 +728,11 @@ footer{
       <div class="stack hidden" data-config="ppo">
         <h3>PPO</h3>
         <div class="row">
-          <label>Entropy-vikt
+          <label>Entropy weight
             <input type="range" id="ppoEntropy" min="0" max="0.05" step="0.001" value="0.003">
             <span class="mono" id="ppoEntropyReadout">0.003</span>
           </label>
-          <label>Clip-faktor
+          <label>Clip factor
             <input type="range" id="ppoClip" min="0.05" max="0.4" step="0.01" value="0.2">
             <span class="mono" id="ppoClipReadout">0.20</span>
           </label>
@@ -750,7 +750,7 @@ footer{
             <input type="range" id="ppoEpochs" min="1" max="10" step="1" value="4">
             <span class="mono" id="ppoEpochsReadout">4</span>
           </label>
-          <label>Värdevikt
+          <label>Value weight
             <input type="range" id="ppoValueCoef" min="0.1" max="1.0" step="0.05" value="0.5">
             <span class="mono" id="ppoValueCoefReadout">0.50</span>
           </label>
@@ -762,158 +762,158 @@ footer{
 
 <section id="guideView" class="hidden">
   <div class="card">
-    <h2>Lärfilé – överblick</h2>
-    <p>Den här lärfilén samlar hur träningsmiljön fungerar och varför de olika reinforcement learning-strategierna i Snake-ML beter sig som de gör. Läs den sida vid sida med kontrollerna för att fatta säkra beslut när du experimenterar.</p>
+    <h2>Training primer – overview</h2>
+    <p>This primer explains how the training environment works and why the different reinforcement learning strategies in Snake-ML behave the way they do. Keep it alongside the controls so you can make confident tweaks while you experiment.</p>
     <ul>
-      <li><strong>Bakgrund:</strong> vad som händer på brädet och hur belöningar genereras.</li>
-      <li><strong>Algoritmer:</strong> teoretisk förklaring av DQN, policy gradient, A2C och PPO.</li>
-      <li><strong>Sliders:</strong> praktiska riktlinjer för varje reglage och hur du justerar dem.</li>
+      <li><strong>Background:</strong> what happens on the board and how rewards are generated.</li>
+      <li><strong>Algorithms:</strong> theoretical explanations of DQN, policy gradient, A2C, and PPO.</li>
+      <li><strong>Sliders:</strong> practical guidance for every control and how to adjust it.</li>
     </ul>
   </div>
 
   <div class="card">
-    <h2>Snabbstart</h2>
+    <h2>Quickstart</h2>
     <ol>
-      <li>Välj ett visningsläge i pill-gruppen <em>Mjuk/Snabb/Turbo</em>. Mjuk visar varje rörelse och är perfekt för att se beteenden, Turbo hoppar över rendering för maximal träningshastighet.</li>
-      <li>Tryck <strong>Starta träning</strong>. KPI-rutorna visar hur belöningen och längden utvecklas.</li>
-      <li>Justera ett reglage i taget. Byt till <strong>Steg 1 runda</strong> för att se effekten av ett beslut utan att låta modellen lära vidare.</li>
-      <li>Spara dina parametrar med <strong>Spara</strong>. Filen som laddas ned kan importeras igen med <strong>Ladda</strong>.</li>
+      <li>Select a playback mode in the <em>Smooth/Fast/Turbo</em> pill group. Smooth shows every move and is perfect for studying behaviours, while Turbo skips rendering for maximum training speed.</li>
+      <li>Press <strong>Start training</strong>. The KPI tiles show how reward and length evolve.</li>
+      <li>Adjust one slider at a time. Switch to <strong>Step one episode</strong> to see the effect of a choice without letting the model keep learning.</li>
+      <li>Save your parameters with <strong>Save</strong>. The downloaded file can be imported again with <strong>Load</strong>.</li>
     </ol>
-    <p>Brädstorleken styr hur många rutor ormen har att arbeta med. Större bräde betyder längre avstånd mellan frukter och mer komplexa strategier, men kräver också fler träningssteg.</p>
+    <p>Board size controls how many tiles the snake can work with. Larger boards mean longer distances between fruit and more complex strategies, but they also require more training steps.</p>
   </div>
 
   <div class="card">
-    <h2>Algoritmer och varför de fungerar</h2>
+    <h2>Algorithms and why they work</h2>
     <details open>
       <summary>Dueling Double DQN</summary>
-      <p>Dueling Double DQN är standardläget. Nätverket delar upp tillståndsvärdet V(s) och fördelen A(s,a) och kombinerar dem till <code>Q(s,a) = V(s) + A(s,a) - \bar{A}(s)</code>. Double-uppdateringen använder det aktuella nätverket för att välja handling men target-nätet för att beräkna dess värde, vilket minskar överskattning.</p>
+      <p>Dueling Double DQN is the default. The network splits the state value V(s) and the advantage A(s,a) and combines them into <code>Q(s,a) = V(s) + A(s,a) - ar{A}(s)</code>. Double updates use the online network to pick the action but the target network to evaluate it, reducing overestimation.</p>
       <ul>
-        <li><strong>Dueling-arkitektur:</strong> hjälpsam när vissa handlingar inte ändrar utfallet, till exempel att fortsätta rakt fram i tomma korridorer.</li>
-        <li><strong>Dubbla nät:</strong> <code>targetSync</code>-reglaget bestämmer hur ofta target-nätet kopieras och gör lärandet stabilare.</li>
-        <li><strong>Prioriterad replay:</strong> bufferten väljer erfarenheter med hög TD-förlust oftare. Reglagen <strong>PER α</strong> och <strong>PER β</strong> styr hur stark den prioriteringen är.</li>
-        <li><strong>n-step returns:</strong> sammanfattar belöningar över flera drag för att ge snabbare signaler när ormen är på väg mot en frukt.</li>
+        <li><strong>Dueling architecture:</strong> helpful when some actions barely change the outcome, such as continuing straight in empty corridors.</li>
+        <li><strong>Double networks:</strong> the <code>targetSync</code> slider controls how often the target network is copied, keeping learning stable.</li>
+        <li><strong>Prioritized replay:</strong> the buffer samples experiences with high TD error more often. The <strong>PER α</strong> and <strong>PER β</strong> sliders tune how strong that priority is.</li>
+        <li><strong>n-step returns:</strong> summarise rewards across several moves to deliver faster feedback when the snake is heading toward fruit.</li>
       </ul>
-      <p>Rekommenderad start är LR 5e-4, γ = 0,98, batch 128 och replay 50&nbsp;000. Höj <strong>ε decay</strong> om du behöver mer utforskning i större världar.</p>
+      <p>Recommended starting point: LR 5e-4, γ = 0.98, batch 128, and replay 50&nbsp;000. Increase <strong>ε decay</strong> if you need more exploration in larger worlds.</p>
     </details>
     <details>
-      <summary>Klassisk DQN</summary>
-      <p>Den klassiska DQN:n använder ett enklare Q-nät utan dueling-huvud. Uppdateringen följer Bellman-ekvationen <code>Q(s,a) \leftarrow r + γ · \max_{a'} Q_{target}(s',a')</code>. Den är lätt att förstå och fungerar bra på mindre bräden.</p>
+      <summary>Classic DQN</summary>
+      <p>The classic DQN uses a simpler Q-network without the dueling head. Its update follows Bellman's equation <code>Q(s,a) \leftarrow r + γ · \max_{a'} Q_{target}(s',a')</code>. It is easy to reason about and works well on smaller boards.</p>
       <ul>
-        <li><strong>Epsilon-greedy:</strong> samma reglage för ε start/slut/decay används här. Hög start ger fler slumpdrag i början.</li>
-        <li><strong>Replay-bufferten:</strong> håll bufferten stor nog (≥ 20&nbsp;000) för att undvika korrelerade upplevelser.</li>
-        <li><strong>n-step:</strong> kan sänkas till 1 om du vill jämföra med den originala DQN-artikeln.</li>
+        <li><strong>Epsilon-greedy:</strong> uses the same ε start/end/decay sliders. A high start produces more random moves in the beginning.</li>
+        <li><strong>Replay buffer:</strong> keep the buffer large enough (≥ 20&nbsp;000) to avoid correlated experiences.</li>
+        <li><strong>n-step:</strong> can be reduced to 1 if you want to compare with the original DQN paper.</li>
       </ul>
-      <p>Om förlustkurvan oscillerar kraftigt, sänk learning rate eller öka target sync-intervall.</p>
+      <p>If the loss curve oscillates heavily, lower the learning rate or increase the target sync interval.</p>
     </details>
     <details>
       <summary>Policy Gradient (REINFORCE)</summary>
-      <p>Policy gradient lär en direkt policy π(a|s) och maximerar den förväntade returens log-sannolikhet: <code>∇θ J(θ) = E[ G_t ∇θ log π_θ(a_t|s_t) ]</code>. Variansen är hög, därför används en baseline i form av genomsnittlig retur.</p>
+      <p>Policy gradient learns a direct policy π(a|s) and maximises the expected return's log probability: <code>∇θ J(θ) = E[ G_t ∇θ log π_θ(a_t|s_t) ]</code>. The variance is high, so a baseline equal to the average return is subtracted.</p>
       <ul>
-        <li><strong>Entropy-vikt:</strong> högre värde uppmuntrar slumpmässigare policies och motverkar att modellen fastnar för tidigt.</li>
-        <li>Ingen replay-buffert används; varje episod påverkar vikterna direkt. Kör gärna Turbo-läget för fler episoder.</li>
-        <li>Håll learning rate runt 1e-3. Om belöningen svänger, sänk LR eller öka entropivikten något.</li>
+        <li><strong>Entropy weight:</strong> higher values encourage more random policies and prevent the model from locking in too early.</li>
+        <li>No replay buffer is used; each episode updates the weights directly. Run Turbo mode to gather more episodes.</li>
+        <li>Keep the learning rate around 1e-3. If reward swings, lower LR or increase the entropy weight slightly.</li>
       </ul>
     </details>
     <details>
       <summary>Advantage Actor-Critic</summary>
-      <p>A2C tränar två nät samtidigt: aktören lär π(a|s) medan kritikern uppskattar V(s). Uppdateringen använder fördelen A(s,a) = Q(s,a) − V(s) för att minska varians.</p>
+      <p>A2C trains two networks simultaneously: the actor learns π(a|s) while the critic estimates V(s). Updates use the advantage A(s,a) = Q(s,a) − V(s) to reduce variance.</p>
       <ul>
-        <li><strong>Entropy-vikt:</strong> samma effekt som i policy gradient men brukar ligga lägre (0,003–0,01).</li>
-        <li><strong>Värdevikt:</strong> väger hur starkt kritikerns MSE-förlust påverkar den totala förlusten. Hög vikt stabiliserar men kan göra policyn trög.</li>
-        <li>Gemensamma reglage γ och LR gäller även här. γ runt 0,99 hjälper modellen att planera flera steg framåt.</li>
+        <li><strong>Entropy weight:</strong> similar effect as in policy gradient but typically lower (0.003–0.01).</li>
+        <li><strong>Value weight:</strong> controls how strongly the critic's MSE loss influences the total loss. High weight stabilises learning but can slow the policy.</li>
+        <li>The shared γ and LR sliders apply here as well. γ around 0.99 helps the model plan several steps ahead.</li>
       </ul>
-      <p>A2C är snabb när du har korta episoder. Om kritikerförlusten divergerar, sänk värdevikten eller LR.</p>
+      <p>A2C is quick when episodes are short. If the critic loss diverges, reduce the value weight or learning rate.</p>
     </details>
     <details>
       <summary>Proximal Policy Optimization</summary>
-      <p>PPO använder en klippt objektivfunktion: <code>L_{clip}(θ) = E[\min(r_t(θ)A_t, \operatorname{clip}(r_t(θ), 1-ε, 1+ε) A_t)]</code>. Detta hindrar uppdateringar från att göra stora policyförändringar.</p>
+      <p>PPO uses a clipped objective: <code>L_{clip}(θ) = E[\min(r_t(θ)A_t, \operatorname{clip}(r_t(θ), 1-ε, 1+ε) A_t)]</code>. This prevents updates from pushing the policy too far in a single step.</p>
       <ul>
-        <li><strong>Clip-faktor:</strong> motsvarar ε i formeln. Lägre värden (~0,1) ger försiktiga uppdateringar, högre värden (~0,3) tillåter mer förändring.</li>
-        <li><strong>GAE λ:</strong> styr balans mellan bias och varians i generalized advantage estimation. 0,95 är ett bra standardvärde; sänk för mer responsivitet.</li>
-        <li><strong>Batch</strong> och <strong>Epochs:</strong> PPO gör flera gradientsteg per uppsamlad batch. Mindre batch + fler epoch ger snabbare anpassning men riskerar överträning på datan.</li>
-        <li><strong>Värdevikt</strong> och <strong>Entropy-vikt:</strong> styr samma saker som i A2C men i PPO:s sammansatta förlust.</li>
+        <li><strong>Clip factor:</strong> corresponds to ε in the formula. Lower values (~0.1) yield cautious updates; higher values (~0.3) allow more change.</li>
+        <li><strong>GAE λ:</strong> balances bias and variance in generalised advantage estimation. 0.95 is a solid default; lower it for more responsiveness.</li>
+        <li><strong>Batch</strong> and <strong>Epochs:</strong> PPO performs several gradient steps per collected batch. Smaller batches with more epochs adapt quickly but risk overfitting the data.</li>
+        <li><strong>Value weight</strong> and <strong>Entropy weight:</strong> influence the same components as in A2C but inside PPO's combined loss.</li>
       </ul>
-      <p>Om policyn blir instabil, minska clip-faktorn eller antalet epoch per batch.</p>
+      <p>If the policy becomes unstable, reduce the clip factor or the number of epochs per batch.</p>
     </details>
   </div>
 
   <div class="card">
-    <h2>Belöningsguide</h2>
-    <p>Belöningsmodellen styr hur ormen värderar varje steg. Justera reglagen i panelen <em>Belöningsmodell</em> för att fintrimma strategin utan att behöva träna om modellen från början.</p>
-    <h3>Tempo &amp; riktning</h3>
+    <h2>Reward guide</h2>
+    <p>The reward model determines how the snake values every step. Adjust the sliders in the <em>Reward model</em> panel to fine-tune the strategy without retraining from scratch.</p>
+    <h3>Tempo &amp; direction</h3>
     <ul>
-      <li><strong>Stegstraff:</strong> grundkostnad för varje drag (standard 0,01). Höj för att få kortare, mer målmedvetna rutter.</li>
-      <li><strong>Svängstraff:</strong> extra kostnad när ormen vrider sig. Sänks om du vill att modellen ska testa fler små korrigeringar.</li>
-      <li><strong>Mot/Från frukt:</strong> bonusen för att minska avståndet till frukten samt straffet för att öka det. Håll värdena lika för symmetrisk feedback.</li>
+      <li><strong>Step penalty:</strong> base cost per move (default 0.01). Raise it for shorter, more purposeful routes.</li>
+      <li><strong>Turn penalty:</strong> extra cost when the snake turns. Lower it if you want the model to try more small corrections.</li>
+      <li><strong>Toward/Away from fruit:</strong> the bonus for closing the distance to the fruit and the penalty for increasing it. Keep the values similar for symmetric feedback.</li>
     </ul>
-    <h3>Loopar &amp; upprepningar</h3>
+    <h3>Loops &amp; revisits</h3>
     <ul>
-      <li><strong>Loopstraff:</strong> träffar när historiken visar vänster/höger-loopar (mönster 1,2,1,2). Höj om ormen ofta fastnar i åttor.</li>
-      <li><strong>Upprepad ruta:</strong> multipliceras med hur nyligen ett fält besökts. Ett högre värde pressar ormen att utforska nya ytor.</li>
+      <li><strong>Loop penalty:</strong> triggers when the history shows left/right loops (pattern 1,2,1,2). Increase it if the snake often gets stuck in figure-eights.</li>
+      <li><strong>Revisit penalty:</strong> multiplied by how recently a tile was visited. Higher values push the snake to explore fresh space.</li>
     </ul>
-    <h3>Krascher &amp; fastna</h3>
+    <h3>Crashes &amp; stalling</h3>
     <ul>
-      <li><strong>Väggkrasch:</strong> straff när huvudet går utanför brädet.</li>
-      <li><strong>Kroppskrasch:</strong> straff när ormen biter sig själv.</li>
-      <li><strong>Fastna-straff:</strong> delas ut om ingen frukt plockats på två hela bräden med drag. Används för att bryta livslånga slingor.</li>
+      <li><strong>Wall crash:</strong> penalty when the head leaves the board.</li>
+      <li><strong>Self crash:</strong> penalty when the snake bites itself.</li>
+      <li><strong>Timeout penalty:</strong> applied if no fruit is collected for two full board areas worth of moves. Prevents endless loops.</li>
     </ul>
-    <h3>Starka belöningar</h3>
+    <h3>High-impact rewards</h3>
     <ul>
-      <li><strong>Äppelbelöning:</strong> huvudbelöningen när en frukt äts. Justera upp för mer aggressiv fruktjakt.</li>
-      <li><strong>Kompakthetsbonus:</strong> ger en liten bonus när ormens täckta område blir tätare (lägre differens mellan omslutande ruta och ormens längd). Höj först mot slutet av träningen om du vill att kroppen packas ihop.</li>
+      <li><strong>Fruit reward:</strong> the main reward when a fruit is eaten. Raise it for more aggressive fruit chasing.</li>
+      <li><strong>Compactness bonus:</strong> gives a small bonus when the occupied area becomes denser (lower difference between the bounding box and snake length). Increase it late in training if you want the body packed tightly.</li>
     </ul>
   </div>
 
   <div class="card">
-    <h2>Reglage &amp; hur de påverkar träningen</h2>
-    <h3>Miljö och visning</h3>
+    <h2>Sliders &amp; how they affect training</h2>
+    <h3>Environment &amp; playback</h3>
     <ul>
-      <li><strong>Visningsläge:</strong> <em>Mjuk</em> visar varje rörelse, <em>Snabb</em> hoppar över varannan frame och <em>Turbo</em> stänger av rendering. Alla lägen fortsätter uppdatera nätverket.</li>
-      <li><strong>Brädstorlek:</strong> 10×10 ger korta episoder och snabb feedback. 30×30 kräver längre episoder men belönar planering.</li>
+      <li><strong>Playback mode:</strong> <em>Smooth</em> shows every move, <em>Fast</em> skips every other frame, and <em>Turbo</em> disables rendering. All modes continue updating the network.</li>
+      <li><strong>Board size:</strong> 10×10 yields short episodes and quick feedback. 30×30 requires longer episodes but rewards planning.</li>
     </ul>
-    <h3>Gemensamma hyperparametrar</h3>
+    <h3>Shared hyperparameters</h3>
     <ul>
-      <li><strong>γ (discount):</strong> högt värde (0,97–0,995) prioriterar långsiktiga frukter. Sänk till 0,94–0,96 om ormen ofta kraschar innan den hinner få belöning.</li>
-      <li><strong>LR:</strong> bestämmer gradientens stegstorlek. 0,0005 fungerar för DQN; sänk mot 0,0003 för PPO/A2C om förlusten oscillerar.</li>
+      <li><strong>γ (discount):</strong> high values (0.97–0.995) prioritise long-term fruit. Lower to 0.94–0.96 if the snake often crashes before reaching reward.</li>
+      <li><strong>LR:</strong> sets the gradient step size. 0.0005 works for DQN; drop toward 0.0003 for PPO/A2C if the loss oscillates.</li>
     </ul>
-    <h3>DQN-familjen</h3>
+    <h3>DQN family</h3>
     <ul>
-      <li><strong>ε start/slut/decay:</strong> styr utforskning. Längre decay (≥ 80&nbsp;000) ger långsam övergång till exploatering. Höj slutvärdet (t.ex. 0,10) om ormen fastnar i repetitiva slingor.</li>
-      <li><strong>Batch:</strong> större batch minskar variansen men kräver större buffert. 256 kräver minst 100&nbsp;000 replay-poster.</li>
-      <li><strong>Replay-storlek:</strong> standard 50&nbsp;000. Öka för att lära i stora bräden, men kom ihåg att äldre erfarenheter kan bli irrelevanta.</li>
-      <li><strong>Target sync:</strong> hur ofta policy-nätet kopieras till target-nätet. Lägre värde (1000) ger snabbare anpassning men kan bli instabilt.</li>
-      <li><strong>n-step:</strong> fler steg ger starkare signaler men ökar risken att blandade belöningar introducerar brus. Prova 2–3 för små bräden och 4–5 för stora.</li>
-      <li><strong>PER α:</strong> hur starkt TD-fel påverkar prioriteringen. Högre (0,8–1,0) fokuserar på svåra erfarenheter; sänk till 0,5 för mer mångfald.</li>
-      <li><strong>PER β:</strong> korrigerar bias från prioriteringen. Höj gradvis mot 1,0 när träningen pågår länge.</li>
+      <li><strong>ε start/end/decay:</strong> control exploration. Longer decay (≥ 80&nbsp;000) yields a slow transition to exploitation. Raise the end value (e.g. 0.10) if the snake loops in repetitive patterns.</li>
+      <li><strong>Batch:</strong> larger batches reduce variance but need bigger buffers. 256 requires at least 100&nbsp;000 replay entries.</li>
+      <li><strong>Replay size:</strong> 50&nbsp;000 by default. Increase it for large boards, but remember old experiences may become irrelevant.</li>
+      <li><strong>Target sync:</strong> how often the policy network is copied to the target network. Lower values (1000) adapt quickly but can become unstable.</li>
+      <li><strong>n-step:</strong> more steps give stronger signals but mixed rewards can add noise. Try 2–3 for small boards and 4–5 for large ones.</li>
+      <li><strong>PER α:</strong> how strongly TD error affects prioritisation. Higher (0.8–1.0) focuses on hard experiences; drop to 0.5 for more variety.</li>
+      <li><strong>PER β:</strong> corrects the bias introduced by prioritisation. Increase it gradually toward 1.0 during long training runs.</li>
     </ul>
-    <h3>Policybaserade metoder</h3>
+    <h3>Policy-based methods</h3>
     <ul>
-      <li><strong>Entropy-vikt (Policy/A2C/PPO):</strong> lägre värde ger beslutsamma policies, högre värde hindrar tidig konvergens. Sänk när modellen hittar en stabil strategi.</li>
-      <li><strong>Värdevikt (A2C/PPO):</strong> styr hur mycket värdeförlusten påverkar. Hög vikt hjälper kritikern att hålla reda på långsiktiga belöningar.</li>
-      <li><strong>Clip-faktor (PPO):</strong> håll mellan 0,1–0,25 för stabilitet. Kombinera med lägre LR om du ökar den.</li>
-      <li><strong>GAE λ (PPO):</strong> lägre (0,90) reagerar snabbare på nya signaler; högre (0,97) ger jämnare estimat.</li>
-      <li><strong>PPO Batch/Epochs:</strong> fler epoch på samma data riskerar överanpassning. Om policyn gungar, sänk epoch eller öka batchstorleken.</li>
+      <li><strong>Entropy weight (Policy/A2C/PPO):</strong> lower values give decisive policies, higher values prevent premature convergence. Reduce it once the model finds a stable strategy.</li>
+      <li><strong>Value weight (A2C/PPO):</strong> controls how much the value loss matters. High weight helps the critic track long-term rewards.</li>
+      <li><strong>Clip factor (PPO):</strong> keep between 0.1–0.25 for stability. Pair it with a lower LR if you increase it.</li>
+      <li><strong>GAE λ (PPO):</strong> lower (0.90) reacts faster to new signals; higher (0.97) yields smoother estimates.</li>
+      <li><strong>PPO Batch/Epochs:</strong> more epochs on the same data risk overfitting. If the policy swings, lower the epochs or increase the batch size.</li>
     </ul>
-    <p>Justera alltid ett reglage i taget och observera diagrammen för reward och förlust. När rewardens 100-episodersmedel planar ut kan du prova en ändring, köra några hundra episoder och jämföra.</p>
+    <p>Always change one slider at a time and monitor the reward and loss charts. When the 100-episode reward average levels out, try an adjustment, run a few hundred episodes, and compare.</p>
   </div>
 
   <div class="card">
-    <h2>Diagnostik och vanliga mönster</h2>
+    <h2>Diagnostics and common patterns</h2>
     <ul>
-      <li><strong>Belöningen sjunker efter att ha stigit:</strong> höj ε slut eller entropivikten för att återintroducera utforskning.</li>
-      <li><strong>Förlusten exploderar:</strong> sänk learning rate, öka target sync-intervall eller minska batchstorleken.</li>
-      <li><strong>Ormen går i cirklar:</strong> prova högre entropi (policy/A2C/PPO) eller längre ε-decay i DQN så att modellen vågar bryta mönstret.</li>
-      <li><strong>Ingen förbättring på stort bräde:</strong> öka n-step och replay-storlek, och kör Turbo-läge för att samla fler erfarenheter.</li>
-      <li><strong>Stora skillnader mellan episoder:</strong> kontrollera KPI-rutorna. Om snittrewarden är låg men bästa längd hög tyder det på instabil policy — justera utforskning eller sänk LR.</li>
+      <li><strong>Reward drops after rising:</strong> raise ε end or the entropy weight to reintroduce exploration.</li>
+      <li><strong>Loss explodes:</strong> lower the learning rate, increase the target sync interval, or reduce the batch size.</li>
+      <li><strong>The snake loops in circles:</strong> try higher entropy (policy/A2C/PPO) or a longer ε decay in DQN so the model dares to break the pattern.</li>
+      <li><strong>No improvement on large boards:</strong> increase n-step and replay size, and run Turbo mode to gather more experience.</li>
+      <li><strong>Big differences between episodes:</strong> inspect the KPI tiles. If average reward is low but best length high it signals an unstable policy — adjust exploration or lower LR.</li>
     </ul>
-    <p>Använd <strong>Paus</strong> och <strong>Steg 1 runda</strong> för att analysera enskilda sekvenser. <strong>Återställ</strong> startar om episoden, medan <strong>Rensa cache</strong> tar bort sparade vikter från webbläsaren om du vill börja helt från noll.</p>
+    <p>Use <strong>Pause</strong> and <strong>Step one episode</strong> to analyse individual sequences. <strong>Reset</strong> restarts the episode, while <strong>Clear cache</strong> removes stored weights from the browser if you want a fresh start.</p>
   </div>
 </section>
 
 <input type="file" id="fileLoader" accept="application/json" hidden>
 <input type="file" id="modelLoader" accept="application/json" hidden>
 
-<footer class="hint">© Marcus — Snake lär sig med flera RL-strategier och cinematiska rörelser.</footer>
+<footer class="hint">© Marcus — Snake learns with multiple RL strategies and cinematic movement.</footer>
 
 <script>
 'use strict';
@@ -1211,7 +1211,7 @@ class VecSnakeEnv{
   }
   step(actions){
     if(!Array.isArray(actions)||actions.length!==this.envCount){
-      throw new Error(`Förväntade ${this.envCount} handlingar men fick ${actions?.length}`);
+      throw new Error(`Expected ${this.envCount} actions but received ${actions?.length}`);
     }
     const nextStates=new Array(this.envCount);
     const rewards=new Array(this.envCount);
@@ -1622,7 +1622,7 @@ class DQNAgent{
     };
   }
   async importState(state){
-    if(!state) throw new Error('Ogiltigt tillstånd');
+    if(!state) throw new Error('Invalid state');
     if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
     if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
     const cfg=state.config??{};
@@ -1760,7 +1760,7 @@ class PolicyGradientAgent{
     };
   }
   async importState(state){
-    if(!state) throw new Error('Ogiltigt tillstånd');
+    if(!state) throw new Error('Invalid state');
     if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
     if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
     const cfg=state.config??{};
@@ -1907,7 +1907,7 @@ class A2CAgent{
     };
   }
   async importState(state){
-    if(!state) throw new Error('Ogiltigt tillstånd');
+    if(!state) throw new Error('Invalid state');
     if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
     if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
     const cfg=state.config??{};
@@ -2120,7 +2120,7 @@ class PPOAgent{
     };
   }
   async importState(state){
-    if(!state) throw new Error('Ogiltigt tillstånd');
+    if(!state) throw new Error('Invalid state');
     if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
     if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
     const cfg=state.config??{};
@@ -2388,10 +2388,10 @@ function drawRoundedRect(x,y,w,h,r){
 
 /* ---------------- App state ---------------- */
 const playbackModes={
-  cinematic:{label:'Mjuk realtid',frameMs:110,stepsPerFrame:1,renderEvery:1,queueTarget:60},
-  fast:{label:'Snabb',frameMs:60,stepsPerFrame:3,renderEvery:1,queueTarget:90},
+  cinematic:{label:'Smooth realtime',frameMs:110,stepsPerFrame:1,renderEvery:1,queueTarget:60},
+  fast:{label:'Fast',frameMs:60,stepsPerFrame:3,renderEvery:1,queueTarget:90},
   turbo:{label:'Turbo',frameMs:30,stepsPerFrame:6,renderEvery:2,queueTarget:120},
-  watch:{label:'Visning',frameMs:120,stepsPerFrame:1,renderEvery:1,queueTarget:60},
+  watch:{label:'Watch',frameMs:120,stepsPerFrame:1,renderEvery:1,queueTarget:60},
 };
 const AGENT_PRESETS={
   dueling:{
@@ -2405,7 +2405,7 @@ const AGENT_PRESETS={
       nStep:3,priorityAlpha:0.6,priorityBeta:0.4,
       layers:[256,256,128],dueling:true,double:true,learnRepeats:2,
     },
-    description:'Prioriterad replay, n-step returns och dueling-nät ger stabil och sample-effektiv DQN-träning.',
+    description:'Prioritized replay, n-step returns, and dueling heads provide stable, sample-efficient DQN training.',
     create:(sDim,aDim,cfg)=>new DQNAgent(sDim,aDim,{
       ...cfg,
       dueling:true,
@@ -2415,7 +2415,7 @@ const AGENT_PRESETS={
     }),
   },
   vanilla:{
-    label:'Klassisk DQN',
+    label:'Classic DQN',
     badge:'Vanilla DQN',
     type:'dqn',
     defaults:{
@@ -2425,7 +2425,7 @@ const AGENT_PRESETS={
       nStep:1,priorityAlpha:0.4,priorityBeta:0.4,
       layers:[128,128],dueling:false,double:false,learnRepeats:1,
     },
-    description:'En enklare DQN utan dueling/double – perfekt för att förstå grundbeteendet.',
+    description:'A simpler DQN without dueling/double — perfect for understanding the base behaviour.',
     create:(sDim,aDim,cfg)=>new DQNAgent(sDim,aDim,{
       ...cfg,
       dueling:false,
@@ -2441,7 +2441,7 @@ const AGENT_PRESETS={
     defaults:{
       gamma:0.99,lr:0.0008,entropy:0.01,
     },
-    description:'Monte-Carlo policy gradient med entropiregularisering för stabil utforskning.',
+    description:'Monte Carlo policy gradient with entropy regularisation for steady exploration.',
     create:(sDim,aDim,cfg)=>new PolicyGradientAgent(sDim,aDim,cfg),
   },
   a2c:{
@@ -2451,7 +2451,7 @@ const AGENT_PRESETS={
     defaults:{
       gamma:0.99,lr:0.0006,entropy:0.005,valueCoef:0.5,
     },
-    description:'Gemensamt nät som tränar både policy och värdefunktion för snabbare konvergens.',
+    description:'Shared network that trains both policy and value function for faster convergence.',
     create:(sDim,aDim,cfg)=>new A2CAgent(sDim,aDim,cfg),
   },
   ppo:{
@@ -2461,7 +2461,7 @@ const AGENT_PRESETS={
     defaults:{
       gamma:0.99,lr:0.0003,entropy:0.003,valueCoef:0.5,clip:0.2,lambda:0.95,batch:256,epochs:4,
     },
-    description:'Clippad policy-gradient med GAE för stabila uppdateringar även i längre episoder.',
+    description:'Clipped policy gradient with GAE for stable updates even in long episodes.',
     create:(sDim,aDim,cfg)=>new PPOAgent(sDim,aDim,cfg),
   },
 };
@@ -2635,21 +2635,8 @@ function formatSigned(value,decimals=2){
 }
 const AUTO_REASON_LABELS={
   stagnation:'stagnation',
-  recovery:'återhämtning',
+  recovery:'recovery',
   regression:'regression',
-  loss_ratio:'hög varians',
-  recover:'återhämtning',
-  loop_penalty:'loopar',
-  revisit_penalty:'återbesök',
-  self_penalty:'självkrockar',
-  slow_fruit:'långsamma frukter',
-};
-const REWARD_LABELS={
-  loopPenalty:'Loopstraff',
-  revisitPenalty:'Återbesöksstraff',
-  selfPenalty:'Självkrockstraff',
-  approachBonus:'Närmande-bonus',
-  retreatPenalty:'Retreat-straff',
 };
 const REWARD_DECIMALS={
   loopPenalty:2,
@@ -2719,18 +2706,18 @@ function logAutoEvent({title='',detail='',metrics=null,tone='info',episode=null}
   }
 }
 function describeAutoAdjustment(adj={}){
-  const res={title:'Autojustering',detail:'',tone:'info'};
+  const res={title:'Auto adjustment',detail:'',tone:'info'};
   if(!adj||typeof adj!=='object') return res;
   switch(adj.type){
     case 'board':
       res.title='Curriculum';
-      res.detail=`Bräde → ${adj.size}×${adj.size}`;
+      res.detail=`Board → ${adj.size}×${adj.size}`;
       res.tone='board';
       break;
     case 'epsilon':{
-      res.title='Utforskning';
+      res.title='Exploration';
       const parts=[];
-      if(adj.end!==undefined) parts.push(`ε slut → ${formatMetric(adj.end,2)}`);
+      if(adj.end!==undefined) parts.push(`ε end → ${formatMetric(adj.end,2)}`);
       if(adj.decay!==undefined) parts.push(`decay → ${Math.round(+adj.decay)}`);
       res.detail=parts.join(' • ');
       res.tone='epsilon';
@@ -2742,8 +2729,6 @@ function describeAutoAdjustment(adj={}){
       res.tone='lr';
       break;
     case 'reward':{
-      res.title='Belöning';
-      const keyLabel=REWARD_LABELS[adj.key]||adj.key||'Belöning';
       if(adj.value!==undefined){
         const decimals=REWARD_DECIMALS[adj.key]??3;
         res.detail=`${keyLabel} → ${formatMetric(adj.value,decimals)}`;
@@ -2754,7 +2739,7 @@ function describeAutoAdjustment(adj={}){
       break;
     }
     default:
-      res.title='Autojustering';
+      res.title='Auto adjustment';
       res.detail=adj.type?`${adj.type}`:'';
       res.tone='info';
   }
@@ -2779,7 +2764,7 @@ function logAutoAdjustments(adjustments=[]){
 function logAutoSummary(metrics,episodeNumber){
   if(trainingMode!=='auto') return;
   if(!metrics) return;
-  logAutoEvent({title:'Auto-kontroll',detail:'Inga nya justeringar',metrics,tone:'summary',episode:episodeNumber});
+  logAutoEvent({title:'Auto check-in',detail:'No new adjustments',metrics,tone:'summary',episode:episodeNumber});
 }
 
 function bindUI(){
@@ -2809,7 +2794,7 @@ function bindUI(){
     for(const k in localStorage){
       if(k.includes('tensorflowjs')) localStorage.removeItem(k);
     }
-    flash('Rensade lokal lagring');
+    flash('Cleared local storage');
   });
   ui.autoLogClear?.addEventListener('click',()=>{
     resetAutoLog();
@@ -2828,10 +2813,10 @@ function bindUI(){
       const text=await file.text();
       const data=JSON.parse(text);
       await applyCheckpointData(data);
-      flash('Modell laddad');
+      flash('Model loaded');
     }catch(err){
       console.error(err);
-      flash('Kunde inte ladda modell',true);
+      flash('Failed to load model',true);
     }finally{
       ev.target.value='';
       if(resume&&!watching) startTraining();
@@ -2952,7 +2937,7 @@ function setTrainingMode(mode){
   const wasTraining=training;
   const prevMode=trainingMode;
   if(next==='auto' && agent?.kind!=='dqn'){
-    flash('Auto-läge kräver DQN-agent',true);
+    flash('Auto mode requires a DQN agent',true);
     next='manual';
   }
   if(wasTraining) stopTraining();
@@ -2980,8 +2965,8 @@ function setTrainingMode(mode){
       resetAutoLog();
       updateAutoLogVisibility();
       logAutoEvent({
-        title:'Auto-läge aktiverat',
-        detail:`${envCount} miljöer • ${COLS}×${ROWS}`,
+        title:'Auto mode activated',
+        detail:`${envCount} environments • ${COLS}×${ROWS}`,
         tone:'info',
         episode:autoPilot?.episode||0,
       });
@@ -3630,7 +3615,7 @@ function stopTraining(){
 async function playSingleEpisode(){
   if(training||watching) return;
   if(envCount>1){
-    flash('Stegläge kräver envCount = 1',true);
+    flash('Step mode requires envCount = 1',true);
     return;
   }
   ensureContextPool();
@@ -3670,7 +3655,7 @@ async function watchSmoothEpisode(){
         const checkpoint=await readLatestCheckpoint();
         await applyCheckpointData(checkpoint);
       }catch(err){
-        console.warn('Kunde inte läsa latest-checkpoint',err);
+        console.warn('Failed to read latest-checkpoint',err);
       }
     }
     const desired=+ui.gridSize.value;
@@ -3784,16 +3769,16 @@ async function saveTrainingToFile(){
     a.click();
     document.body.removeChild(a);
     setTimeout(()=>URL.revokeObjectURL(url),1000);
-    flash('Sparat till fil');
+    flash('Saved to file');
   }catch(err){
     console.error(err);
-    flash('Kunde inte spara',true);
+    flash('Failed to save',true);
   }finally{
     if(resume&&!watching) startTraining();
   }
 }
 async function ensureCheckpointDirectory(){
-  if(!window.showDirectoryPicker) throw new Error('Filåtkomst stöds inte i denna webbläsare');
+  if(!window.showDirectoryPicker) throw new Error('File access is not supported in this browser');
   if(!checkpointDirHandle){
     checkpointDirHandle=await window.showDirectoryPicker({mode:'read'});
   }
@@ -3808,7 +3793,7 @@ async function readLatestCheckpoint(){
   return JSON.parse(text);
 }
 async function applyCheckpointData(data){
-  if(!data||!data.agent) throw new Error('Ogiltig checkpoint');
+  if(!data||!data.agent) throw new Error('Invalid checkpoint');
   const kind=(data.agent.kind==='dqn')?'dueling':(AGENT_PRESETS[data.agent.kind]?data.agent.kind:'dueling');
   const preset=AGENT_PRESETS[kind];
   if(preset){
@@ -3821,7 +3806,7 @@ async function applyCheckpointData(data){
 async function loadTrainingFromFile(file){
   if(!agent||!file) return;
   if(watching){
-    flash('Avsluta visning först',true);
+    flash('Stop watching first',true);
     return;
   }
   const resume=training;
@@ -3829,7 +3814,7 @@ async function loadTrainingFromFile(file){
   try{
     const text=await file.text();
     const data=JSON.parse(text);
-    if(!data||!data.agent) throw new Error('Ogiltig sparfil');
+    if(!data||!data.agent) throw new Error('Invalid save file');
     const algo=data.algo&&AGENT_PRESETS[data.algo]?data.algo:'dueling';
     applyPresetToUI({...AGENT_PRESETS[algo].defaults,...data.agent.config});
     if(data.rewardConfig) applyRewardConfigToUI(data.rewardConfig);
@@ -3845,10 +3830,10 @@ async function loadTrainingFromFile(file){
     if(data.playback) setPlaybackMode(data.playback);
     if(data.mode) setTrainingMode(data.mode);
     applyMeta(data.meta||{});
-    flash('Laddat från fil');
+    flash('Loaded from file');
   }catch(err){
     console.error(err);
-    flash('Kunde inte ladda',true);
+    flash('Failed to load',true);
   }finally{
     if(resume&&!watching) startTraining();
   }
