@@ -2637,19 +2637,6 @@ const AUTO_REASON_LABELS={
   stagnation:'stagnation',
   recovery:'recovery',
   regression:'regression',
-  loss_ratio:'high variance',
-  recover:'recovery',
-  loop_penalty:'loops',
-  revisit_penalty:'revisits',
-  self_penalty:'self-collisions',
-  slow_fruit:'slow fruit',
-};
-const REWARD_LABELS={
-  loopPenalty:'Loop penalty',
-  revisitPenalty:'Revisit penalty',
-  selfPenalty:'Self crash penalty',
-  approachBonus:'Approach bonus',
-  retreatPenalty:'Retreat penalty',
 };
 const REWARD_DECIMALS={
   loopPenalty:2,
@@ -2750,8 +2737,6 @@ function describeAutoAdjustment(adj={}){
       res.tone='lr';
       break;
     case 'reward':{
-      res.title='Reward';
-      res.detail=describeRewardDetail(adj);
       res.tone='reward';
       break;
     }
