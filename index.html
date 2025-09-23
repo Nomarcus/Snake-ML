@@ -115,6 +115,12 @@ canvas#board{
 .controls.secondary{
   justify-content:space-between;
 }
+.controls.tertiary{
+  justify-content:space-between;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+}
 button{
   appearance:none;
   border:none;
@@ -435,8 +441,16 @@ footer{
       <div class="card-actions">
         <button id="btnSave" class="secondary">Spara</button>
         <button id="btnLoad" class="secondary">Ladda</button>
+        <button id="btnLoadModel" class="secondary">Load model</button>
         <button id="btnClear" class="danger">Rensa cache</button>
       </div>
+    </div>
+    <div class="controls tertiary">
+      <div class="pill-group" id="modeGroup" role="group" aria-label="Träningsläge">
+        <button type="button" class="pill active" data-mode="manual">Manuell</button>
+        <button type="button" class="pill" data-mode="auto">Auto</button>
+      </div>
+      <span class="hint">Auto driver curriculum, sparlogik och hyperparametrar åt dig.</span>
     </div>
     <div class="field block">
       <label for="algoSelect">Algoritm</label>
@@ -548,12 +562,16 @@ footer{
       <summary>Avancerade inställningar</summary>
       <div class="stack" data-config="shared">
         <h3>Gemensamt</h3>
-        <div class="row">
-          <label>γ (discount)
-            <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
-            <span class="mono" id="gammaReadout">0.98</span>
-          </label>
-          <label>LR
+      <div class="row">
+        <label>Parallella miljöer
+          <input type="range" id="envCount" min="1" max="24" step="1" value="1">
+          <span class="mono" id="envCountReadout">1</span>
+        </label>
+        <label>γ (discount)
+          <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
+          <span class="mono" id="gammaReadout">0.98</span>
+        </label>
+        <label>LR
             <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005">
             <span class="mono" id="lrReadout">0.0005</span>
           </label>
@@ -812,6 +830,7 @@ footer{
 </section>
 
 <input type="file" id="fileLoader" accept="application/json" hidden>
+<input type="file" id="modelLoader" accept="application/json" hidden>
 
 <footer class="hint">© Marcus — Snake lär sig med flera RL-strategier och cinematiska rörelser.</footer>
 
@@ -1049,6 +1068,68 @@ class SnakeEnv{
   }
 }
 
+class VecSnakeEnv{
+  constructor(count=1,{cols=20,rows=20,rewardConfig={}}={}){
+    this.cols=cols;
+    this.rows=rows;
+    this.rewardConfig={...REWARD_DEFAULTS,...rewardConfig};
+    this.envCount=Math.max(1,count|0);
+    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,this.rewardConfig));
+  }
+  getEnv(index=0){
+    if(!this.envs.length) return null;
+    const idx=((index%this.envCount)+this.envCount)%this.envCount;
+    return this.envs[idx];
+  }
+  configure({count=this.envCount,cols=this.cols,rows=this.rows,rewardConfig=this.rewardConfig}={}){
+    this.envCount=Math.max(1,count|0);
+    this.cols=cols;
+    this.rows=rows;
+    this.rewardConfig={...REWARD_DEFAULTS,...rewardConfig};
+    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,this.rewardConfig));
+    return this.resetAll();
+  }
+  setCount(count){
+    return this.configure({count});
+  }
+  setSize(cols,rows){
+    return this.configure({cols,rows});
+  }
+  setRewardConfig(cfg={}){
+    this.rewardConfig={...this.rewardConfig,...cfg};
+    this.envs.forEach(env=>env.setRewardConfig(this.rewardConfig));
+  }
+  resetEnv(index){
+    const env=this.getEnv(index);
+    if(!env) return null;
+    env.setRewardConfig(this.rewardConfig);
+    return env.reset();
+  }
+  resetAll(){
+    return this.envs.map(env=>{
+      env.setRewardConfig(this.rewardConfig);
+      return env.reset();
+    });
+  }
+  step(actions){
+    if(!Array.isArray(actions)||actions.length!==this.envCount){
+      throw new Error(`Förväntade ${this.envCount} handlingar men fick ${actions?.length}`);
+    }
+    const nextStates=new Array(this.envCount);
+    const rewards=new Array(this.envCount);
+    const dones=new Array(this.envCount);
+    const ateFruit=new Array(this.envCount);
+    for(let i=0;i<this.envCount;i++){
+      const res=this.envs[i].step(actions[i]);
+      nextStates[i]=res.state;
+      rewards[i]=res.reward;
+      dones[i]=!!res.done;
+      ateFruit[i]=!!res.ateFruit;
+    }
+    return {nextStates,rewards,dones,ateFruit};
+  }
+}
+
 /* ---------------- Replay buffer helpers ---------------- */
 class NStepAccumulator{
   constructor(n=1,gamma=0.99){ this.setConfig(n,gamma); }
@@ -1233,6 +1314,7 @@ class DQNAgent{
     this.kind='dqn';
     this.sDim=sDim;
     this.aDim=aDim;
+    this.envCount=Math.max(1,cfg.envCount??1);
     this.gamma=cfg.gamma??0.98;
     this.lr=cfg.lr??0.0005;
     this.batch=cfg.batch??128;
@@ -1252,7 +1334,7 @@ class DQNAgent{
     this.epsEnd=cfg.epsEnd??0.12;
     this.epsDecay=cfg.epsDecay??80000;
     this.nStep=cfg.nStep??3;
-    this.nStepBuffer=new NStepAccumulator(this.nStep,this.gamma);
+    this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma));
     this.trainStep=cfg.trainStep??0;
     this.optimizer=tf.train.adam(this.lr);
     this.online=this.build();
@@ -1280,28 +1362,62 @@ class DQNAgent{
   }
   setGamma(val){
     this.gamma=val;
-    this.nStepBuffer.setConfig(this.nStep,this.gamma);
+    this.nStepBuffers.forEach(buf=>buf.setConfig(this.nStep,this.gamma));
   }
   setLearningRate(val){
     this.lr=val;
     this.optimizer=tf.train.adam(this.lr);
   }
+  setEpsilonSchedule({start,end,decay}={}){
+    if(start!==undefined) this.epsStart=start;
+    if(end!==undefined) this.epsEnd=end;
+    if(decay!==undefined) this.epsDecay=decay;
+    this.updateEpsilon(this.trainStep);
+  }
   setNStep(val){
     const n=Math.max(1,val|0);
     if(n===this.nStep)return;
     this.nStep=n;
-    this.nStepBuffer.setConfig(this.nStep,this.gamma);
+    this.nStepBuffers.forEach(buf=>buf.setConfig(this.nStep,this.gamma));
   }
-  recordTransition(s,a,r,ns,d){
-    const ready=this.nStepBuffer.push({s,a,r,ns,d});
+  recordTransition(...args){
+    if(typeof args[0]==='number' && args.length>=6){
+      const [envIndex,s,a,r,ns,d]=args;
+      this._recordForEnv(envIndex,s,a,r,ns,d);
+      return;
+    }
+    const [s,a,r,ns,d]=args;
+    this._recordForEnv(0,s,a,r,ns,d);
+  }
+  _recordForEnv(envIndex,s,a,r,ns,d){
+    const idx=((envIndex|0)%this.envCount+this.envCount)%this.envCount;
+    const buf=this.nStepBuffers[idx];
+    if(!buf) return;
+    const ready=buf.push({s,a,r,ns,d});
     if(ready.length) ready.forEach(t=>this.buffer.push(t));
     if(d){
-      const tail=this.nStepBuffer.flush();
+      const tail=buf.flush();
       if(tail.length) tail.forEach(t=>this.buffer.push(t));
     }
   }
-  drainPending(){
-    const tail=this.nStepBuffer.flush();
+  setEnvCount(count){
+    const next=Math.max(1,count|0);
+    if(next===this.envCount) return;
+    this.envCount=next;
+    this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma));
+  }
+  drainPending(envIndex){
+    if(envIndex===undefined){
+      this.nStepBuffers.forEach(buf=>{
+        const tail=buf.flush();
+        if(tail.length) tail.forEach(t=>this.buffer.push(t));
+      });
+      return;
+    }
+    const idx=((envIndex|0)%this.envCount+this.envCount)%this.envCount;
+    const buf=this.nStepBuffers[idx];
+    if(!buf) return;
+    const tail=buf.flush();
     if(tail.length) tail.forEach(t=>this.buffer.push(t));
   }
   syncTarget(){
@@ -1398,6 +1514,7 @@ class DQNAgent{
         dueling:this.dueling,
         double:this.double,
         layers:this.layers,
+        envCount:this.envCount,
         learnRepeats:this.learnRepeats,
       },
       trainStep:this.trainStep,
@@ -1425,11 +1542,12 @@ class DQNAgent{
       priorityEps:cfg.priorityEps,
     });
     this.priorityEps=this.buffer.priorityEps;
+    this.setEnvCount(cfg.envCount??this.envCount);
     this.epsStart=cfg.epsStart??this.epsStart;
     this.epsEnd=cfg.epsEnd??this.epsEnd;
     this.epsDecay=cfg.epsDecay??this.epsDecay;
     this.nStep=cfg.nStep??this.nStep;
-    this.nStepBuffer=new NStepAccumulator(this.nStep,this.gamma);
+    this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma));
     this.trainStep=state.trainStep??0;
     this.online.dispose();
     this.target.dispose();
@@ -1985,7 +2103,10 @@ class MiniLine{
 const board=document.getElementById('board');
 const bctx=board.getContext('2d');
 let COLS=20,ROWS=20,CELL=board.width/COLS;
-let env=new SnakeEnv(COLS,ROWS,rewardConfig);
+let envCount=1;
+let vecEnv=new VecSnakeEnv(envCount,{cols:COLS,rows:ROWS,rewardConfig});
+let renderIndex=0;
+let env=vecEnv.getEnv(renderIndex);
 
 function snapshotEnv(environment){
   return {
@@ -2264,13 +2385,17 @@ const ui={
   btnReset:document.getElementById('btnReset'),
   btnSave:document.getElementById('btnSave'),
   btnLoad:document.getElementById('btnLoad'),
+  btnLoadModel:document.getElementById('btnLoadModel'),
   btnClear:document.getElementById('btnClear'),
+  modeButtons:Array.from(document.querySelectorAll('#modeGroup .pill')),
   algoSelect:document.getElementById('algoSelect'),
   algoDescription:document.getElementById('algoDescription'),
   gamma:document.getElementById('gamma'),
   gammaReadout:document.getElementById('gammaReadout'),
   lr:document.getElementById('lr'),
   lrReadout:document.getElementById('lrReadout'),
+  envCount:document.getElementById('envCount'),
+  envCountReadout:document.getElementById('envCountReadout'),
   epsStart:document.getElementById('epsStart'),
   epsStartReadout:document.getElementById('epsStartReadout'),
   epsEnd:document.getElementById('epsEnd'),
@@ -2343,6 +2468,7 @@ const ui={
   trainingView:document.getElementById('trainingView'),
   guideView:document.getElementById('guideView'),
   fileLoader:document.getElementById('fileLoader'),
+  modelLoader:document.getElementById('modelLoader'),
   advancedPanel:document.getElementById('advancedPanel'),
   advancedSections:{
     dqn:document.querySelector('[data-config="dqn"]'),
@@ -2353,7 +2479,7 @@ const ui={
 };
 
 let agent=null;
-let stateDim=env.getState().length;
+let stateDim=env?.getState()?.length||0;
 let actionDim=3;
 let currentAlgoKey='dueling';
 let playbackMode='cinematic';
@@ -2361,14 +2487,35 @@ let training=false;
 let trainingToken=0;
 let checkpointDirHandle=null;
 let lastFrame=0;
-let currentEpisode=null;
 let targetSyncSteps=2000;
 let episode=0,totalSteps=0,bestLen=0;
 const rwHist=[],fruitHist=[],lossHist=[];
+let contexts=[];
+let renderTick=0;
+let trainingMode='manual';
+let autoPilot=null;
 function avg(arr,n){
   if(!arr.length) return 0;
   const slice=arr.slice(-n);
   return slice.reduce((a,b)=>a+b,0)/slice.length;
+}
+function clamp(value,min,max){
+  return Math.min(max,Math.max(min,value));
+}
+function movingAverage(arr=[],window,offset=0){
+  if(!Array.isArray(arr)||!arr.length||window<=0) return 0;
+  const end=Math.max(0,arr.length-offset);
+  if(end<=0) return 0;
+  const start=Math.max(0,end-window);
+  const slice=arr.slice(start,end);
+  if(!slice.length) return 0;
+  return slice.reduce((a,b)=>a+b,0)/slice.length;
+}
+function stddev(arr=[]){
+  if(!Array.isArray(arr)||!arr.length) return 0;
+  const mean=arr.reduce((a,b)=>a+b,0)/arr.length;
+  const variance=arr.reduce((a,b)=>a+(b-mean)**2,0)/arr.length;
+  return Math.sqrt(variance);
 }
 
 function bindUI(){
@@ -2377,9 +2524,14 @@ function bindUI(){
       setPlaybackMode(btn.dataset.speed);
     });
   });
+  ui.modeButtons.forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      setTrainingMode(btn.dataset.mode);
+    });
+  });
   ui.gridSize.addEventListener('input',()=>{
     updateGridLabel();
-    resetEnvironment(+ui.gridSize.value);
+    if(!training) reconfigureEnvironment({ size:+ui.gridSize.value, force:true });
   });
   ui.btnReset.addEventListener('click',()=>resetEnvironment(+ui.gridSize.value,true));
   ui.btnTrain.addEventListener('click',startTraining);
@@ -2388,6 +2540,7 @@ function bindUI(){
   ui.btnWatch.addEventListener('click',watchSmoothEpisode);
   ui.btnSave.addEventListener('click',saveTrainingToFile);
   ui.btnLoad.addEventListener('click',()=>ui.fileLoader?.click());
+  ui.btnLoadModel.addEventListener('click',()=>ui.modelLoader?.click());
   ui.btnClear.addEventListener('click',()=>{
     for(const k in localStorage){
       if(k.includes('tensorflowjs')) localStorage.removeItem(k);
@@ -2399,6 +2552,24 @@ function bindUI(){
     if(file) await loadTrainingFromFile(file);
     ev.target.value='';
   });
+  ui.modelLoader?.addEventListener('change',async ev=>{
+    const [file]=ev.target.files||[];
+    if(!file){ ev.target.value=''; return; }
+    const resume=training;
+    if(resume) stopTraining();
+    try{
+      const text=await file.text();
+      const data=JSON.parse(text);
+      await applyCheckpointData(data);
+      flash('Modell laddad');
+    }catch(err){
+      console.error(err);
+      flash('Kunde inte ladda modell',true);
+    }finally{
+      ev.target.value='';
+      if(resume&&!watching) startTraining();
+    }
+  });
   ui.algoSelect.addEventListener('change',()=>{
     if(watching) return;
     const wasTraining=training;
@@ -2408,6 +2579,10 @@ function bindUI(){
   const updateAndApply=()=>{ updateReadouts(); applyConfigToAgent(); };
   ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync','nStep','priorityAlpha','priorityBeta','pgEntropy','acEntropy','acValueCoef','ppoEntropy','ppoClip','ppoLambda','ppoBatch','ppoEpochs','ppoValueCoef']
     .forEach(id=>ui[id]?.addEventListener('input',updateAndApply));
+  ui.envCount?.addEventListener('input',()=>{
+    updateReadouts();
+    applyEnvCountFromUI();
+  });
   const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardFruit','rewardCompact'];
   const updateRewards=()=>{ updateRewardReadouts(); applyRewardsToEnv(); };
   rewardIds.forEach(id=>ui[id]?.addEventListener('input',updateRewards));
@@ -2416,6 +2591,8 @@ function bindUI(){
   updateReadouts();
   updateGridLabel();
   applyRewardsToEnv();
+  updateControlAvailability();
+  setTrainingMode(trainingMode);
 }
 function setActiveTab(tab){
   const showGuide=tab==='guide';
@@ -2427,6 +2604,115 @@ function setActiveTab(tab){
 function updateGridLabel(){
   const val=+ui.gridSize.value;
   ui.gridLabel.textContent=`${val}×${val}`;
+}
+function updateControlAvailability(){
+  if(ui.btnStep){
+    ui.btnStep.disabled=trainingMode==='auto'||envCount>1;
+  }
+}
+function createContextSlot(index,state){
+  return {
+    envIndex:index,
+    state:Float32Array.from(state),
+    totalReward:0,
+    fruits:0,
+    steps:0,
+    needsReset:false,
+  };
+}
+function seedContexts(forceReset=true){
+  if(!vecEnv) return;
+  const states=forceReset?vecEnv.resetAll():vecEnv.envs.map(env=>Float32Array.from(env.getState()));
+  contexts=states.map((state,idx)=>createContextSlot(idx,state));
+  env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
+  if(env) setImmediateState(env);
+}
+function ensureContextPool(){
+  if(!vecEnv) return;
+  if(contexts.length!==envCount){
+    seedContexts(true);
+  }
+}
+function reconfigureEnvironment({count=envCount,size=COLS,force=false}={}){
+  let desiredCount=Math.max(1,count|0);
+  if(trainingMode==='auto'){
+    desiredCount=Math.max(12,desiredCount);
+  }
+  const desiredSize=Math.max(8,(+size)|0);
+  const needInit=!vecEnv;
+  const changedCount=desiredCount!==envCount;
+  const changedSize=force||desiredSize!==COLS||needInit;
+  envCount=desiredCount;
+  if(!vecEnv){
+    vecEnv=new VecSnakeEnv(envCount,{cols:desiredSize,rows:desiredSize,rewardConfig});
+  }else if(changedCount||changedSize){
+    vecEnv.configure({count:envCount,cols:desiredSize,rows:desiredSize,rewardConfig});
+  }else{
+    vecEnv.setRewardConfig(rewardConfig);
+  }
+  renderIndex=Math.min(renderIndex,envCount-1);
+  env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
+  COLS=desiredSize;
+  ROWS=desiredSize;
+  CELL=board.width/COLS;
+  stateDim=env?.getState()?.length||stateDim;
+  seedContexts(true);
+  agent?.setEnvCount?.(envCount);
+  renderTick=0;
+  updateControlAvailability();
+  if(ui.envCount && ui.envCount.value!==`${envCount}`){
+    ui.envCount.value=`${envCount}`;
+  }
+  updateBadgeMetrics();
+}
+function resetEnvironment(size=COLS,force=false){
+  const wasTraining=training;
+  if(wasTraining) stopTraining();
+  reconfigureEnvironment({size,force:true});
+  if(wasTraining&&!watching) startTraining();
+}
+function applyEnvCountFromUI(){
+  const desired=Math.max(1,+ui.envCount.value||1);
+  if(desired===envCount) return;
+  const wasTraining=training;
+  if(wasTraining) stopTraining();
+  reconfigureEnvironment({count:desired,size:+ui.gridSize.value,force:true});
+  if(wasTraining&&!watching) startTraining();
+}
+function setTrainingMode(mode){
+  let next=mode==='auto'?'auto':'manual';
+  const wasTraining=training;
+  const prevMode=trainingMode;
+  if(next==='auto' && agent?.kind!=='dqn'){
+    flash('Auto-läge kräver DQN-agent',true);
+    next='manual';
+  }
+  if(wasTraining) stopTraining();
+  trainingMode=next;
+  ui.modeButtons.forEach(btn=>btn.classList.toggle('active',btn.dataset.mode===trainingMode));
+  if(trainingMode==='auto'){
+    autoPilot=new BrowserAutoPilot({rewardConfig:{...rewardConfig}});
+    autoPilot.setAgent(agent);
+    const desiredCount=Math.max(12,envCount);
+    ui.envCount.value=`${desiredCount}`;
+    if(prevMode!=='auto'){
+      ui.gridSize.value='10';
+      updateGridLabel();
+      reconfigureEnvironment({count:desiredCount,size:10,force:true});
+    }else{
+      reconfigureEnvironment({count:desiredCount,size:+ui.gridSize.value,force:true});
+    }
+    updateReadouts();
+    const stageIdx=autoPilot.boardStages.findIndex(stage=>stage.size===COLS);
+    if(stageIdx>=0) autoPilot.stageIndex=stageIdx;
+  }else{
+    autoPilot=null;
+    ui.envCount.disabled=agent?.kind!=='dqn';
+  }
+  if(trainingMode==='auto') ui.envCount.disabled=true;
+  updateControlAvailability();
+  updateReadouts();
+  if(wasTraining&&!watching) startTraining();
 }
 function setPlaybackMode(mode){
   if(!playbackModes[mode]) mode='cinematic';
@@ -2442,12 +2728,15 @@ function applyConfigToAgent(){
     gamma:+ui.gamma.value,
     lr:+ui.lr.value,
   };
+  agent.setEnvCount?.(envCount);
   agent.setGamma(shared.gamma);
   agent.setLearningRate(shared.lr);
   if(agent.kind==='dqn'){
-    agent.epsStart=+ui.epsStart.value;
-    agent.epsEnd=+ui.epsEnd.value;
-    agent.epsDecay=+ui.epsDecay.value;
+    agent.setEpsilonSchedule?.({
+      start:+ui.epsStart.value,
+      end:+ui.epsEnd.value,
+      decay:+ui.epsDecay.value,
+    });
     agent.batch=+ui.batchSize.value;
     agent.buffer.setCapacity(+ui.bufferSize.value);
     agent.buffer.setAlpha(+ui.priorityAlpha.value);
@@ -2481,6 +2770,9 @@ function updateBadgeMetrics(){
   ui.gammaBadge.textContent=(+ui.gamma.value).toFixed(3);
   ui.lrReadout.textContent=(+ui.lr.value).toFixed(4);
   ui.lrBadge.textContent=(+ui.lr.value).toFixed(4);
+  if(ui.envCountReadout){
+    ui.envCountReadout.textContent=`${(+ui.envCount.value)|0}`;
+  }
   if(agent?.kind==='dqn'){
     ui.epsReadout.textContent=(agent.epsilon??1).toFixed(2);
   }else{
@@ -2540,7 +2832,9 @@ function getRewardConfigFromUI(){
 }
 function applyRewardsToEnv(){
   rewardConfig=getRewardConfigFromUI();
-  env?.setRewardConfig(rewardConfig);
+  vecEnv?.setRewardConfig(rewardConfig);
+  env=vecEnv?.getEnv(renderIndex)||env;
+  autoPilot?.setRewardConfig?.({...rewardConfig});
 }
 function applyRewardConfigToUI(config={}){
   if(config.stepPenalty!==undefined) ui.rewardStep.value=config.stepPenalty;
@@ -2558,6 +2852,101 @@ function applyRewardConfigToUI(config={}){
   if(config.compactWeight!==undefined) ui.rewardCompact.value=config.compactWeight;
   updateRewardReadouts();
   applyRewardsToEnv();
+}
+class BrowserAutoPilot{
+  constructor({rewardConfig={}}={}){
+    this.history=[];
+    this.lossHistory=[];
+    this.episode=0;
+    this.rewardConfig={...rewardConfig};
+    this.boardStages=[
+      {size:10,threshold:0},
+      {size:14,threshold:60},
+      {size:18,threshold:120},
+      {size:20,threshold:200},
+    ];
+    this.stageIndex=0;
+    this.lastAdjust={};
+    this.bestFruit=0;
+    this.agent=null;
+  }
+  setAgent(agent){
+    this.agent=agent;
+  }
+  setRewardConfig(cfg={}){
+    this.rewardConfig={...cfg};
+  }
+  recordEpisode({fruits=0,reward=0,steps=0,loss=null}={}){
+    this.history.push({fruits,reward,steps});
+    if(this.history.length>6000) this.history.shift();
+    if(loss!==null && loss!==undefined){
+      this.lossHistory.push(loss);
+      if(this.lossHistory.length>6000) this.lossHistory.shift();
+    }
+    this.episode++;
+  }
+  _canAdjust(key,cooldown=500){
+    const last=this.lastAdjust[key]??-Infinity;
+    if(this.episode-last<cooldown) return false;
+    this.lastAdjust[key]=this.episode;
+    return true;
+  }
+  getMetrics(){
+    const fruits=this.history.map(item=>item.fruits);
+    const ma100=movingAverage(fruits,100);
+    const ma500=movingAverage(fruits,500);
+    const prev100=movingAverage(fruits,100,100);
+    const fruitSlope=ma100-prev100;
+    const improvement2000=movingAverage(fruits,2000)-movingAverage(fruits,2000,2000);
+    this.bestFruit=Math.max(this.bestFruit,ma100||0);
+    const regression=this.bestFruit>0 && ma100<this.bestFruit*0.75;
+    const lossValues=this.lossHistory.slice(-200);
+    const lossMean=lossValues.length?lossValues.reduce((a,b)=>a+b,0)/lossValues.length:0;
+    const lossStd=stddev(lossValues);
+    const lossRatio=lossMean>0?lossStd/lossMean:0;
+    return {maFruit100:ma100,maFruit500:ma500,fruitSlope,improvement2000,regression,lossMean,lossStd,lossRatio};
+  }
+  maybeAdjust({agent}={}){
+    const actor=agent||this.agent;
+    const metrics=this.getMetrics();
+    const adjustments=[];
+    const nextStage=this.boardStages[this.stageIndex+1];
+    if(nextStage && metrics.maFruit500>nextStage.threshold && this._canAdjust('board',200)){
+      this.stageIndex++;
+      adjustments.push({type:'board',size:this.boardStages[this.stageIndex].size});
+    }
+    if(!actor||actor.kind!=='dqn'){
+      return {adjustments,metrics};
+    }
+    if(metrics.fruitSlope<=0 && metrics.improvement2000<2 && this._canAdjust('epsilon-up',500)){
+      const newEnd=clamp(actor.epsEnd+0.03,0.01,0.3);
+      const newDecay=clamp(actor.epsDecay*1.2,5000,200000);
+      actor.setEpsilonSchedule?.({end:newEnd,decay:newDecay});
+      adjustments.push({type:'epsilon',end:newEnd,decay:newDecay,reason:'stagnation'});
+    }
+    if(metrics.regression && this._canAdjust('regression',800)){
+      const newEnd=clamp(actor.epsEnd+0.02,0.01,0.3);
+      actor.setEpsilonSchedule?.({end:newEnd});
+      const newLr=Math.max(0.0002,actor.lr*0.8);
+      actor.setLearningRate(newLr);
+      adjustments.push({type:'lr',value:newLr,reason:'regression'});
+    }else if(metrics.fruitSlope>0 && actor.epsEnd>0.12 && this._canAdjust('epsilon-down',800)){
+      const newEnd=clamp(actor.epsEnd-0.02,0.01,0.3);
+      const newDecay=clamp(actor.epsDecay*0.9,5000,200000);
+      actor.setEpsilonSchedule?.({end:newEnd,decay:newDecay});
+      adjustments.push({type:'epsilon',end:newEnd,decay:newDecay,reason:'recovery'});
+    }
+    if(metrics.lossRatio>0.85 && this._canAdjust('lr-down',1000)){
+      const newLr=Math.max(0.0002,actor.lr*0.85);
+      actor.setLearningRate(newLr);
+      adjustments.push({type:'lr',value:newLr,reason:'loss_ratio'});
+    }else if(metrics.lossRatio<0.3 && this._canAdjust('lr-up',1200)){
+      const newLr=Math.min(0.0005,actor.lr*1.05);
+      actor.setLearningRate(newLr);
+      adjustments.push({type:'lr',value:newLr,reason:'recover'});
+    }
+    return {adjustments,metrics};
+  }
 }
 function updateAdvancedVisibility(){
   const type=AGENT_PRESETS[currentAlgoKey]?.type||'dqn';
@@ -2603,8 +2992,21 @@ function instantiateAgent(key,opts={}){
   ui.algoDescription.textContent=preset.description;
   updateBadgeMetrics();
   resetTrainingStats();
-  currentEpisode=null;
-  setImmediateState(env);
+  if(agent.kind!=='dqn' && trainingMode==='auto'){
+    setTrainingMode('manual');
+  }
+  if(agent.kind!=='dqn'){
+    ui.envCount.value='1';
+    ui.envCount.disabled=true;
+    reconfigureEnvironment({count:1,size:+ui.gridSize.value,force:true});
+  }else{
+    ui.envCount.disabled=false;
+    const desiredCount=Math.max(1,+ui.envCount.value||envCount);
+    reconfigureEnvironment({count:desiredCount,size:+ui.gridSize.value,force:true});
+  }
+  autoPilot?.setAgent?.(agent);
+  updateControlAvailability();
+  updateReadouts();
 }
 function applyPresetToUI(config){
   if(config.gamma!==undefined) ui.gamma.value=config.gamma;
@@ -2633,17 +3035,6 @@ function applyPresetToUI(config){
   if(config.epochs!==undefined) ui.ppoEpochs.value=config.epochs;
   updateReadouts();
 }
-function resetEnvironment(size=COLS,force){
-  const n=+size|0;
-  if(!force && env.cols===n && env.rows===n) return;
-  env=new SnakeEnv(n,n,rewardConfig);
-  COLS=env.cols;
-  ROWS=env.rows;
-  CELL=board.width/COLS;
-  stateDim=env.getState().length;
-  setImmediateState(env);
-  currentEpisode=null;
-}
 function resetTrainingStats(){
   episode=0;
   totalSteps=0;
@@ -2654,6 +3045,8 @@ function resetTrainingStats(){
   ui.chartReward.data=[];
   ui.chartReward.draw();
   updateStatsUI();
+  renderTick=0;
+  contexts.forEach(ctx=>ctx.needsReset=true);
 }
 function updateStatsUI(){
   ui.kEpisodes.textContent=episode;
@@ -2673,91 +3066,156 @@ function flash(message,danger=false){
 }
 
 /* ---------------- Training loop ---------------- */
-function createEpisodeContext(){
-  const desired=+ui.gridSize.value;
-  if(env.cols!==desired||env.rows!==desired){
-    resetEnvironment(desired,true);
-  }
-  const state=env.reset();
-  const resetState=snapshotEnv(env);
-  enqueueRenderFrame(lastDrawnState,resetState,0);
-  return {state,totalReward:0,fruits:0,steps:0,done:false,renderCounter:0};
-}
-async function performStep(ctx,mode,{respectStop=false}={}){
-  if(respectStop && (!training||watching)) return false;
-  const before=snapshotEnv(env);
-  const action=agent.act(ctx.state);
-  const {state:nextState,reward,done,ateFruit}=env.step(action);
-  const after=snapshotEnv(env);
-  agent.recordTransition(ctx.state,action,reward,nextState,done);
-  ctx.state=nextState;
-  ctx.totalReward+=reward;
-  if(ateFruit||reward>1) ctx.fruits++;
-  ctx.steps++;
-  totalSteps++;
-  const repeats=agent.learnRepeats??1;
-  for(let i=0;i<repeats;i++){
-    const loss=await agent.learn();
-    if(loss!==null && loss!==undefined){
-      lossHist.push(loss);
-    }
-  }
-  if(agent.kind==='dqn' && targetSyncSteps>0 && totalSteps%targetSyncSteps===0){
-    agent.syncTarget();
-  }
-  const eps=agent.updateEpsilon?agent.updateEpsilon(totalSteps):null;
-  if(agent.kind==='dqn' && eps!==undefined){
-    ui.epsReadout.textContent=eps.toFixed(2);
-  }else if(agent.kind!=='dqn'){
-    ui.epsReadout.textContent='—';
-  }
-  ctx.renderCounter=(ctx.renderCounter||0)+1;
-  if(ctx.renderCounter%mode.renderEvery===0 || done){
-    enqueueRenderFrame(before,after,mode.frameMs);
-    await waitForRenderCapacity(mode.queueTarget);
-  }
-  if(ctx.steps%16===0) await tf.nextFrame();
-  ctx.done=done;
-  return !done;
-}
-async function finalizeEpisode(ctx){
-  agent.drainPending?.();
-  const loss=await agent.finishEpisode(ctx);
+async function finalizeContextEpisode(ctx,envIndex){
+  agent.drainPending?.(envIndex);
+  const loss=await agent.finishEpisode?.(ctx);
   if(loss!==null && loss!==undefined){
     lossHist.push(loss);
+    if(lossHist.length>1000) lossHist.shift();
   }
   episode++;
   rwHist.push(ctx.totalReward);
   if(rwHist.length>1000) rwHist.shift();
   fruitHist.push(ctx.fruits);
   if(fruitHist.length>1000) fruitHist.shift();
-  bestLen=Math.max(bestLen,env.snake.length);
+  const envRef=vecEnv.getEnv(envIndex);
+  if(envRef) bestLen=Math.max(bestLen,envRef.snake.length);
   ui.chartReward.push(ctx.totalReward);
   updateStatsUI();
-  await tf.nextFrame();
+  const latestLoss=lossHist.length?lossHist[lossHist.length-1]:null;
+  let adjustments=[];
+  if(trainingMode==='auto' && autoPilot){
+    autoPilot.setAgent(agent);
+    autoPilot.setRewardConfig({...rewardConfig});
+    autoPilot.recordEpisode({
+      fruits:ctx.fruits,
+      reward:ctx.totalReward,
+      steps:ctx.steps,
+      loss:latestLoss,
+    });
+    const res=autoPilot.maybeAdjust({agent});
+    adjustments=res?.adjustments||[];
+  }
+  ctx.totalReward=0;
+  ctx.fruits=0;
+  ctx.steps=0;
+  ctx.needsReset=true;
+  ctx.state=null;
+  return adjustments;
+}
+async function applyAutoAdjustments(adjustments){
+  if(!Array.isArray(adjustments)||!adjustments.length) return;
+  let nextBoard=null;
+  adjustments.forEach(adj=>{
+    if(adj.type==='board'){
+      nextBoard=adj.size;
+    }
+  });
+  if(nextBoard){
+    ui.gridSize.value=`${nextBoard}`;
+    updateGridLabel();
+    reconfigureEnvironment({size:nextBoard,force:true});
+    flash(`Curriculum: ${nextBoard}×${nextBoard}`);
+  }
+  if(agent?.kind==='dqn'){
+    ui.epsStart.value=agent.epsStart.toFixed(2);
+    ui.epsEnd.value=agent.epsEnd.toFixed(2);
+    ui.epsDecay.value=`${Math.round(agent.epsDecay)}`;
+    ui.lr.value=agent.lr.toFixed(4);
+  }
+  updateReadouts();
+}
+async function performVectorStep(mode){
+  ensureContextPool();
+  if(!contexts.length) return false;
+  contexts.forEach(ctx=>{
+    if(ctx.needsReset || !ctx.state){
+      const state=vecEnv.resetEnv(ctx.envIndex);
+      ctx.state=Float32Array.from(state);
+      ctx.totalReward=0;
+      ctx.fruits=0;
+      ctx.steps=0;
+      ctx.needsReset=false;
+      if(ctx.envIndex===renderIndex){
+        env=vecEnv.getEnv(renderIndex)||env;
+        if(env) setImmediateState(env);
+      }
+    }
+  });
+  env=vecEnv.getEnv(renderIndex)||env;
+  const displayEnv=env;
+  const shouldRender=(renderTick%mode.renderEvery===0);
+  let before=null;
+  if(shouldRender && displayEnv){
+    before=snapshotEnv(displayEnv);
+  }
+  const actions=contexts.map(ctx=>agent.act(ctx.state));
+  const {nextStates,rewards,dones,ateFruit}=vecEnv.step(actions);
+  renderTick++;
+  if(shouldRender && displayEnv){
+    const after=snapshotEnv(displayEnv);
+    enqueueRenderFrame(before,after,mode.frameMs);
+    await waitForRenderCapacity(mode.queueTarget);
+  }
+  const pendingAdjustments=[];
+  for(let i=0;i<contexts.length;i++){
+    const ctx=contexts[i];
+    const reward=rewards[i];
+    const nextState=nextStates[i];
+    const done=dones[i];
+    const ate=ateFruit[i];
+    if(agent.kind==='dqn'){
+      agent.recordTransition(i,ctx.state,actions[i],reward,nextState,done);
+    }else{
+      agent.recordTransition(ctx.state,actions[i],reward,nextState,done);
+    }
+    ctx.state=nextState;
+    ctx.totalReward+=reward;
+    if(ate||reward>1) ctx.fruits++;
+    ctx.steps++;
+    totalSteps++;
+    if(done){
+      const adjustments=await finalizeContextEpisode(ctx,i);
+      pendingAdjustments.push(...adjustments);
+    }
+  }
+  const repeats=agent.learnRepeats??1;
+  for(let i=0;i<repeats;i++){
+    const loss=await agent.learn();
+    if(loss!==null && loss!==undefined){
+      lossHist.push(loss);
+      if(lossHist.length>1000) lossHist.shift();
+    }
+  }
+  if(agent.kind==='dqn' && targetSyncSteps>0 && totalSteps%targetSyncSteps===0){
+    agent.syncTarget();
+  }
+  if(agent.updateEpsilon){
+    const eps=agent.updateEpsilon(totalSteps);
+    if(agent.kind==='dqn' && eps!==undefined){
+      ui.epsReadout.textContent=eps.toFixed(2);
+    }
+  }
+  if(totalSteps%32===0) await tf.nextFrame();
+  if(pendingAdjustments.length){
+    await applyAutoAdjustments(pendingAdjustments);
+  }
+  return true;
 }
 async function trainingLoop(ts){
   if(!training||watching){
     trainingToken=0;
     return;
   }
-  const mode=playbackModes[playbackMode];
+  const mode=playbackModes[playbackMode]||playbackModes.cinematic;
   if(ts-lastFrame<mode.frameMs){
     trainingToken=requestAnimationFrame(trainingLoop);
     return;
   }
   lastFrame=ts;
-  if(!currentEpisode){
-    currentEpisode=createEpisodeContext();
-  }
   for(let i=0;i<mode.stepsPerFrame;i++){
-    const cont=await performStep(currentEpisode,mode,{respectStop:true});
-    if(!cont){
-      await finalizeEpisode(currentEpisode);
-      currentEpisode=null;
-      if(!training||watching) break;
-      currentEpisode=createEpisodeContext();
-    }
+    const cont=await performVectorStep(mode);
+    if(!cont||!training||watching) break;
   }
   if(training&&!watching){
     trainingToken=requestAnimationFrame(trainingLoop);
@@ -2767,6 +3225,8 @@ async function trainingLoop(ts){
 }
 function startTraining(){
   if(training||watching||!agent) return;
+  ensureContextPool();
+  autoPilot?.setAgent?.(agent);
   training=true;
   ui.trainState.textContent='training';
   lastFrame=0;
@@ -2783,12 +3243,16 @@ function stopTraining(){
 }
 async function playSingleEpisode(){
   if(training||watching) return;
-  const ctx=createEpisodeContext();
-  const mode=playbackModes.cinematic;
-  while(!ctx.done){
-    await performStep(ctx,mode);
+  if(envCount>1){
+    flash('Stegläge kräver envCount = 1',true);
+    return;
   }
-  await finalizeEpisode(ctx);
+  ensureContextPool();
+  const target=episode+1;
+  const mode=playbackModes.cinematic;
+  while(episode<target){
+    await performVectorStep(mode);
+  }
 }
 function previewDeath(env,action){
   const d=env.dir;
@@ -2869,11 +3333,15 @@ async function buildAppState(){
     createdAt:new Date().toISOString(),
     algo:currentAlgoKey,
     playback:playbackMode,
+    mode:trainingMode,
+    envCount,
     gridSize:+ui.gridSize.value,
     rewardConfig:{...rewardConfig},
     agent:agentState,
     meta:{
       episode,totalSteps,bestLen,
+      envCount,
+      boardSize:COLS,
       rwHist:Array.from(rwHist),
       fruitHist:Array.from(fruitHist),
       lossHist:Array.from(lossHist),
@@ -2890,7 +3358,28 @@ function applyMeta(meta={}){
   assignArray(lossHist,meta.lossHist,v=>+v||0);
   ui.chartReward.data=Array.isArray(meta.chartReward)?meta.chartReward.map(v=>+v||0):[];
   ui.chartReward.draw();
+  const hasMetaCount=typeof meta.envCount==='number';
+  let nextCount=hasMetaCount?meta.envCount:envCount;
+  if(trainingMode==='auto'){
+    nextCount=Math.max(12,nextCount||12);
+  }else{
+    nextCount=Math.max(1,nextCount||1);
+  }
+  const nextSize=typeof meta.boardSize==='number'?meta.boardSize:+ui.gridSize.value;
+  if(hasMetaCount){
+    ui.envCount.value=`${nextCount}`;
+  }
+  if(typeof meta.boardSize==='number'){
+    ui.gridSize.value=`${meta.boardSize}`;
+    updateGridLabel();
+  }
+  reconfigureEnvironment({count:nextCount,size:nextSize,force:true});
+  if(trainingMode==='auto' && autoPilot){
+    const stageIdx=autoPilot.boardStages.findIndex(stage=>stage.size===COLS);
+    if(stageIdx>=0) autoPilot.stageIndex=stageIdx;
+  }
   updateStatsUI();
+  updateReadouts();
 }
 async function saveTrainingToFile(){
   if(!agent) return;
@@ -2940,18 +3429,6 @@ async function applyCheckpointData(data){
     applyPresetToUI({...preset.defaults,...(data.agent.config||{})});
   }
   if(data.rewardConfig) applyRewardConfigToUI(data.rewardConfig);
-  if(typeof data.meta?.boardSize==='number'){
-    ui.gridSize.value=data.meta.boardSize;
-    updateGridLabel();
-    resetEnvironment(data.meta.boardSize,true);
-  }
-  instantiateAgent(kind,{useCurrentUI:true});
-  await agent.importState(data.agent);
-  applyConfigToAgent();
-  if(data.meta){
-    episode=+data.meta.episode||0;
-    totalSteps=+data.meta.totalSteps||+data.meta.steps||0;
-    updateStatsUI();
   }
 }
 
@@ -2970,15 +3447,17 @@ async function loadTrainingFromFile(file){
     const algo=data.algo&&AGENT_PRESETS[data.algo]?data.algo:'dueling';
     applyPresetToUI({...AGENT_PRESETS[algo].defaults,...data.agent.config});
     if(data.rewardConfig) applyRewardConfigToUI(data.rewardConfig);
-    if(typeof data.gridSize==='number'){
-      ui.gridSize.value=data.gridSize;
-      updateGridLabel();
-      resetEnvironment(data.gridSize,true);
-    }
+    const loadedEnvCount=data.envCount??data.meta?.envCount??envCount;
+    const boardSize=typeof data.gridSize==='number'?data.gridSize:typeof data.meta?.boardSize==='number'?data.meta.boardSize:+ui.gridSize.value;
+    ui.envCount.value=`${loadedEnvCount}`;
+    ui.gridSize.value=`${boardSize}`;
+    updateGridLabel();
+    reconfigureEnvironment({count:loadedEnvCount,size:boardSize,force:true});
     instantiateAgent(algo,{useCurrentUI:true});
     await agent.importState(data.agent);
     applyConfigToAgent();
     if(data.playback) setPlaybackMode(data.playback);
+    if(data.mode) setTrainingMode(data.mode);
     applyMeta(data.meta||{});
     flash('Laddat från fil');
   }catch(err){
