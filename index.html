@@ -3429,21 +3429,6 @@ async function applyCheckpointData(data){
     applyPresetToUI({...preset.defaults,...(data.agent.config||{})});
   }
   if(data.rewardConfig) applyRewardConfigToUI(data.rewardConfig);
-  const loadedEnvCount=data.envCount??data.meta?.envCount??envCount;
-  const boardSize=typeof data.meta?.boardSize==='number'?data.meta.boardSize:+ui.gridSize.value;
-  ui.envCount.value=`${loadedEnvCount}`;
-  ui.gridSize.value=`${boardSize}`;
-  updateGridLabel();
-  reconfigureEnvironment({count:loadedEnvCount,size:boardSize,force:true});
-  instantiateAgent(kind,{useCurrentUI:true});
-  await agent.importState(data.agent);
-  applyConfigToAgent();
-  if(data.mode) setTrainingMode(data.mode);
-  if(data.meta){
-    applyMeta(data.meta);
-  }else{
-    updateStatsUI();
-    updateReadouts();
   }
 }
 

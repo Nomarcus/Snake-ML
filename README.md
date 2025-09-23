@@ -50,29 +50,6 @@ Additional knobs map directly to hyperparameters: `--batchSize`, `--bufferSize`,
 
 Manual mode keeps all hyperparameters fixed but can still run multiple environments in parallel (`--envCount`). No auto-adjustments are performed; checkpoints/logging follow the same disk constraints as Auto mode.
 
-## Browser training studio
-
-The in-browser playground exposes the same Auto/Manual split and vectorised environments without needing the Node.js CLI.
-
-### Modes & parallel environments
-
-- **Mode toggle** – the "Manuell"/"Auto" pill group switches between fixed and adaptive training. Auto mode is only available for DQN-based agents; attempting to enable it with other algorithms keeps the UI in manual mode and shows a warning.
-- **envCount slider** – when a DQN agent is active in manual mode you can set 1–24 concurrent environments. Auto mode clamps the count to ≥12 and disables the slider so the curriculum can drive the simulation. Non-DQN agents always operate with a single environment.
-- **Step control guardrails** – the "Steg 1 runda" button is automatically disabled when Auto mode is active or more than one environment is running to avoid inconsistent single-step playback.
-
-### Loading checkpoints in the browser
-
-- **Load model** lets you import the lightweight `checkpoint.json` written by the Node trainer (e.g. from `models/<mode>/latest/`). Training pauses while the model is swapped in, the environment is reconfigured to the saved board size/envCount, and resumes automatically when finished.
-- **Load** continues to restore the richer browser save file that includes charts and hyperparameter sliders.
-- **Titta** still opens the latest checkpoint folder via the File System Access API and performs a greedy evaluation run.
-
-### Manual verification checklist
-
-1. With the default DQN agent active, raise `envCount` above 1 and start training – the live board should animate one environment while others run headlessly, and the step button remains disabled.
-2. Toggle to Auto mode – the slider should lock, `envCount` snaps to at least 12, and the board resets to the 10×10 curriculum entry stage before training continues.
-3. Use **Load model** to import a recent `checkpoint.json`; confirm statistics, reward sliders and mode/envCount metadata refresh, then resume training automatically.
-4. Switch to a non-DQN algorithm – the UI should fall back to manual mode, enforce `envCount = 1`, and keep the Auto button available but guarded.
-
 ## Disk and log policy
 
 - **Atomic saves** – checkpoints are written to a temporary directory and renamed into place. Pointers `latest/` and `best/` are updated with atomic renames.
