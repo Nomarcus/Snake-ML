@@ -92,6 +92,9 @@ main.layout{
   padding:0 24px 40px;
   display:grid;
   gap:32px;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  align-items:start;
+  grid-auto-flow:row;
 }
 .card{
   background:linear-gradient(155deg,rgba(34,41,82,0.88) 0%,rgba(18,21,46,0.92) 100%);
@@ -103,6 +106,76 @@ main.layout{
   flex-direction:column;
   gap:18px;
   backdrop-filter:blur(18px);
+}
+.card-body{
+  display:flex;
+  flex-direction:column;
+  gap:18px;
+}
+.card.collapsible .card-head{
+  display:grid;
+  grid-template-columns:1fr auto;
+  align-items:flex-start;
+  gap:12px;
+}
+.card.collapsible .card-toolbar{
+  display:flex;
+  align-items:flex-start;
+  gap:12px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
+}
+.card.collapsible .card-toolbar .card-actions{
+  flex:1 1 auto;
+  justify-content:flex-end;
+}
+.card.collapsible.collapsed .card-body{
+  display:none;
+}
+.card-title{
+  display:flex;
+  flex-direction:column;
+  gap:6px;
+}
+.collapse-toggle{
+  width:34px;
+  height:34px;
+  border-radius:12px;
+  border:1px solid rgba(128,138,206,0.35);
+  background:rgba(32,38,82,0.85);
+  color:#d4dcff;
+  display:grid;
+  place-items:center;
+  cursor:pointer;
+  transition:.2s background,.2s color,.2s transform;
+}
+.card.collapsible .card-toolbar .collapse-toggle{
+  flex:0 0 auto;
+}
+.collapse-toggle:hover{
+  background:rgba(40,48,102,0.9);
+  color:#fff;
+}
+.card.collapsible .collapse-toggle svg{
+  width:16px;
+  height:16px;
+  transition:transform .2s ease;
+}
+.card.collapsible.collapsed .collapse-toggle svg{
+  transform:rotate(-90deg);
+}
+.game-card{grid-column:1;}
+.stats-column{
+  grid-column:2;
+  display:flex;
+  flex-direction:column;
+  gap:32px;
+  align-self:stretch;
+  min-width:0;
+}
+.control-card,
+.tuning-card{
+  align-self:stretch;
 }
 .card-head{
   display:flex;
@@ -644,7 +717,7 @@ footer{
     grid-template-columns:1fr;
   }
   .game-card,
-  .control-card{
+  .stats-column{
     grid-column:1;
   }
   canvas#board{
@@ -736,278 +809,308 @@ footer{
         <span class="mono" id="gridLabel">20×20</span>
       </div>
     </div>
-    <p class="hint">Your goal is to find the best adjustments to complete the board. Adjust grid size for longer simulations. If the snake would crash, open the guide to tune the parameters — or pick one of the presets.</p>
   </section>
 
-  <section class="card control-card">
-    <div class="card-head">
-      <h2>Learning</h2>
-      <div class="card-actions">
-        <button id="btnSave" class="secondary">Save</button>
-        <button id="btnLoad" class="secondary">Load</button>
-        <button id="btnLoadModel" class="secondary">Load model</button>
-        <button id="btnClear" class="danger">Clear cache</button>
-      </div>
-    </div>
-    <div class="controls tertiary">
-      <div class="pill-group" id="modeGroup" role="group" aria-label="Training mode">
-        <button type="button" class="pill active" data-mode="manual">Manual</button>
-        <button type="button" class="pill" data-mode="auto">Auto</button>
-      </div>
-      <span class="hint">Auto handles the curriculum, save logic, and hyperparameters for you.</span>
-    </div>
-    <div class="field block">
-      <label for="algoSelect">Algorithm</label>
-      <select id="algoSelect">
-        <option value="dueling">Dueling Double DQN</option>
-        <option value="vanilla">Classic DQN</option>
-        <option value="policy">Policy Gradient (REINFORCE)</option>
-        <option value="a2c">Advantage Actor-Critic</option>
-        <option value="ppo">Proximal Policy Optimization</option>
-      </select>
-    </div>
-    <p class="hint" id="algoDescription">Prioritized replay, n-step returns, and dueling heads make DQN stable and sample efficient.</p>
-
-    <div id="autoLogPanel" class="auto-log hidden">
-      <div class="auto-log__header">
-        <h3>Auto adjustments</h3>
-        <button type="button" id="autoLogClear" class="secondary micro">Clear</button>
-      </div>
-      <div id="autoLogStream" class="auto-log__stream" role="log" aria-live="polite"></div>
-    </div>
-
-    <div class="kpi">
-      <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
-      <div class="item"><b>Avg reward (100)</b><span id="kAvgRw">0.0</span></div>
-      <div class="item"><b>Best length</b><span id="kBest">0</span></div>
-      <div class="item"><b>Fruit / ep</b><span id="kFruitRate">0.0</span></div>
-    </div>
-
-    <div class="split charts">
-      <div class="telemetry-panel" id="rewardTelemetryPanel">
-        <div class="telemetry-panel__header">
-          <h2>Reward telemetry</h2>
-          <span class="hint">Rolling averages per component</span>
+  <div class="stats-column">
+    <section class="card control-card collapsible">
+      <div class="card-head">
+        <div class="card-title">
+          <h2>Learning</h2>
         </div>
-        <div class="telemetry-summary">
-          <span class="hint">Net reward (avg 100)</span>
-          <span id="rewardTelemetrySummary" class="mono neutral">0.00 (trend +0.00)</span>
-        </div>
-        <table class="telemetry-table">
-          <thead>
-            <tr>
-              <th>Component</th>
-              <th>Last</th>
-              <th>Avg 100</th>
-              <th>Avg 500</th>
-              <th>Share</th>
-              <th>Trend</th>
-            </tr>
-          </thead>
-          <tbody id="rewardTelemetryBody"></tbody>
-        </table>
-      </div>
-    </div>
-
-    <details id="rewardPanel" open>
-      <summary>Reward model</summary>
-      <div class="stack">
-        <h3>Tempo &amp; direction</h3>
-        <div class="row">
-          <label>Step penalty
-            <input type="range" id="rewardStep" min="0" max="0.05" step="0.001" value="0.010">
-            <span class="mono" id="rewardStepReadout">0.010</span>
-          </label>
-          <label>Turn penalty
-            <input type="range" id="rewardTurn" min="0" max="0.02" step="0.001" value="0.001">
-            <span class="mono" id="rewardTurnReadout">0.001</span>
-          </label>
-          <label>Toward fruit bonus
-            <input type="range" id="rewardApproach" min="0" max="0.1" step="0.005" value="0.030">
-            <span class="mono" id="rewardApproachReadout">0.030</span>
-          </label>
-        </div>
-        <div class="row">
-          <label>Away from fruit penalty
-            <input type="range" id="rewardRetreat" min="0" max="0.1" step="0.005" value="0.030">
-            <span class="mono" id="rewardRetreatReadout">0.030</span>
-          </label>
+        <div class="card-toolbar">
+          <div class="card-actions">
+            <button id="btnSave" class="secondary">Save</button>
+            <button id="btnLoad" class="secondary">Load</button>
+            <button id="btnLoadModel" class="secondary">Load model</button>
+            <button id="btnClear" class="danger">Clear cache</button>
+          </div>
+          <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="learningPanel" aria-label="Collapse learning panel" data-label-collapse="Collapse learning panel" data-label-expand="Expand learning panel" title="Collapse panel">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <polyline points="6 9 12 15 18 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
         </div>
       </div>
-      <div class="stack">
-        <h3>Loops &amp; revisits</h3>
-        <div class="row">
-          <label>Loop penalty
-            <input type="range" id="rewardLoop" min="0" max="1" step="0.01" value="0.50">
-            <span class="mono" id="rewardLoopReadout">0.50</span>
-          </label>
-          <label>Revisit penalty
-            <input type="range" id="rewardRevisit" min="0" max="0.1" step="0.001" value="0.050">
-            <span class="mono" id="rewardRevisitReadout">0.050</span>
-          </label>
+      <div class="card-body" id="learningPanel">
+        <div class="controls tertiary">
+          <div class="pill-group" id="modeGroup" role="group" aria-label="Training mode">
+            <button type="button" class="pill active" data-mode="manual">Manual</button>
+            <button type="button" class="pill" data-mode="auto">Auto</button>
+          </div>
+          <span class="hint">Auto handles the curriculum, save logic, and hyperparameters for you.</span>
+        </div>
+        <div class="field block">
+          <label for="algoSelect">Algorithm</label>
+          <select id="algoSelect">
+            <option value="dueling">Dueling Double DQN</option>
+            <option value="vanilla">Classic DQN</option>
+            <option value="policy">Policy Gradient (REINFORCE)</option>
+            <option value="a2c">Advantage Actor-Critic</option>
+            <option value="ppo">Proximal Policy Optimization</option>
+          </select>
+        </div>
+        <p class="hint" id="algoDescription">Prioritized replay, n-step returns, and dueling heads make DQN stable and sample efficient.</p>
+  
+        <div id="autoLogPanel" class="auto-log hidden">
+          <div class="auto-log__header">
+            <h3>Auto adjustments</h3>
+            <button type="button" id="autoLogClear" class="secondary micro">Clear</button>
+          </div>
+          <div id="autoLogStream" class="auto-log__stream" role="log" aria-live="polite"></div>
+        </div>
+  
+        <div class="kpi">
+          <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
+          <div class="item"><b>Avg reward (100)</b><span id="kAvgRw">0.0</span></div>
+          <div class="item"><b>Best length</b><span id="kBest">0</span></div>
+          <div class="item"><b>Fruit / ep</b><span id="kFruitRate">0.0</span></div>
+        </div>
+  
+        <div class="split charts">
+          <div class="telemetry-panel" id="rewardTelemetryPanel">
+            <div class="telemetry-panel__header">
+              <h2>Reward telemetry</h2>
+              <span class="hint">Rolling averages per component</span>
+            </div>
+            <div class="telemetry-summary">
+              <span class="hint">Net reward (avg 100)</span>
+              <span id="rewardTelemetrySummary" class="mono neutral">0.00 (trend +0.00)</span>
+            </div>
+            <table class="telemetry-table">
+              <thead>
+                <tr>
+                  <th>Component</th>
+                  <th>Last</th>
+                  <th>Avg 100</th>
+                  <th>Avg 500</th>
+                  <th>Share</th>
+                  <th>Trend</th>
+                </tr>
+              </thead>
+              <tbody id="rewardTelemetryBody"></tbody>
+            </table>
+          </div>
         </div>
       </div>
-      <div class="stack">
-        <h3>Crashes &amp; stalling</h3>
-        <div class="row">
-          <label>Wall crash
-            <input type="range" id="rewardWall" min="0" max="30" step="0.5" value="10">
-            <span class="mono" id="rewardWallReadout">10.0</span>
-          </label>
-          <label>Self crash
-            <input type="range" id="rewardSelf" min="0" max="30" step="0.5" value="25.5">
-            <span class="mono" id="rewardSelfReadout">25.5</span>
-          </label>
-          <label>Timeout penalty
-            <input type="range" id="rewardTimeout" min="0" max="20" step="0.5" value="5">
-            <span class="mono" id="rewardTimeoutReadout">5.0</span>
-          </label>
+    </section>
+  
+    <section class="card tuning-card collapsible">
+      <div class="card-head">
+        <div class="card-title">
+          <h2>Reward &amp; tuning</h2>
+          <span class="hint">Adjust incentives and hyperparameters.</span>
         </div>
-        <div class="row">
-          <label>Trap penalty
-            <input type="range" id="rewardTrap" min="0" max="2" step="0.05" value="0.50">
-            <span class="mono" id="rewardTrapReadout">0.50</span>
-          </label>
-          <label>Open space bonus
-            <input type="range" id="rewardSpace" min="0" max="0.2" step="0.01" value="0.05">
-            <span class="mono" id="rewardSpaceReadout">0.05</span>
-          </label>
+        <div class="card-toolbar">
+          <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="tuningPanel" aria-label="Collapse reward and tuning panel" data-label-collapse="Collapse reward and tuning panel" data-label-expand="Expand reward and tuning panel" title="Collapse panel">
+            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+              <polyline points="6 9 12 15 18 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
         </div>
       </div>
-      <div class="stack">
-        <h3>High-impact rewards</h3>
-        <div class="row">
-          <label>Fruit reward
-            <input type="range" id="rewardFruit" min="0" max="30" step="0.5" value="10">
-            <span class="mono" id="rewardFruitReadout">10.0</span>
-          </label>
-          <label>Compactness bonus
-            <input type="range" id="rewardCompact" min="0" max="0.1" step="0.001" value="0.000">
-            <span class="mono" id="rewardCompactReadout">0.000</span>
-          </label>
+  
+      <div class="card-body" id="tuningPanel">
+        <details id="rewardPanel" open>
+        <summary>Reward model</summary>
+        <div class="stack">
+          <h3>Tempo &amp; direction</h3>
+          <div class="row">
+            <label>Step penalty
+              <input type="range" id="rewardStep" min="0" max="0.05" step="0.001" value="0.010">
+              <span class="mono" id="rewardStepReadout">0.010</span>
+            </label>
+            <label>Turn penalty
+              <input type="range" id="rewardTurn" min="0" max="0.02" step="0.001" value="0.001">
+              <span class="mono" id="rewardTurnReadout">0.001</span>
+            </label>
+            <label>Toward fruit bonus
+              <input type="range" id="rewardApproach" min="0" max="0.1" step="0.005" value="0.030">
+              <span class="mono" id="rewardApproachReadout">0.030</span>
+            </label>
+          </div>
+          <div class="row">
+            <label>Away from fruit penalty
+              <input type="range" id="rewardRetreat" min="0" max="0.1" step="0.005" value="0.030">
+              <span class="mono" id="rewardRetreatReadout">0.030</span>
+            </label>
+          </div>
         </div>
+        <div class="stack">
+          <h3>Loops &amp; revisits</h3>
+          <div class="row">
+            <label>Loop penalty
+              <input type="range" id="rewardLoop" min="0" max="1" step="0.01" value="0.50">
+              <span class="mono" id="rewardLoopReadout">0.50</span>
+            </label>
+            <label>Revisit penalty
+              <input type="range" id="rewardRevisit" min="0" max="0.1" step="0.001" value="0.050">
+              <span class="mono" id="rewardRevisitReadout">0.050</span>
+            </label>
+          </div>
+        </div>
+        <div class="stack">
+          <h3>Crashes &amp; stalling</h3>
+          <div class="row">
+            <label>Wall crash
+              <input type="range" id="rewardWall" min="0" max="30" step="0.5" value="10">
+              <span class="mono" id="rewardWallReadout">10.0</span>
+            </label>
+            <label>Self crash
+              <input type="range" id="rewardSelf" min="0" max="30" step="0.5" value="25.5">
+              <span class="mono" id="rewardSelfReadout">25.5</span>
+            </label>
+            <label>Timeout penalty
+              <input type="range" id="rewardTimeout" min="0" max="20" step="0.5" value="5">
+              <span class="mono" id="rewardTimeoutReadout">5.0</span>
+            </label>
+          </div>
+          <div class="row">
+            <label>Trap penalty
+              <input type="range" id="rewardTrap" min="0" max="2" step="0.05" value="0.50">
+              <span class="mono" id="rewardTrapReadout">0.50</span>
+            </label>
+            <label>Open space bonus
+              <input type="range" id="rewardSpace" min="0" max="0.2" step="0.01" value="0.05">
+              <span class="mono" id="rewardSpaceReadout">0.05</span>
+            </label>
+          </div>
+        </div>
+        <div class="stack">
+          <h3>High-impact rewards</h3>
+          <div class="row">
+            <label>Fruit reward
+              <input type="range" id="rewardFruit" min="0" max="30" step="0.5" value="10">
+              <span class="mono" id="rewardFruitReadout">10.0</span>
+            </label>
+            <label>Compactness bonus
+              <input type="range" id="rewardCompact" min="0" max="0.1" step="0.001" value="0.000">
+              <span class="mono" id="rewardCompactReadout">0.000</span>
+            </label>
+          </div>
+        </div>
+      </details>
+  
+      <details id="advancedPanel" open>
+        <summary>Advanced settings</summary>
+        <div class="stack" data-config="shared">
+          <h3>Shared</h3>
+          <div class="row">
+            <label>Parallel environments
+              <input type="range" id="envCount" min="1" max="24" step="1" value="1">
+              <span class="mono" id="envCountReadout">1</span>
+            </label>
+            <label>γ (discount)
+              <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
+              <span class="mono" id="gammaReadout">0.98</span>
+            </label>
+            <label>LR
+              <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005">
+              <span class="mono" id="lrReadout">0.0005</span>
+            </label>
+          </div>
+        </div>
+        <div class="stack" data-config="dqn">
+          <h3>DQN family</h3>
+          <div class="row">
+            <label>ε start
+              <input type="range" id="epsStart" min="0.2" max="1.0" step="0.05" value="1.0">
+              <span class="mono" id="epsStartReadout">1.00</span>
+            </label>
+            <label>ε end
+              <input type="range" id="epsEnd" min="0.01" max="0.3" step="0.01" value="0.12">
+              <span class="mono" id="epsEndReadout">0.12</span>
+            </label>
+            <label>ε decay (steps)
+              <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="80000">
+              <span class="mono" id="epsDecayReadout">80000</span>
+            </label>
+          </div>
+          <div class="row">
+            <label>Batch
+              <input type="range" id="batchSize" min="32" max="512" step="32" value="128">
+              <span class="mono" id="batchReadout">128</span>
+            </label>
+            <label>Replay size
+              <input type="range" id="bufferSize" min="5000" max="200000" step="5000" value="50000">
+              <span class="mono" id="bufferReadout">50000</span>
+            </label>
+            <label>Target sync (steps)
+              <input type="range" id="targetSync" min="500" max="10000" step="500" value="2000">
+              <span class="mono" id="targetSyncReadout">2000</span>
+            </label>
+          </div>
+          <div class="row">
+            <label>n-step
+              <input type="range" id="nStep" min="1" max="5" step="1" value="3">
+              <span class="mono" id="nStepReadout">3</span>
+            </label>
+            <label>PER α
+              <input type="range" id="priorityAlpha" min="0.1" max="1" step="0.05" value="0.6">
+              <span class="mono" id="alphaReadout">0.60</span>
+            </label>
+            <label>PER β
+              <input type="range" id="priorityBeta" min="0.1" max="1" step="0.05" value="0.4">
+              <span class="mono" id="betaReadout">0.40</span>
+            </label>
+          </div>
+        </div>
+        <div class="stack hidden" data-config="policy">
+          <h3>Policy Gradient</h3>
+          <div class="row">
+            <label>Entropy weight
+              <input type="range" id="pgEntropy" min="0" max="0.05" step="0.001" value="0.01">
+              <span class="mono" id="pgEntropyReadout">0.010</span>
+            </label>
+          </div>
+        </div>
+        <div class="stack hidden" data-config="a2c">
+          <h3>Actor-Critic</h3>
+          <div class="row">
+            <label>Entropy weight
+              <input type="range" id="acEntropy" min="0" max="0.05" step="0.001" value="0.005">
+              <span class="mono" id="acEntropyReadout">0.005</span>
+            </label>
+            <label>Value weight
+              <input type="range" id="acValueCoef" min="0.1" max="1.0" step="0.05" value="0.5">
+              <span class="mono" id="acValueCoefReadout">0.50</span>
+            </label>
+          </div>
+        </div>
+        <div class="stack hidden" data-config="ppo">
+          <h3>PPO</h3>
+          <div class="row">
+            <label>Entropy weight
+              <input type="range" id="ppoEntropy" min="0" max="0.05" step="0.001" value="0.003">
+              <span class="mono" id="ppoEntropyReadout">0.003</span>
+            </label>
+            <label>Clip factor
+              <input type="range" id="ppoClip" min="0.05" max="0.4" step="0.01" value="0.2">
+              <span class="mono" id="ppoClipReadout">0.20</span>
+            </label>
+            <label>GAE λ
+              <input type="range" id="ppoLambda" min="0.5" max="1.0" step="0.01" value="0.95">
+              <span class="mono" id="ppoLambdaReadout">0.95</span>
+            </label>
+          </div>
+          <div class="row">
+            <label>Batch
+              <input type="range" id="ppoBatch" min="32" max="512" step="32" value="256">
+              <span class="mono" id="ppoBatchReadout">256</span>
+            </label>
+            <label>Epochs
+              <input type="range" id="ppoEpochs" min="1" max="10" step="1" value="4">
+              <span class="mono" id="ppoEpochsReadout">4</span>
+            </label>
+            <label>Value weight
+              <input type="range" id="ppoValueCoef" min="0.1" max="1.0" step="0.05" value="0.5">
+              <span class="mono" id="ppoValueCoefReadout">0.50</span>
+            </label>
+          </div>
+        </div>
+      </details>
       </div>
-    </details>
-
-    <details id="advancedPanel" open>
-      <summary>Advanced settings</summary>
-      <div class="stack" data-config="shared">
-        <h3>Shared</h3>
-      <div class="row">
-        <label>Parallel environments
-          <input type="range" id="envCount" min="1" max="24" step="1" value="1">
-          <span class="mono" id="envCountReadout">1</span>
-        </label>
-        <label>γ (discount)
-          <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
-          <span class="mono" id="gammaReadout">0.98</span>
-        </label>
-        <label>LR
-            <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005">
-            <span class="mono" id="lrReadout">0.0005</span>
-          </label>
-        </div>
-      </div>
-      <div class="stack" data-config="dqn">
-        <h3>DQN family</h3>
-        <div class="row">
-          <label>ε start
-            <input type="range" id="epsStart" min="0.2" max="1.0" step="0.05" value="1.0">
-            <span class="mono" id="epsStartReadout">1.00</span>
-          </label>
-          <label>ε end
-            <input type="range" id="epsEnd" min="0.01" max="0.3" step="0.01" value="0.12">
-            <span class="mono" id="epsEndReadout">0.12</span>
-          </label>
-          <label>ε decay (steps)
-            <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="80000">
-            <span class="mono" id="epsDecayReadout">80000</span>
-          </label>
-        </div>
-        <div class="row">
-          <label>Batch
-            <input type="range" id="batchSize" min="32" max="512" step="32" value="128">
-            <span class="mono" id="batchReadout">128</span>
-          </label>
-          <label>Replay size
-            <input type="range" id="bufferSize" min="5000" max="200000" step="5000" value="50000">
-            <span class="mono" id="bufferReadout">50000</span>
-          </label>
-          <label>Target sync (steps)
-            <input type="range" id="targetSync" min="500" max="10000" step="500" value="2000">
-            <span class="mono" id="targetSyncReadout">2000</span>
-          </label>
-        </div>
-        <div class="row">
-          <label>n-step
-            <input type="range" id="nStep" min="1" max="5" step="1" value="3">
-            <span class="mono" id="nStepReadout">3</span>
-          </label>
-          <label>PER α
-            <input type="range" id="priorityAlpha" min="0.1" max="1" step="0.05" value="0.6">
-            <span class="mono" id="alphaReadout">0.60</span>
-          </label>
-          <label>PER β
-            <input type="range" id="priorityBeta" min="0.1" max="1" step="0.05" value="0.4">
-            <span class="mono" id="betaReadout">0.40</span>
-          </label>
-        </div>
-      </div>
-      <div class="stack hidden" data-config="policy">
-        <h3>Policy Gradient</h3>
-        <div class="row">
-          <label>Entropy weight
-            <input type="range" id="pgEntropy" min="0" max="0.05" step="0.001" value="0.01">
-            <span class="mono" id="pgEntropyReadout">0.010</span>
-          </label>
-        </div>
-      </div>
-      <div class="stack hidden" data-config="a2c">
-        <h3>Actor-Critic</h3>
-        <div class="row">
-          <label>Entropy weight
-            <input type="range" id="acEntropy" min="0" max="0.05" step="0.001" value="0.005">
-            <span class="mono" id="acEntropyReadout">0.005</span>
-          </label>
-          <label>Value weight
-            <input type="range" id="acValueCoef" min="0.1" max="1.0" step="0.05" value="0.5">
-            <span class="mono" id="acValueCoefReadout">0.50</span>
-          </label>
-        </div>
-      </div>
-      <div class="stack hidden" data-config="ppo">
-        <h3>PPO</h3>
-        <div class="row">
-          <label>Entropy weight
-            <input type="range" id="ppoEntropy" min="0" max="0.05" step="0.001" value="0.003">
-            <span class="mono" id="ppoEntropyReadout">0.003</span>
-          </label>
-          <label>Clip factor
-            <input type="range" id="ppoClip" min="0.05" max="0.4" step="0.01" value="0.2">
-            <span class="mono" id="ppoClipReadout">0.20</span>
-          </label>
-          <label>GAE λ
-            <input type="range" id="ppoLambda" min="0.5" max="1.0" step="0.01" value="0.95">
-            <span class="mono" id="ppoLambdaReadout">0.95</span>
-          </label>
-        </div>
-        <div class="row">
-          <label>Batch
-            <input type="range" id="ppoBatch" min="32" max="512" step="32" value="256">
-            <span class="mono" id="ppoBatchReadout">256</span>
-          </label>
-          <label>Epochs
-            <input type="range" id="ppoEpochs" min="1" max="10" step="1" value="4">
-            <span class="mono" id="ppoEpochsReadout">4</span>
-          </label>
-          <label>Value weight
-            <input type="range" id="ppoValueCoef" min="0.1" max="1.0" step="0.05" value="0.5">
-            <span class="mono" id="ppoValueCoefReadout">0.50</span>
-          </label>
-        </div>
-      </div>
-    </details>
-  </section>
+    </section>
+  </div>
 </main>
 
 <section id="guideView" class="hidden">
@@ -3175,7 +3278,10 @@ function bindUI(){
   });
   ui.gridSize.addEventListener('input',()=>{
     updateGridLabel();
-    if(!training) reconfigureEnvironment({ size:+ui.gridSize.value, force:true });
+    const desiredSize=Math.max(8,(+ui.gridSize.value)|0);
+    if(desiredSize!==COLS){
+      resetEnvironment(desiredSize,true);
+    }
   });
   ui.btnReset.addEventListener('click',()=>resetEnvironment(+ui.gridSize.value,true));
   ui.btnTrain.addEventListener('click',startTraining);
@@ -3235,6 +3341,25 @@ function bindUI(){
   rewardIds.forEach(id=>ui[id]?.addEventListener('input',updateRewards));
   ui.tabTraining.addEventListener('click',()=>setActiveTab('training'));
   ui.tabGuide.addEventListener('click',()=>setActiveTab('guide'));
+  document.querySelectorAll('.card.collapsible').forEach(card=>{
+    const toggle=card.querySelector('.collapse-toggle');
+    const body=card.querySelector('.card-body');
+    if(!toggle||!body) return;
+    const collapseLabel=toggle.dataset.labelCollapse||toggle.getAttribute('aria-label')||'Collapse panel';
+    const expandLabel=toggle.dataset.labelExpand||collapseLabel;
+    const applyState=collapsed=>{
+      card.classList.toggle('collapsed',collapsed);
+      body.hidden=collapsed;
+      toggle.setAttribute('aria-expanded',(!collapsed).toString());
+      toggle.setAttribute('aria-label',collapsed?expandLabel:collapseLabel);
+      toggle.setAttribute('title',collapsed?'Expand panel':'Collapse panel');
+    };
+    toggle.addEventListener('click',()=>{
+      const collapsed=!card.classList.contains('collapsed');
+      applyState(collapsed);
+    });
+    applyState(card.classList.contains('collapsed'));
+  });
   updateReadouts();
   updateGridLabel();
   applyRewardsToEnv();
