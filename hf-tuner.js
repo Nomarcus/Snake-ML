@@ -1,4 +1,4 @@
-const HF_API_URL = 'https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3';
+const PROXY_PATH = '/api/proxy';
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
 Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
@@ -10,14 +10,49 @@ du vill uppdatera, t.ex.
   "hyper": {gamma:0.985, lr:0.0004, epsDecay:90000, ...}
 }`;
 
-function resolveToken(preferred) {
-  if (typeof preferred === 'string' && preferred.trim()) {
-    return preferred.trim();
+function resolveApiBase() {
+  if (typeof globalThis === 'undefined') return '';
+  const value = globalThis.API_BASE_URL || globalThis.__API_BASE_URL || '';
+  if (typeof value !== 'string') return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+  return trimmed.replace(/\/+$/, '');
+}
+
+function joinPath(base, path) {
+  if (!base) return path;
+  if (!path) return base;
+  const trailing = base.endsWith('/');
+  const leading = path.startsWith('/');
+  if (trailing && leading) {
+    return base + path.slice(1);
   }
-  if (typeof globalThis !== 'undefined' && typeof globalThis.__HF_KEY === 'string' && globalThis.__HF_KEY.trim()) {
-    return globalThis.__HF_KEY.trim();
+  if (!trailing && !leading) {
+    return `${base}/${path}`;
   }
-  return null;
+  return base + path;
+}
+
+function buildProxyUrl() {
+  const base = resolveApiBase();
+  if (!base) return PROXY_PATH;
+  const trimmed = base.replace(/\/+$/, '');
+  if (/^https?:\/\//i.test(trimmed)) {
+    if (trimmed.endsWith('/proxy')) {
+      return trimmed;
+    }
+    if (trimmed.includes('/.netlify/functions')) {
+      return joinPath(trimmed, '/proxy');
+    }
+    return joinPath(trimmed, PROXY_PATH);
+  }
+  if (trimmed.endsWith('/proxy')) {
+    return trimmed;
+  }
+  if (trimmed.startsWith('/')) {
+    return joinPath(trimmed, PROXY_PATH);
+  }
+  return joinPath(`/${trimmed}`, PROXY_PATH);
 }
 
 function formatNumber(value) {
@@ -65,7 +100,6 @@ export function createAITuner(options = {}) {
     applyRewardConfig,
     applyHyperparameters,
     log,
-    apiKey = null,
   } = options;
 
   if (typeof fetchTelemetry !== 'function') {
@@ -77,7 +111,6 @@ export function createAITuner(options = {}) {
   let enabled = false;
   let interval = 1000;
   let busy = false;
-  let warnedNoKey = false;
   let warnedNoFetch = false;
 
   function logEvent(payload) {
@@ -102,48 +135,25 @@ export function createAITuner(options = {}) {
       return;
     }
 
-    const token = resolveToken(apiKey);
-    if (!token) {
-      if (!warnedNoKey) {
-        logEvent({
-          title: 'AI Auto-Tune',
-          detail: 'Hugging Face-token saknas. Hoppar över justeringar.',
-          tone: 'error',
-          episodeNumber: episode,
-        });
-        warnedNoKey = true;
-      }
-      return;
-    }
-
-    const payload = {
-      instruktion: SYSTEM_PROMPT,
-      telemetri: telemetry,
-    };
-
-    const response = await fetch(HF_API_URL, {
+    const response = await fetch(buildProxyUrl(), {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        inputs: JSON.stringify(payload),
-        parameters: {
-          temperature: 0.2,
-          max_new_tokens: 300,
-        },
+        telemetry,
+        instruction: SYSTEM_PROMPT,
       }),
     });
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Hugging Face ${response.status}: ${text.slice(0, 200)}`);
+      throw new Error(`Proxy ${response.status}: ${text.slice(0, 200)}`);
     }
 
     const data = await response.json();
     if (data?.error) {
-      throw new Error(`Hugging Face error: ${data.error}`);
+      throw new Error(`Proxy error: ${data.error}`);
     }
 
     const primary = Array.isArray(data) ? data[0] : data;

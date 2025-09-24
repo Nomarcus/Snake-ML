@@ -11,23 +11,51 @@ Refactored reinforcement learning playground for the Snake environment with supp
 - **Evaluations & rollback** – lightweight greedy evaluations every 2000 episodes, best-model retention, and rollback on catastrophic regression.
 
 
-## Hugging Face token for AI Auto-Tune
+## Hugging Face-proxy för AI Auto-Tune
 
-The browser AI Auto-Tune integration now calls the Hugging Face Inference API with the model `mistralai/Mistral-7B-Instruct-v0.3`. The module reads a browser global named `window.__HF_KEY` from the checked-in `__hf_key.js` bootstrap script.
+AI Auto-Tune körs nu genom en serverless proxy (`api/proxy.js`) så att Hugging Face-tokenen aldrig laddas i webbläsaren. Funktionen accepterar `POST /api/proxy` med ett JSON-objekt `{ "telemetry": ... }`, läser tokenen från miljövariabeln `HF_TOKEN`, och returnerar oförändrat JSON-svar från Inference API:t.
 
-### Skaffa ett lästoken
+### Sätt `HF_TOKEN` som hemlighet
 
-1. Logga in på [huggingface.co](https://huggingface.co) och öppna **Settings → Access Tokens**.
-2. Skapa ett nytt token med typ **Read** (räcker för Inference API).
+- Skapa ett lästoken i [Hugging Face → Settings → Access Tokens](https://huggingface.co/settings/tokens) om du inte redan har ett.
+- **Render** – öppna din tjänst, gå till **Environment**, välj **Add Secret File or Environment Variable** och skapa ny variabel `HF_TOKEN` med ditt lästoken från Hugging Face. Render använder Node 18+ vilket ger inbyggt `fetch`-stöd.
+- **Netlify** – i projektets **Site configuration → Environment variables** lägger du till `HF_TOKEN`. Deploys får automatiskt åtkomst till värdet.
+- **Vercel** – under **Settings → Environment Variables** för projektet lägger du till `HF_TOKEN` (typ `Encrypted`). Kör en ny deploy för att exponera värdet för funktionen.
 
-### Konfigurera projektet
+### Deploya proxyn
 
-1. Öppna `__hf_key.js` och ersätt `hf_YOUR_TOKEN_HERE` med ditt Hugging Face-token.
-2. Filen laddas före `hf-tuner.js`, vilket gör att token exponeras som `window.__HF_KEY` i webbläsaren.
-3. Token distribueras tillsammans med statiska filer (GitHub Pages, lokal hosting). Den räknas därför som publik – använd ett separat lästoken för demo/test.
+- **Netlify Functions** – ställ in **Functions directory** till `api` (eller kopiera filen dit), låt Node-versionen vara ≥ 18 och deploya. Netlify serverar funktionen som `/.netlify/functions/proxy`, eller `/api/proxy` om du använder edge/Next runtime.
+- **Vercel** – katalogen `api/` tolkas som serverless functions. Importera repot, sätt `HF_TOKEN` och deploya; funktionen exponeras som `https://<ditt-projekt>.vercel.app/api/proxy`.
+- **Render** – skapa en minimal Node-tjänst som använder filen:
 
+  ```js
+  import express from 'express';
+  import handler from './api/proxy.js';
 
-Workflowen `deploy.yml` kopierar `__hf_key.js` in i `dist/` utan att läsa hemligheter från GitHub Actions. Kontrollera in filen efter att du uppdaterat den så att rätt token följer med byggsteget. Distributionen innehåller även en `.nojekyll`-markör så att GitHub Pages serverar filer som börjar med understreck, exempelvis `__hf_key.js`.
+  const app = express();
+  app.use(express.json());
+  app.post('/api/proxy', handler);
+
+  const port = process.env.PORT || 3000;
+  app.listen(port, () => console.log(`Proxy listening on ${port}`));
+  ```
+
+  Lägg filen som `server.js`, kör `npm install express`, sätt startkommandot till `node server.js` och lägg till `HF_TOKEN` under **Environment** i Render.
+
+### Koppla frontend till proxyn
+
+- Om frontend och proxy hostas på samma domän (t.ex. Vercel för både UI och funktion) fungerar standardvägen `fetch('/api/proxy', ...)` utan ändringar.
+- För GitHub Pages eller andra separata domäner, sätt `window.API_BASE_URL` till basadressen för proxyn innan `hf-tuner.js` laddas. Ett enkelt sätt är att lägga till ett inline-script precis före modulimporten:
+  - Netlify Functions använder sökvägen `/.netlify/functions`. Sätt `window.API_BASE_URL = 'https://ditt-projekt.netlify.app/.netlify/functions'` så pekar proxyn automatiskt på `/.netlify/functions/proxy`.
+
+  ```html
+  <script>
+    window.API_BASE_URL = 'https://ditt-backend.exempel.com';
+  </script>
+  <script type="module" src="hf-tuner.js"></script>
+  ```
+
+  Värdet sparas inte i repot och kan ändras mellan miljöer. Funktionen hanterar även CORS och svarar på `OPTIONS` för preflight-anrop.
 
 
 ## CLI usage
