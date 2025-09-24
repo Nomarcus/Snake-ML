@@ -35,7 +35,6 @@ header{
   box-shadow:0 20px 40px rgba(6,8,20,0.6);
 }
 header .header-inner{
-  max-width:1180px;
   margin:0 auto;
   padding:0 32px;
   display:flex;
@@ -87,13 +86,13 @@ header .header-inner{
   border-color:rgba(139,92,246,0.45);
 }
 main.layout{
-  max-width:1180px;
   margin:32px auto 48px;
   padding:0 24px 40px;
   display:grid;
   gap:32px;
-  grid-template-columns:minmax(0,1fr) 380px;
+  grid-template-columns:minmax(640px,1fr) minmax(260px,320px) minmax(260px,320px);
   align-items:start;
+  grid-auto-flow:row;
 }
 .card{
   background:linear-gradient(155deg,rgba(34,41,82,0.88) 0%,rgba(18,21,46,0.92) 100%);
@@ -105,6 +104,11 @@ main.layout{
   flex-direction:column;
   gap:18px;
   backdrop-filter:blur(18px);
+}
+.game-card{grid-column:1;}
+.control-card{
+  grid-column:2;
+  align-self:start;
 }
 .card-head{
   display:flex;
@@ -134,7 +138,7 @@ h2{
 }
 canvas#board{
   width:100%;
-  max-width:560px;
+  max-width:640px;
   aspect-ratio:1/1;
   border-radius:26px;
   background:radial-gradient(140% 140% at 30% 20%,#273067 0%,#151a3a 50%,#0d1127 100%);
@@ -641,9 +645,23 @@ footer{
   padding:18px;
   font-size:12px;
 }
+  }
+  .control-card{
+    grid-column:2;
+  }
+  .tuning-card{
+    grid-column:2;
+    grid-row:2;
+  }
+}
 @media(max-width:1050px){
   main.layout{
     grid-template-columns:1fr;
+  }
+  .game-card,
+  .control-card,
+  .tuning-card{
+    grid-column:1;
   }
   canvas#board{
     width:100%;
@@ -714,7 +732,7 @@ footer{
       </div>
       <span class="badge soft" id="playbackLabel">Smooth realtime</span>
     </div>
-    <canvas id="board" width="500" height="500"></canvas>
+    <canvas id="board" width="640" height="640"></canvas>
     <div class="controls primary">
       <button id="btnTrain">▶ Start training</button>
       <button id="btnPause" class="secondary">⏸ Pause</button>
@@ -734,80 +752,114 @@ footer{
         <span class="mono" id="gridLabel">20×20</span>
       </div>
     </div>
-    <p class="hint">Your goal is to find the best adjustments to complete the board. Adjust grid size for longer simulations. If the snake would crash, open the guide to tune the parameters — or pick one of the presets.</p>
   </section>
 
-  <section class="card control-card">
+  <section class="card control-card collapsible">
     <div class="card-head">
-      <h2>Learning</h2>
-      <div class="card-actions">
-        <button id="btnSave" class="secondary">Save</button>
-        <button id="btnLoad" class="secondary">Load</button>
-        <button id="btnLoadModel" class="secondary">Load model</button>
-        <button id="btnClear" class="danger">Clear cache</button>
+      <div class="card-title">
+        <h2>Learning</h2>
       </div>
-    </div>
-    <div class="controls tertiary">
-      <div class="pill-group" id="modeGroup" role="group" aria-label="Training mode">
-        <button type="button" class="pill active" data-mode="manual">Manual</button>
-        <button type="button" class="pill" data-mode="auto">Auto</button>
-      </div>
-      <span class="hint">Auto handles the curriculum, save logic, and hyperparameters for you.</span>
-    </div>
-    <div class="field block">
-      <label for="algoSelect">Algorithm</label>
-      <select id="algoSelect">
-        <option value="dueling">Dueling Double DQN</option>
-        <option value="vanilla">Classic DQN</option>
-        <option value="policy">Policy Gradient (REINFORCE)</option>
-        <option value="a2c">Advantage Actor-Critic</option>
-        <option value="ppo">Proximal Policy Optimization</option>
-      </select>
-    </div>
-    <p class="hint" id="algoDescription">Prioritized replay, n-step returns, and dueling heads make DQN stable and sample efficient.</p>
-
-    <div id="autoLogPanel" class="auto-log hidden">
-      <div class="auto-log__header">
-        <h3>Auto adjustments</h3>
-        <button type="button" id="autoLogClear" class="secondary micro">Clear</button>
-      </div>
-      <div id="autoLogStream" class="auto-log__stream" role="log" aria-live="polite"></div>
-    </div>
-
-    <div class="kpi">
-      <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
-      <div class="item"><b>Avg reward (100)</b><span id="kAvgRw">0.0</span></div>
-      <div class="item"><b>Best length</b><span id="kBest">0</span></div>
-      <div class="item"><b>Fruit / ep</b><span id="kFruitRate">0.0</span></div>
-    </div>
-
-    <div class="split charts">
-      <div class="telemetry-panel" id="rewardTelemetryPanel">
-        <div class="telemetry-panel__header">
-          <h2>Reward telemetry</h2>
-          <span class="hint">Rolling averages per component</span>
+      <div class="card-toolbar">
+        <div class="card-actions">
+          <button id="btnSave" class="secondary">Save</button>
+          <button id="btnLoad" class="secondary">Load</button>
+          <button id="btnLoadModel" class="secondary">Load model</button>
+          <button id="btnClear" class="danger">Clear cache</button>
         </div>
-        <div class="telemetry-summary">
-          <span class="hint">Net reward (avg 100)</span>
-          <span id="rewardTelemetrySummary" class="mono neutral">0.00 (trend +0.00)</span>
-        </div>
-        <table class="telemetry-table">
-          <thead>
-            <tr>
-              <th>Component</th>
-              <th>Last</th>
-              <th>Avg 100</th>
-              <th>Avg 500</th>
-              <th>Share</th>
-              <th>Trend</th>
-            </tr>
-          </thead>
-          <tbody id="rewardTelemetryBody"></tbody>
-        </table>
+        <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="learningPanel" aria-label="Collapse learning panel" data-label-collapse="Collapse learning panel" data-label-expand="Expand learning panel" title="Collapse panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <polyline points="6 9 12 15 18 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
       </div>
     </div>
+    <div class="card-body" id="learningPanel">
+      <div class="controls tertiary">
+        <div class="pill-group" id="modeGroup" role="group" aria-label="Training mode">
+          <button type="button" class="pill active" data-mode="manual">Manual</button>
+          <button type="button" class="pill" data-mode="auto">Auto</button>
+        </div>
+        <span class="hint">Auto handles the curriculum, save logic, and hyperparameters for you.</span>
+      </div>
+      <div class="field block">
+        <label for="algoSelect">Algorithm</label>
+        <select id="algoSelect">
+          <option value="dueling">Dueling Double DQN</option>
+          <option value="vanilla">Classic DQN</option>
+          <option value="policy">Policy Gradient (REINFORCE)</option>
+          <option value="a2c">Advantage Actor-Critic</option>
+          <option value="ppo">Proximal Policy Optimization</option>
+        </select>
+      </div>
+      <p class="hint" id="algoDescription">Prioritized replay, n-step returns, and dueling heads make DQN stable and sample efficient.</p>
 
-    <details id="rewardPanel" open>
+      <div id="autoLogPanel" class="auto-log hidden">
+        <div class="auto-log__header">
+          <h3>Auto adjustments</h3>
+          <button type="button" id="autoLogClear" class="secondary micro">Clear</button>
+        </div>
+        <div id="autoLogStream" class="auto-log__stream" role="log" aria-live="polite"></div>
+      </div>
+
+      <div class="kpi">
+        <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
+        <div class="item"><b>Avg reward (100)</b><span id="kAvgRw">0.0</span></div>
+        <div class="item"><b>Best length</b><span id="kBest">0</span></div>
+        <div class="item"><b>Fruit / ep</b><span id="kFruitRate">0.0</span></div>
+      </div>
+
+      <div class="split charts">
+        <div class="telemetry-panel" id="rewardTelemetryPanel">
+          <div class="telemetry-panel__header">
+            <h2>Reward telemetry</h2>
+            <span class="hint">Rolling averages per component</span>
+          </div>
+          <div class="telemetry-summary">
+            <span class="hint">Net reward (avg 100)</span>
+            <span id="rewardTelemetrySummary" class="mono neutral">0.00 (trend +0.00)</span>
+          </div>
+          <table class="telemetry-table">
+            <thead>
+              <tr>
+                <th>Component</th>
+                <th>Last</th>
+                <th>Avg 100</th>
+                <th>Avg 500</th>
+                <th>Share</th>
+                <th>Trend</th>
+              </tr>
+            </thead>
+            <tbody id="rewardTelemetryBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="card tuning-card collapsible">
+    <div class="card-head">
+      <div class="card-title">
+        <h2>Reward &amp; tuning</h2>
+        <span class="hint">Adjust incentives and hyperparameters.</span>
+      </div>
+      <div class="card-toolbar">
+        <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="tuningPanel" aria-label="Collapse reward and tuning panel" data-label-collapse="Collapse reward and tuning panel" data-label-expand="Expand reward and tuning panel" title="Collapse panel">
+          <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+            <polyline points="6 9 12 15 18 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card tuning-card">
+    <div class="card-head">
+      <h2>Reward &amp; tuning</h2>
+      <span class="hint">Adjust incentives and hyperparameters.</span>
+    </div>
+
+    <div class="card-body" id="tuningPanel">
+      <details id="rewardPanel" open>
       <summary>Reward model</summary>
       <div class="stack">
         <h3>Tempo &amp; direction</h3>
@@ -891,16 +943,16 @@ footer{
       <summary>Advanced settings</summary>
       <div class="stack" data-config="shared">
         <h3>Shared</h3>
-      <div class="row">
-        <label>Parallel environments
-          <input type="range" id="envCount" min="1" max="24" step="1" value="1">
-          <span class="mono" id="envCountReadout">1</span>
-        </label>
-        <label>γ (discount)
-          <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
-          <span class="mono" id="gammaReadout">0.98</span>
-        </label>
-        <label>LR
+        <div class="row">
+          <label>Parallel environments
+            <input type="range" id="envCount" min="1" max="24" step="1" value="1">
+            <span class="mono" id="envCountReadout">1</span>
+          </label>
+          <label>γ (discount)
+            <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
+            <span class="mono" id="gammaReadout">0.98</span>
+          </label>
+          <label>LR
             <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005">
             <span class="mono" id="lrReadout">0.0005</span>
           </label>
@@ -1005,6 +1057,7 @@ footer{
         </div>
       </div>
     </details>
+    </div>
   </section>
 </main>
 
@@ -3173,7 +3226,10 @@ function bindUI(){
   });
   ui.gridSize.addEventListener('input',()=>{
     updateGridLabel();
-    if(!training) reconfigureEnvironment({ size:+ui.gridSize.value, force:true });
+    const desiredSize=Math.max(8,(+ui.gridSize.value)|0);
+    if(desiredSize!==COLS){
+      resetEnvironment(desiredSize,true);
+    }
   });
   ui.btnReset.addEventListener('click',()=>resetEnvironment(+ui.gridSize.value,true));
   ui.btnTrain.addEventListener('click',startTraining);
@@ -3233,6 +3289,25 @@ function bindUI(){
   rewardIds.forEach(id=>ui[id]?.addEventListener('input',updateRewards));
   ui.tabTraining.addEventListener('click',()=>setActiveTab('training'));
   ui.tabGuide.addEventListener('click',()=>setActiveTab('guide'));
+  document.querySelectorAll('.card.collapsible').forEach(card=>{
+    const toggle=card.querySelector('.collapse-toggle');
+    const body=card.querySelector('.card-body');
+    if(!toggle||!body) return;
+    const collapseLabel=toggle.dataset.labelCollapse||toggle.getAttribute('aria-label')||'Collapse panel';
+    const expandLabel=toggle.dataset.labelExpand||collapseLabel;
+    const applyState=collapsed=>{
+      card.classList.toggle('collapsed',collapsed);
+      body.hidden=collapsed;
+      toggle.setAttribute('aria-expanded',(!collapsed).toString());
+      toggle.setAttribute('aria-label',collapsed?expandLabel:collapseLabel);
+      toggle.setAttribute('title',collapsed?'Expand panel':'Collapse panel');
+    };
+    toggle.addEventListener('click',()=>{
+      const collapsed=!card.classList.contains('collapsed');
+      applyState(collapsed);
+    });
+    applyState(card.classList.contains('collapsed'));
+  });
   updateReadouts();
   updateGridLabel();
   applyRewardsToEnv();
