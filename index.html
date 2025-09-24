@@ -35,7 +35,6 @@ header{
   box-shadow:0 20px 40px rgba(6,8,20,0.6);
 }
 header .header-inner{
-  max-width:1360px;
   margin:0 auto;
   padding:0 32px;
   display:flex;
@@ -87,12 +86,10 @@ header .header-inner{
   border-color:rgba(139,92,246,0.45);
 }
 main.layout{
-  max-width:1360px;
   margin:32px auto 48px;
   padding:0 24px 40px;
   display:grid;
   gap:32px;
-  align-items:start;
 }
 .card{
   background:linear-gradient(155deg,rgba(34,41,82,0.88) 0%,rgba(18,21,46,0.92) 100%);
@@ -645,7 +642,6 @@ footer{
   padding:18px;
   font-size:12px;
 }
-@media(max-width:1280px){
   main.layout{
     grid-template-columns:minmax(0,560px) minmax(0,1fr);
   }
@@ -3201,7 +3197,10 @@ function bindUI(){
   });
   ui.gridSize.addEventListener('input',()=>{
     updateGridLabel();
-    if(!training) reconfigureEnvironment({ size:+ui.gridSize.value, force:true });
+    const desiredSize=Math.max(8,(+ui.gridSize.value)|0);
+    if(desiredSize!==COLS){
+      resetEnvironment(desiredSize,true);
+    }
   });
   ui.btnReset.addEventListener('click',()=>resetEnvironment(+ui.gridSize.value,true));
   ui.btnTrain.addEventListener('click',startTraining);
