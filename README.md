@@ -10,6 +10,31 @@ Refactored reinforcement learning playground for the Snake environment with supp
 - **Disk guardrails** – checkpoints and logs honour interval, cooldown, retention and disk size caps with atomic writes and automatic pruning.
 - **Evaluations & rollback** – lightweight greedy evaluations every 2000 episodes, best-model retention, and rollback on catastrophic regression.
 
+## AI Auto-Tune API key
+
+The browser-side AI Auto-Tune module calls OpenAI's GPT-4o-mini endpoint. It requires `OPENAI_API_KEY` to be present at runtime.
+
+### Local development
+
+1. Create a `.env` file in the project root containing your key:
+   ```env
+   OPENAI_API_KEY=sk-your-key
+   ```
+2. Export the variables before starting a dev server or static file host, for example:
+   ```bash
+   set -a
+   source .env
+   set +a
+   npx http-server .
+   ```
+   Any tooling (`vite`, `webpack-dev-server`, etc.) works as long as it is launched from the same shell session so that `process.env.OPENAI_API_KEY` is populated.
+
+### GitHub Pages / Actions
+
+1. In your repository settings, add a secret named `OPENAI_API_KEY` containing the key.
+2. The `deploy.yml` workflow writes `public/__key.js` before the build runs, injecting the key via `window.__OPENAI_KEY = '${{ secrets.OPENAI_API_KEY }}';` so the browser can read it.
+3. Because the bootstrap script ships with the published HTML, the secret is exposed to clients — treat it as a public token scoped only for this project.
+
 ## CLI usage
 
 Training is handled through `train.js`. Install dependencies with `npm install` and start training, for example:
