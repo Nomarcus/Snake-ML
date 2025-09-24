@@ -1,3 +1,8 @@
+
+import express from 'express';
+import fetch from 'node-fetch';
+
+
 const HF_API_URL = 'https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3';
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
@@ -10,173 +15,81 @@ du vill uppdatera, t.ex.
   "hyper": {gamma:0.985, lr:0.0004, epsDecay:90000, ...}
 }`;
 
-class ProxyError extends Error {
-  constructor(statusCode, message) {
-    super(message);
-    this.statusCode = statusCode;
+const app = express();
+
+app.use(express.json({ limit: '1mb' }));
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Headers', 'content-type');
+  res.header('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  if (req.method === 'OPTIONS') {
+    return res.status(204).send();
   }
-}
+  next();
+});
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'content-type',
-  'Access-Control-Allow-Methods': 'POST,OPTIONS',
-};
+app.post('/api/proxy', async (req, res) => {
+  try {
+    const { telemetry, instruction } = req.body ?? {};
 
-function toJsonResponse(statusCode, payload = null) {
-  return {
-    statusCode,
-    headers: corsHeaders,
-    body: payload ? JSON.stringify(payload) : '',
-  };
-}
-
-function extractTelemetry(body) {
-  if (body && typeof body === 'object') {
-    if ('telemetry' in body) {
-      return body.telemetry;
+    if (!telemetry) {
+      return res.status(400).json({ error: 'Fältet "telemetry" saknas.' });
     }
-    return body;
-  }
-  return null;
-}
 
-function ensureJson(data) {
-  if (!data) return {};
-  if (typeof data === 'string') {
-    try {
-      return JSON.parse(data);
-    } catch (err) {
-      throw new ProxyError(400, 'Ogiltig JSON i begäran.');
+    const token = process.env.HF_TOKEN;
+    if (!token) {
+      return res.status(500).json({ error: 'HF_TOKEN saknas i miljön.' });
     }
-  }
-  if (data instanceof Buffer) {
-    return ensureJson(data.toString('utf8'));
-  }
-  return data;
-}
 
-async function invokeModel(telemetry, instruction = SYSTEM_PROMPT) {
-  if (!telemetry) {
-    throw new ProxyError(400, 'Fältet "telemetry" saknas.');
-  }
+    const payload = {
+      inputs: JSON.stringify({
+        instruktion: typeof instruction === 'string' && instruction.trim() ? instruction : SYSTEM_PROMPT,
+        telemetri: telemetry,
+      }),
+      parameters: {
+        temperature: 0.2,
+        max_new_tokens: 300,
+      },
+    };
 
-  const token = process.env.HF_TOKEN;
-  if (!token) {
-    throw new ProxyError(500, 'HF_TOKEN saknas i miljön.');
-  }
-
-  const payload = {
-    inputs: JSON.stringify({
-      instruktion: instruction || SYSTEM_PROMPT,
-      telemetri: telemetry,
-    }),
-    parameters: {
-      temperature: 0.2,
-      max_new_tokens: 300,
-    },
-  };
-
-  const response = await fetch(HF_API_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(payload),
-  });
-
-  const text = await response.text();
-  let data = null;
-  if (text) {
-    try {
-      data = JSON.parse(text);
-    } catch (err) {
-      throw new ProxyError(502, 'Kunde inte tolka svaret från Hugging Face.');
-    }
-  }
-
-  if (!response.ok) {
-    const message = data?.error || text || `Hugging Face svarade ${response.status}`;
-    throw new ProxyError(response.status, typeof message === 'string' ? message.slice(0, 500) : 'Fel från Hugging Face.');
-  }
-
-  return data;
-}
-
-function send(res, statusCode, payload) {
-  if (!res) {
-    return toJsonResponse(statusCode, payload);
-  }
-
-  if (typeof res.setHeader === 'function') {
-    Object.entries(corsHeaders).forEach(([key, value]) => {
-      res.setHeader(key, value);
+    const response = await fetch(HF_API_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(payload),
     });
-  }
 
-  if (typeof res.status === 'function') {
-    res.status(statusCode);
-    if (typeof res.json === 'function') {
-      res.json(payload);
-    } else {
-      res.end(payload ? JSON.stringify(payload) : '');
+    const text = await response.text();
+    const content = text ? safeJsonParse(text) : null;
+
+    if (!response.ok) {
+      const message = (content && content.error) || text || `Hugging Face svarade ${response.status}`;
+      return res.status(response.status).json({
+        error: typeof message === 'string' ? message.slice(0, 500) : 'Fel från Hugging Face.',
+      });
     }
-  } else if (typeof res.writeHead === 'function') {
-    res.writeHead(statusCode, corsHeaders);
-    res.end(payload ? JSON.stringify(payload) : '');
-  } else {
-    res.end(payload ? JSON.stringify(payload) : '');
+
+    return res.status(200).json(content);
+  } catch (error) {
+    console.error('Proxyfel:', error);
+    const statusCode = error instanceof JsonParseError ? 502 : 500;
+    const message = error instanceof JsonParseError ? error.message : 'Oväntat fel i proxyn.';
+    return res.status(statusCode).json({ error: message });
   }
+});
 
-  return undefined;
-}
+class JsonParseError extends Error {}
 
-async function handleRequestBody(body) {
-  const parsed = ensureJson(body || {});
-  const telemetry = extractTelemetry(parsed);
-  const instruction = typeof parsed.instruction === 'string' ? parsed.instruction : SYSTEM_PROMPT;
-  return invokeModel(telemetry, instruction);
-}
-
-export default async function handler(req, res) {
-  const method = req?.method?.toUpperCase?.();
-
-  if (method === 'OPTIONS') {
-    return send(res, 204, null);
-  }
-
-  if (method && method !== 'POST') {
-    return send(res, 405, { error: 'Endast POST stöds.' });
-  }
-
+function safeJsonParse(text) {
   try {
-    const data = await handleRequestBody(req?.body);
-    return send(res, 200, data);
+    return JSON.parse(text);
   } catch (err) {
-    const statusCode = err instanceof ProxyError ? err.statusCode : 500;
-    const message = err instanceof ProxyError ? err.message : 'Oväntat fel i proxyn.';
-    return send(res, statusCode, { error: message });
+    throw new JsonParseError('Kunde inte tolka svaret från Hugging Face.');
   }
 }
 
-export const handler = async (event) => {
-  const method = event?.httpMethod?.toUpperCase?.();
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
 
-  if (method === 'OPTIONS') {
-    return toJsonResponse(204);
-  }
-
-  if (method && method !== 'POST') {
-    return toJsonResponse(405, { error: 'Endast POST stöds.' });
-  }
-
-  try {
-    const data = await handleRequestBody(event?.body);
-    return toJsonResponse(200, data);
-  } catch (err) {
-    const statusCode = err instanceof ProxyError ? err.statusCode : 500;
-    const message = err instanceof ProxyError ? err.message : 'Oväntat fel i proxyn.';
-    return toJsonResponse(statusCode, { error: message });
-  }
-};

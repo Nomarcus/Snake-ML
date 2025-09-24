@@ -13,49 +13,34 @@ Refactored reinforcement learning playground for the Snake environment with supp
 
 ## Hugging Face-proxy för AI Auto-Tune
 
-AI Auto-Tune körs nu genom en serverless proxy (`api/proxy.js`) så att Hugging Face-tokenen aldrig laddas i webbläsaren. Funktionen accepterar `POST /api/proxy` med ett JSON-objekt `{ "telemetry": ... }`, läser tokenen från miljövariabeln `HF_TOKEN`, och returnerar oförändrat JSON-svar från Inference API:t.
 
-### Sätt `HF_TOKEN` som hemlighet
+AI Auto-Tune går via en liten Express-server (`api/proxy.js`) som körs som en Render Web Service. Den exponerar `POST /api/proxy`, accepterar ett JSON-objekt `{ "telemetry": ..., "instruction": ... }`, läser din Hugging Face-token från miljövariabeln `HF_TOKEN` och returnerar svar från Inference API:t utan att tokenen någonsin lämnar backend.
 
-- Skapa ett lästoken i [Hugging Face → Settings → Access Tokens](https://huggingface.co/settings/tokens) om du inte redan har ett.
-- **Render** – öppna din tjänst, gå till **Environment**, välj **Add Secret File or Environment Variable** och skapa ny variabel `HF_TOKEN` med ditt lästoken från Hugging Face. Render använder Node 18+ vilket ger inbyggt `fetch`-stöd.
-- **Netlify** – i projektets **Site configuration → Environment variables** lägger du till `HF_TOKEN`. Deploys får automatiskt åtkomst till värdet.
-- **Vercel** – under **Settings → Environment Variables** för projektet lägger du till `HF_TOKEN` (typ `Encrypted`). Kör en ny deploy för att exponera värdet för funktionen.
+### Deploya på Render
 
-### Deploya proxyn
-
-- **Netlify Functions** – ställ in **Functions directory** till `api` (eller kopiera filen dit), låt Node-versionen vara ≥ 18 och deploya. Netlify serverar funktionen som `/.netlify/functions/proxy`, eller `/api/proxy` om du använder edge/Next runtime.
-- **Vercel** – katalogen `api/` tolkas som serverless functions. Importera repot, sätt `HF_TOKEN` och deploya; funktionen exponeras som `https://<ditt-projekt>.vercel.app/api/proxy`.
-- **Render** – skapa en minimal Node-tjänst som använder filen:
-
-  ```js
-  import express from 'express';
-  import handler from './api/proxy.js';
-
-  const app = express();
-  app.use(express.json());
-  app.post('/api/proxy', handler);
-
-  const port = process.env.PORT || 3000;
-  app.listen(port, () => console.log(`Proxy listening on ${port}`));
-  ```
-
-  Lägg filen som `server.js`, kör `npm install express`, sätt startkommandot till `node server.js` och lägg till `HF_TOKEN` under **Environment** i Render.
+1. Skapa ett lästoken i [Hugging Face → Settings → Access Tokens](https://huggingface.co/settings/tokens) om du inte redan har ett.
+2. På [Render](https://dashboard.render.com/) väljer du **New → Web Service** och kopplar ditt Snake-ML-repo.
+3. Ställ in:
+   - **Environment**: Node
+   - **Region**: valfri
+   - **Build Command**: `npm install`
+   - **Start Command**: `node api/proxy.js`
+4. Under **Environment → Add Environment Variable** lägger du till `HF_TOKEN` med ditt Hugging Face-lästoken.
+5. Deploya tjänsten. Render tilldelar en publik URL, exempelvis `https://snake-ml-backend.onrender.com`.
 
 ### Koppla frontend till proxyn
 
-- Om frontend och proxy hostas på samma domän (t.ex. Vercel för både UI och funktion) fungerar standardvägen `fetch('/api/proxy', ...)` utan ändringar.
-- För GitHub Pages eller andra separata domäner, sätt `window.API_BASE_URL` till basadressen för proxyn innan `hf-tuner.js` laddas. Ett enkelt sätt är att lägga till ett inline-script precis före modulimporten:
-  - Netlify Functions använder sökvägen `/.netlify/functions`. Sätt `window.API_BASE_URL = 'https://ditt-projekt.netlify.app/.netlify/functions'` så pekar proxyn automatiskt på `/.netlify/functions/proxy`.
+- Om backend och frontend ligger på samma host (t.ex. du proxar via ett eget domännamn) kan frontend fortsätta anropa `fetch('/api/proxy', ...)` utan ändringar.
+- För fristående frontend (GitHub Pages, Netlify, etc.) sätter du `window.API_BASE_URL` till basadressen för Render-tjänsten innan `hf-tuner.js` laddas:
 
   ```html
   <script>
-    window.API_BASE_URL = 'https://ditt-backend.exempel.com';
+    window.API_BASE_URL = 'https://snake-ml-backend.onrender.com';
   </script>
   <script type="module" src="hf-tuner.js"></script>
   ```
 
-  Värdet sparas inte i repot och kan ändras mellan miljöer. Funktionen hanterar även CORS och svarar på `OPTIONS` för preflight-anrop.
+  `hf-tuner.js` fogar automatiskt på `/api/proxy` så att alla anrop går via Render-backenden.
 
 
 ## CLI usage
