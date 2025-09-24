@@ -35,7 +35,6 @@ header{
   box-shadow:0 20px 40px rgba(6,8,20,0.6);
 }
 header .header-inner{
-  max-width:1480px;
   margin:0 auto;
   padding:0 32px;
   display:flex;
@@ -87,14 +86,10 @@ header .header-inner{
   border-color:rgba(139,92,246,0.45);
 }
 main.layout{
-  max-width:1480px;
   margin:32px auto 48px;
   padding:0 24px 40px;
   display:grid;
   gap:32px;
-  grid-template-columns:minmax(520px,1fr) minmax(260px,320px) minmax(260px,320px);
-  align-items:start;
-  grid-auto-flow:row;
 }
 .card{
   background:linear-gradient(155deg,rgba(34,41,82,0.88) 0%,rgba(18,21,46,0.92) 100%);
@@ -110,10 +105,6 @@ main.layout{
 .game-card{grid-column:1;}
 .control-card{
   grid-column:2;
-  align-self:start;
-}
-.tuning-card{
-  grid-column:3;
   align-self:start;
 }
 .card-head{
@@ -651,7 +642,6 @@ footer{
   padding:18px;
   font-size:12px;
 }
-@media(max-width:1200px){
   main.layout{
     grid-template-columns:minmax(0,560px) minmax(0,1fr);
   }
