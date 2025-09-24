@@ -10,6 +10,37 @@ Refactored reinforcement learning playground for the Snake environment with supp
 - **Disk guardrails** – checkpoints and logs honour interval, cooldown, retention and disk size caps with atomic writes and automatic pruning.
 - **Evaluations & rollback** – lightweight greedy evaluations every 2000 episodes, best-model retention, and rollback on catastrophic regression.
 
+## AI Auto-Tune API key
+
+The browser-side AI Auto-Tune module calls OpenAI's GPT-4o-mini endpoint. It requires `OPENAI_API_KEY` to be present at runtime.
+
+### Local development
+
+1. Create a `.env` file in the project root containing your key:
+   ```env
+   OPENAI_API_KEY=sk-your-key
+   ```
+2. Export the variables before starting a dev server or static file host, for example:
+   ```bash
+   set -a
+   source .env
+   set +a
+   npx http-server .
+   ```
+   Any tooling (`vite`, `webpack-dev-server`, etc.) works as long as it is launched from the same shell session so that `process.env.OPENAI_API_KEY` is populated.
+
+### GitHub Pages / Actions
+
+1. In your repository settings, add a secret named `OPENAI_API_KEY` containing the key.
+2. In the deployment workflow, expose the secret to the static bundle by writing it into a small bootstrap script before publishing, e.g.
+   ```yaml
+   - name: Inject OpenAI key
+     run: echo "window.__OPENAI_KEY='${OPENAI_API_KEY}'" > dist/openai-key.js
+     env:
+       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+   ```
+3. Include the generated script (`<script src="/openai-key.js"></script>`) in the published site so that `window.__OPENAI_KEY` is available to the client.
+
 ## CLI usage
 
 Training is handled through `train.js`. Install dependencies with `npm install` and start training, for example:
