@@ -1,6 +1,8 @@
+
 import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
+
 
 const HF_API_URL = 'https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3';
 
@@ -16,8 +18,10 @@ du vill uppdatera, t.ex.
 
 const app = express();
 
+
 app.use(cors({ origin: 'https://nomarcus.github.io' }));
 app.use(express.json({ limit: '1mb' }));
+
 
 app.post('/api/proxy', async (req, res) => {
   try {
