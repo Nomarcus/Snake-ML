@@ -92,7 +92,7 @@ main.layout{
   padding:0 24px 40px;
   display:grid;
   gap:32px;
-
+  grid-template-columns:minmax(0,560px) minmax(0,1fr);
   align-items:start;
 }
 .card{
@@ -105,6 +105,11 @@ main.layout{
   flex-direction:column;
   gap:18px;
   backdrop-filter:blur(18px);
+}
+.game-card{grid-column:1;}
+.control-card{
+  grid-column:2;
+  align-self:start;
 }
 .card-head{
   display:flex;
@@ -644,6 +649,10 @@ footer{
 @media(max-width:1050px){
   main.layout{
     grid-template-columns:1fr;
+  }
+  .game-card,
+  .control-card{
+    grid-column:1;
   }
   canvas#board{
     width:100%;
