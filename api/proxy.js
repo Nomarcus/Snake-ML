@@ -14,7 +14,8 @@ du vill uppdatera, t.ex.
 {
   "rewardConfig": {stepPenalty:0.008, fruitReward:12, ...},
   "hyper": {gamma:0.985, lr:0.0004, epsDecay:90000, ...}
-}`;
+}
+Svara **endast** med en enda rad giltig JSON utan någon extra text eller förklaring.`;
 
 const app = express();
 
