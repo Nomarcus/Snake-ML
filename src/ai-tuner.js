@@ -43,14 +43,6 @@ function formatChanges(changes=[]){
 }
 
 export function createAITuner(options={}){
-  const {
-    getVecEnv=()=>null,
-    fetchTelemetry,
-    applyRewardConfig,
-    applyHyperparameters,
-    log,
-    apiKey=null,
-  }=options;
   if(typeof fetchTelemetry!=='function'){
     throw new Error('createAITuner requires a fetchTelemetry() function');
   }
