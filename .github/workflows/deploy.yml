@@ -34,6 +34,12 @@ jobs:
           if [ -d src ]; then cp -R src dist/src; fi
           if [ -d public ]; then cp -R public/. dist/; fi
 
+       
+      - name: Debug dist content
+        run: |
+          echo "---- Dist innehåll ----"
+          ls -R dist
+
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v2
         with:
