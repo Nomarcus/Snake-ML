@@ -35,7 +35,6 @@ header{
   box-shadow:0 20px 40px rgba(6,8,20,0.6);
 }
 header .header-inner{
-  max-width:1180px;
   margin:0 auto;
   padding:0 32px;
   display:flex;
@@ -87,12 +86,10 @@ header .header-inner{
   border-color:rgba(139,92,246,0.45);
 }
 main.layout{
-  max-width:1180px;
   margin:32px auto 48px;
   padding:0 24px 40px;
   display:grid;
   gap:32px;
-  grid-template-columns:repeat(2,minmax(0,1fr));
   align-items:start;
   grid-auto-flow:row;
 }
@@ -106,76 +103,6 @@ main.layout{
   flex-direction:column;
   gap:18px;
   backdrop-filter:blur(18px);
-}
-.card-body{
-  display:flex;
-  flex-direction:column;
-  gap:18px;
-}
-.card.collapsible .card-head{
-  display:grid;
-  grid-template-columns:1fr auto;
-  align-items:flex-start;
-  gap:12px;
-}
-.card.collapsible .card-toolbar{
-  display:flex;
-  align-items:flex-start;
-  gap:12px;
-  flex-wrap:wrap;
-  justify-content:flex-end;
-}
-.card.collapsible .card-toolbar .card-actions{
-  flex:1 1 auto;
-  justify-content:flex-end;
-}
-.card.collapsible.collapsed .card-body{
-  display:none;
-}
-.card-title{
-  display:flex;
-  flex-direction:column;
-  gap:6px;
-}
-.collapse-toggle{
-  width:34px;
-  height:34px;
-  border-radius:12px;
-  border:1px solid rgba(128,138,206,0.35);
-  background:rgba(32,38,82,0.85);
-  color:#d4dcff;
-  display:grid;
-  place-items:center;
-  cursor:pointer;
-  transition:.2s background,.2s color,.2s transform;
-}
-.card.collapsible .card-toolbar .collapse-toggle{
-  flex:0 0 auto;
-}
-.collapse-toggle:hover{
-  background:rgba(40,48,102,0.9);
-  color:#fff;
-}
-.card.collapsible .collapse-toggle svg{
-  width:16px;
-  height:16px;
-  transition:transform .2s ease;
-}
-.card.collapsible.collapsed .collapse-toggle svg{
-  transform:rotate(-90deg);
-}
-.game-card{grid-column:1;}
-.stats-column{
-  grid-column:2;
-  display:flex;
-  flex-direction:column;
-  gap:32px;
-  align-self:stretch;
-  min-width:0;
-}
-.control-card,
-.tuning-card{
-  align-self:stretch;
 }
 .card-head{
   display:flex;
@@ -205,7 +132,7 @@ h2{
 }
 canvas#board{
   width:100%;
-  max-width:560px;
+  max-width:640px;
   aspect-ratio:1/1;
   border-radius:26px;
   background:radial-gradient(140% 140% at 30% 20%,#273067 0%,#151a3a 50%,#0d1127 100%);
@@ -712,12 +639,21 @@ footer{
   padding:18px;
   font-size:12px;
 }
+  }
+  .control-card{
+    grid-column:2;
+  }
+  .tuning-card{
+    grid-column:2;
+    grid-row:2;
+  }
+}
 @media(max-width:1050px){
   main.layout{
     grid-template-columns:1fr;
   }
   .game-card,
-  .stats-column{
+
     grid-column:1;
   }
   canvas#board{
@@ -789,7 +725,7 @@ footer{
       </div>
       <span class="badge soft" id="playbackLabel">Smooth realtime</span>
     </div>
-    <canvas id="board" width="500" height="500"></canvas>
+    <canvas id="board" width="640" height="640"></canvas>
     <div class="controls primary">
       <button id="btnTrain">▶ Start training</button>
       <button id="btnPause" class="secondary">⏸ Pause</button>
@@ -811,33 +747,7 @@ footer{
     </div>
   </section>
 
-  <div class="stats-column">
-    <section class="card control-card collapsible">
-      <div class="card-head">
-        <div class="card-title">
-          <h2>Learning</h2>
-        </div>
-        <div class="card-toolbar">
-          <div class="card-actions">
-            <button id="btnSave" class="secondary">Save</button>
-            <button id="btnLoad" class="secondary">Load</button>
-            <button id="btnLoadModel" class="secondary">Load model</button>
-            <button id="btnClear" class="danger">Clear cache</button>
-          </div>
-          <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="learningPanel" aria-label="Collapse learning panel" data-label-collapse="Collapse learning panel" data-label-expand="Expand learning panel" title="Collapse panel">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <polyline points="6 9 12 15 18 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
-        </div>
-      </div>
-      <div class="card-body" id="learningPanel">
-        <div class="controls tertiary">
-          <div class="pill-group" id="modeGroup" role="group" aria-label="Training mode">
-            <button type="button" class="pill active" data-mode="manual">Manual</button>
-            <button type="button" class="pill" data-mode="auto">Auto</button>
-          </div>
-          <span class="hint">Auto handles the curriculum, save logic, and hyperparameters for you.</span>
+
         </div>
         <div class="field block">
           <label for="algoSelect">Algorithm</label>
@@ -900,12 +810,7 @@ footer{
           <h2>Reward &amp; tuning</h2>
           <span class="hint">Adjust incentives and hyperparameters.</span>
         </div>
-        <div class="card-toolbar">
-          <button type="button" class="collapse-toggle" aria-expanded="true" aria-controls="tuningPanel" aria-label="Collapse reward and tuning panel" data-label-collapse="Collapse reward and tuning panel" data-label-expand="Expand reward and tuning panel" title="Collapse panel">
-            <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-              <polyline points="6 9 12 15 18 9" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            </svg>
-          </button>
+
         </div>
       </div>
   
@@ -1109,8 +1014,7 @@ footer{
         </div>
       </details>
       </div>
-    </section>
-  </div>
+
 </main>
 
 <section id="guideView" class="hidden">
