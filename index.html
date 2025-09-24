@@ -959,6 +959,23 @@ footer{
       <li><strong>Fruit reward:</strong> the main reward when a fruit is eaten. Raise it for more aggressive fruit chasing.</li>
       <li><strong>Compactness bonus:</strong> gives a small bonus when the occupied area becomes denser (lower difference between the bounding box and snake length). Increase it late in training if you want the body packed tightly.</li>
     </ul>
+    <h3>Reading the reward telemetry</h3>
+    <ul>
+      <li><strong>Columns:</strong> <em>Last</em> shows the latest episode, <em>Avg 100</em>/<em>Avg 500</em> are rolling means, <em>Trend</em> compares the most recent 100 episodes with the previous 100, and <em>Share</em> normalises each component against the absolute total so you can spot dominant contributors.</li>
+      <li><strong>Net reward row:</strong> sums every component; a positive trend confirms that training is heading in the right direction.</li>
+      <li><strong>Component labels:</strong> bonuses tagged as positive (fruit, approach, open space) should stay ≥ 0, whereas penalties (step, loop, revisit, crashes) normally sit ≤ 0. Large negative shares mean the snake spends much of its time incurring that cost.</li>
+      <li><strong>Healthy patterns:</strong> rising fruit/approach bonuses combined with shrinking loop/revisit penalties signal better navigation. Persistent step penalties dominating the share column indicate wandering without progress.</li>
+      <li><strong>Warning signs:</strong> a falling fruit trend or growing crash penalties hint at stagnation. Track the 100-episode averages to confirm whether the issue is a blip or a sustained regression.</li>
+    </ul>
+    <h3>Automatic reward tuning thresholds</h3>
+    <p>The auto-scheduler tweaks sliders when telemetry crosses strict limits. Manual overrides are still available, but these rules explain why certain values change on their own:</p>
+    <ul>
+      <li><strong>Loop penalty:</strong> increased when <em>LoopHitRate</em> (loop detections ÷ total steps over the last 500 episodes) exceeds 1 % <em>and</em> the fruit trend stalls or turns negative. At the same time the compactness bonus is disabled to avoid encouraging tight spirals.</li>
+      <li><strong>Revisit penalty:</strong> raised once <em>RevisitRate</em> (recent-tile penalties ÷ total steps across 500 episodes) climbs beyond 1 %, pushing the policy toward fresh territory.</li>
+      <li><strong>Self crash penalty:</strong> boosted only if self-collisions account for more than 40 % of episode endings, signalling that survivability has become the main issue.</li>
+      <li><strong>Approach/retreat weights:</strong> adjusted together when the average time-to-fruit stays high while both loop and revisit rates are low, nudging the snake to pursue fruit more assertively.</li>
+      <li><strong>Metric windows:</strong> all trigger checks use the latest 500-episode aggregates, so brief spikes rarely trip them. If a slider never moves automatically, its condition likely has not been met.</li>
+    </ul>
   </div>
 
   <div class="card">
