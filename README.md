@@ -32,14 +32,7 @@ The browser-side AI Auto-Tune module calls OpenAI's GPT-4o-mini endpoint. It req
 ### GitHub Pages / Actions
 
 1. In your repository settings, add a secret named `OPENAI_API_KEY` containing the key.
-2. In the deployment workflow, expose the secret to the static bundle by writing it into a small bootstrap script before publishing, e.g.
-   ```yaml
-   - name: Inject OpenAI key
-     run: echo "window.__OPENAI_KEY='${OPENAI_API_KEY}'" > dist/openai-key.js
-     env:
-       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-   ```
-3. Include the generated script (`<script src="/openai-key.js"></script>`) in the published site so that `window.__OPENAI_KEY` is available to the client.
+
 
 ## CLI usage
 
