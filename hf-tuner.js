@@ -122,6 +122,9 @@ export function createAITuner(options = {}) {
   }
 
   async function runTuningCycle(telemetry, episode) {
+    // 👇 Ny rad för felsökning
+    console.log('[hf-tuner] Telemetry som skickas till proxy:', telemetry);
+
     if (typeof fetch !== 'function') {
       if (!warnedNoFetch) {
         logEvent({
