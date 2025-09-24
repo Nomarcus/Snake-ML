@@ -21,7 +21,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Prepare static site bundle
         run: |
           rm -rf dist
@@ -29,7 +28,9 @@ jobs:
           cp index.html dist/
           if [ -f hf-tuner.js ]; then cp hf-tuner.js dist/; fi
           if [ -f __hf_key.js ]; then cp __hf_key.js dist/; fi
+
           if [ -f .nojekyll ]; then cp .nojekyll dist/; fi
+
           if [ -d src ]; then cp -R src dist/src; fi
           if [ -d public ]; then cp -R public/. dist/; fi
 
