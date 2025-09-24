@@ -107,6 +107,7 @@ export function createAITuner(options={}){
     let parsed;
     try{
       parsed=JSON.parse(content);
+      console.log('[AI Response]', parsed);
     }catch(err){
       throw new Error(`Kunde inte tolka JSON: ${content}`);
     }
