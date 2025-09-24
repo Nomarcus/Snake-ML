@@ -10,6 +10,7 @@ Refactored reinforcement learning playground for the Snake environment with supp
 - **Disk guardrails** – checkpoints and logs honour interval, cooldown, retention and disk size caps with atomic writes and automatic pruning.
 - **Evaluations & rollback** – lightweight greedy evaluations every 2000 episodes, best-model retention, and rollback on catastrophic regression.
 
+
 ## Hugging Face token for AI Auto-Tune
 
 The browser AI Auto-Tune integration now calls the Hugging Face Inference API with the model `mistralai/Mistral-7B-Instruct-v0.3`. The module reads a browser global named `window.__HF_KEY` from the checked-in `__hf_key.js` bootstrap script.
@@ -26,6 +27,7 @@ The browser AI Auto-Tune integration now calls the Hugging Face Inference API wi
 3. Token distribueras tillsammans med statiska filer (GitHub Pages, lokal hosting). Den räknas därför som publik – använd ett separat lästoken för demo/test.
 
 Workflowen `deploy.yml` kopierar `__hf_key.js` in i `dist/` utan att läsa hemligheter från GitHub Actions. Kontrollera in filen efter att du uppdaterat den så att rätt token följer med byggsteget.
+
 
 ## CLI usage
 
