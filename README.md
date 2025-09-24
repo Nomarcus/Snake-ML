@@ -26,7 +26,8 @@ The browser AI Auto-Tune integration now calls the Hugging Face Inference API wi
 2. Filen laddas före `hf-tuner.js`, vilket gör att token exponeras som `window.__HF_KEY` i webbläsaren.
 3. Token distribueras tillsammans med statiska filer (GitHub Pages, lokal hosting). Den räknas därför som publik – använd ett separat lästoken för demo/test.
 
-Workflowen `deploy.yml` kopierar `__hf_key.js` in i `dist/` utan att läsa hemligheter från GitHub Actions. Kontrollera in filen efter att du uppdaterat den så att rätt token följer med byggsteget.
+
+Workflowen `deploy.yml` kopierar `__hf_key.js` in i `dist/` utan att läsa hemligheter från GitHub Actions. Kontrollera in filen efter att du uppdaterat den så att rätt token följer med byggsteget. Distributionen innehåller även en `.nojekyll`-markör så att GitHub Pages serverar filer som börjar med understreck, exempelvis `__hf_key.js`.
 
 
 ## CLI usage
