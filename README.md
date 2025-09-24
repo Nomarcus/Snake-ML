@@ -32,8 +32,6 @@ The browser-side AI Auto-Tune module calls OpenAI's GPT-4o-mini endpoint. It req
 ### GitHub Pages / Actions
 
 1. In your repository settings, add a secret named `OPENAI_API_KEY` containing the key.
-2. The `deploy.yml` workflow writes `public/__key.js` before the build runs, injecting the key via `window.__OPENAI_KEY = '${{ secrets.OPENAI_API_KEY }}';` so the browser can read it.
-3. Because the bootstrap script ships with the published HTML, the secret is exposed to clients — treat it as a public token scoped only for this project.
 
 ## CLI usage
 

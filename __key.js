@@ -1,0 +1,1 @@
+window.__OPENAI_KEY = "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";
