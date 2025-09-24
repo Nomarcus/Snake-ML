@@ -1,5 +1,6 @@
 
 import express from 'express';
+import cors from 'cors';
 import fetch from 'node-fetch';
 
 
@@ -17,16 +18,10 @@ du vill uppdatera, t.ex.
 
 const app = express();
 
+
+app.use(cors({ origin: 'https://nomarcus.github.io' }));
 app.use(express.json({ limit: '1mb' }));
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Headers', 'content-type');
-  res.header('Access-Control-Allow-Methods', 'POST,OPTIONS');
-  if (req.method === 'OPTIONS') {
-    return res.status(204).send();
-  }
-  next();
-});
+
 
 app.post('/api/proxy', async (req, res) => {
   try {
@@ -92,4 +87,3 @@ function safeJsonParse(text) {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
-
