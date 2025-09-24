@@ -33,7 +33,6 @@ The browser-side AI Auto-Tune module calls OpenAI's GPT-4o-mini endpoint. It req
 
 1. In your repository settings, add a secret named `OPENAI_API_KEY` containing the key.
 
-
 ## CLI usage
 
 Training is handled through `train.js`. Install dependencies with `npm install` and start training, for example:
