@@ -92,8 +92,6 @@ main.layout{
   padding:0 24px 40px;
   display:grid;
   gap:32px;
-
-  align-items:start;
 }
 .card{
   background:linear-gradient(155deg,rgba(34,41,82,0.88) 0%,rgba(18,21,46,0.92) 100%);
@@ -644,6 +642,10 @@ footer{
 @media(max-width:1050px){
   main.layout{
     grid-template-columns:1fr;
+  }
+  .game-card,
+  .control-card{
+    grid-column:1;
   }
   canvas#board{
     width:100%;
