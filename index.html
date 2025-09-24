@@ -35,7 +35,7 @@ header{
   box-shadow:0 20px 40px rgba(6,8,20,0.6);
 }
 header .header-inner{
-  max-width:1180px;
+  max-width:1360px;
   margin:0 auto;
   padding:0 32px;
   display:flex;
@@ -87,12 +87,11 @@ header .header-inner{
   border-color:rgba(139,92,246,0.45);
 }
 main.layout{
-  max-width:1180px;
+  max-width:1360px;
   margin:32px auto 48px;
   padding:0 24px 40px;
   display:grid;
   gap:32px;
-  grid-template-columns:minmax(0,560px) minmax(0,1fr);
   align-items:start;
 }
 .card{
@@ -646,12 +645,25 @@ footer{
   padding:18px;
   font-size:12px;
 }
+@media(max-width:1280px){
+  main.layout{
+    grid-template-columns:minmax(0,560px) minmax(0,1fr);
+  }
+  .control-card{
+    grid-column:2;
+  }
+  .tuning-card{
+    grid-column:2;
+    grid-row:2;
+  }
+}
 @media(max-width:1050px){
   main.layout{
     grid-template-columns:1fr;
   }
   .game-card,
-  .control-card{
+  .control-card,
+  .tuning-card{
     grid-column:1;
   }
   canvas#board{
@@ -815,6 +827,13 @@ footer{
         </table>
       </div>
     </div>
+  </section>
+
+  <section class="card tuning-card">
+    <div class="card-head">
+      <h2>Reward &amp; tuning</h2>
+      <span class="hint">Adjust incentives and hyperparameters.</span>
+    </div>
 
     <details id="rewardPanel" open>
       <summary>Reward model</summary>
@@ -900,16 +919,16 @@ footer{
       <summary>Advanced settings</summary>
       <div class="stack" data-config="shared">
         <h3>Shared</h3>
-      <div class="row">
-        <label>Parallel environments
-          <input type="range" id="envCount" min="1" max="24" step="1" value="1">
-          <span class="mono" id="envCountReadout">1</span>
-        </label>
-        <label>γ (discount)
-          <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
-          <span class="mono" id="gammaReadout">0.98</span>
-        </label>
-        <label>LR
+        <div class="row">
+          <label>Parallel environments
+            <input type="range" id="envCount" min="1" max="24" step="1" value="1">
+            <span class="mono" id="envCountReadout">1</span>
+          </label>
+          <label>γ (discount)
+            <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
+            <span class="mono" id="gammaReadout">0.98</span>
+          </label>
+          <label>LR
             <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005">
             <span class="mono" id="lrReadout">0.0005</span>
           </label>
