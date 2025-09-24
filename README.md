@@ -11,23 +11,35 @@ Refactored reinforcement learning playground for the Snake environment with supp
 - **Evaluations & rollback** – lightweight greedy evaluations every 2000 episodes, best-model retention, and rollback on catastrophic regression.
 
 
-## Hugging Face token for AI Auto-Tune
+## Hugging Face-proxy för AI Auto-Tune
 
-The browser AI Auto-Tune integration now calls the Hugging Face Inference API with the model `mistralai/Mistral-7B-Instruct-v0.3`. The module reads a browser global named `window.__HF_KEY` from the checked-in `__hf_key.js` bootstrap script.
+AI Auto-Tune går via en liten Express-server (`api/proxy.js`) som körs som en Render Web Service. Den exponerar `POST /api/proxy`, accepterar ett JSON-objekt `{ "telemetry": ..., "instruction": ... }`, läser din Hugging Face-token från miljövariabeln `HF_TOKEN` och returnerar svar från Inference API:t utan att tokenen någonsin lämnar backend.
 
-### Skaffa ett lästoken
+### Deploya på Render
 
-1. Logga in på [huggingface.co](https://huggingface.co) och öppna **Settings → Access Tokens**.
-2. Skapa ett nytt token med typ **Read** (räcker för Inference API).
+1. Skapa ett lästoken i [Hugging Face → Settings → Access Tokens](https://huggingface.co/settings/tokens) om du inte redan har ett.
+2. På [Render](https://dashboard.render.com/) väljer du **New → Web Service** och kopplar ditt Snake-ML-repo.
+3. Ställ in:
+   - **Environment**: Node
+   - **Region**: valfri
+   - **Build Command**: `npm install`
+   - **Start Command**: `node api/proxy.js`
+4. Under **Environment → Add Environment Variable** lägger du till `HF_TOKEN` med ditt Hugging Face-lästoken.
+5. Deploya tjänsten. Render tilldelar en publik URL, exempelvis `https://snake-ml-backend.onrender.com`.
 
-### Konfigurera projektet
+### Koppla frontend till proxyn
 
-1. Öppna `__hf_key.js` och ersätt `hf_YOUR_TOKEN_HERE` med ditt Hugging Face-token.
-2. Filen laddas före `hf-tuner.js`, vilket gör att token exponeras som `window.__HF_KEY` i webbläsaren.
-3. Token distribueras tillsammans med statiska filer (GitHub Pages, lokal hosting). Den räknas därför som publik – använd ett separat lästoken för demo/test.
+- Om backend och frontend ligger på samma host (t.ex. du proxar via ett eget domännamn) kan frontend fortsätta anropa `fetch('/api/proxy', ...)` utan ändringar.
+- För fristående frontend (GitHub Pages, Netlify, etc.) sätter du `window.API_BASE_URL` till basadressen för Render-tjänsten innan `hf-tuner.js` laddas:
 
+  ```html
+  <script>
+    window.API_BASE_URL = 'https://snake-ml-backend.onrender.com';
+  </script>
+  <script type="module" src="hf-tuner.js"></script>
+  ```
 
-Workflowen `deploy.yml` kopierar `__hf_key.js` in i `dist/` utan att läsa hemligheter från GitHub Actions. Kontrollera in filen efter att du uppdaterat den så att rätt token följer med byggsteget. Distributionen innehåller även en `.nojekyll`-markör så att GitHub Pages serverar filer som börjar med understreck, exempelvis `__hf_key.js`.
+  `hf-tuner.js` fogar automatiskt på `/api/proxy` så att alla anrop går via Render-backenden.
 
 
 ## CLI usage
