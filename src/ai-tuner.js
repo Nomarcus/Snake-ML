@@ -49,7 +49,7 @@ const {
   applyRewardConfig,
   applyHyperparameters,
   log,
-  apiKey = null,   // ✅ standardvärde
+  apiKey = null,  
 } = options;
   if(typeof fetchTelemetry!=='function'){
     throw new Error('createAITuner requires a fetchTelemetry() function');
