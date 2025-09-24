@@ -1,0 +1,52 @@
+name: Deploy Snake-ML to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare static site bundle
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          rm -rf dist
+          mkdir -p dist public
+          printf "window.__OPENAI_KEY = '%s';\n" "${OPENAI_API_KEY}" > public/__key.js
+          cp index.html dist/
+          if [ -f ai-tuner.js ]; then cp ai-tuner.js dist/; fi
+          if [ -d src ]; then cp -R src dist/src; fi
+          if [ -d public ]; then cp -R public/. dist/; fi
+          cp public/__key.js dist/__key.js
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@v2
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v3
