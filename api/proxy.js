@@ -36,16 +36,17 @@ app.post('/api/proxy', async (req, res) => {
       return res.status(500).json({ error: 'HF_TOKEN saknas i miljön.' });
     }
 
-    const payload = {
-      inputs: JSON.stringify({
-        instruktion: typeof instruction === 'string' && instruction.trim() ? instruction : SYSTEM_PROMPT,
-        telemetri: telemetry,
-      }),
-      parameters: {
-        temperature: 0.2,
-        max_new_tokens: 300,
-      },
-    };
+const payload = {
+  inputs: `${
+    typeof instruction === 'string' && instruction.trim()
+      ? instruction
+      : SYSTEM_PROMPT
+  }\n\n${JSON.stringify(telemetry)}`,
+  parameters: {
+    temperature: 0.2,
+    max_new_tokens: 300,
+  },
+};
 
     const response = await fetch(HF_API_URL, {
       method: 'POST',
