@@ -23,11 +23,15 @@ jobs:
         uses: actions/checkout@v4
 
 
+      - name: Prepare static site bundle
+        run: |
+          rm -rf dist
+          mkdir -p dist
           cp index.html dist/
-          if [ -f ai-tuner.js ]; then cp ai-tuner.js dist/; fi
+          if [ -f hf-tuner.js ]; then cp hf-tuner.js dist/; fi
+          if [ -f __hf_key.js ]; then cp __hf_key.js dist/; fi
           if [ -d src ]; then cp -R src dist/src; fi
           if [ -d public ]; then cp -R public/. dist/; fi
-
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v2

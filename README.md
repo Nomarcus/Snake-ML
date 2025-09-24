@@ -10,28 +10,24 @@ Refactored reinforcement learning playground for the Snake environment with supp
 - **Disk guardrails** – checkpoints and logs honour interval, cooldown, retention and disk size caps with atomic writes and automatic pruning.
 - **Evaluations & rollback** – lightweight greedy evaluations every 2000 episodes, best-model retention, and rollback on catastrophic regression.
 
-## AI Auto-Tune API key
 
-The browser-side AI Auto-Tune module calls OpenAI's GPT-4o-mini endpoint. It requires `OPENAI_API_KEY` to be present at runtime.
+## Hugging Face token for AI Auto-Tune
 
-### Local development
+The browser AI Auto-Tune integration now calls the Hugging Face Inference API with the model `mistralai/Mistral-7B-Instruct-v0.3`. The module reads a browser global named `window.__HF_KEY` from the checked-in `__hf_key.js` bootstrap script.
 
-1. Create a `.env` file in the project root containing your key:
-   ```env
-   OPENAI_API_KEY=sk-your-key
-   ```
-2. Export the variables before starting a dev server or static file host, for example:
-   ```bash
-   set -a
-   source .env
-   set +a
-   npx http-server .
-   ```
-   Any tooling (`vite`, `webpack-dev-server`, etc.) works as long as it is launched from the same shell session so that `process.env.OPENAI_API_KEY` is populated.
+### Skaffa ett lästoken
 
-### GitHub Pages / Actions
+1. Logga in på [huggingface.co](https://huggingface.co) och öppna **Settings → Access Tokens**.
+2. Skapa ett nytt token med typ **Read** (räcker för Inference API).
 
-1. In your repository settings, add a secret named `OPENAI_API_KEY` containing the key.
+### Konfigurera projektet
+
+1. Öppna `__hf_key.js` och ersätt `hf_YOUR_TOKEN_HERE` med ditt Hugging Face-token.
+2. Filen laddas före `hf-tuner.js`, vilket gör att token exponeras som `window.__HF_KEY` i webbläsaren.
+3. Token distribueras tillsammans med statiska filer (GitHub Pages, lokal hosting). Den räknas därför som publik – använd ett separat lästoken för demo/test.
+
+Workflowen `deploy.yml` kopierar `__hf_key.js` in i `dist/` utan att läsa hemligheter från GitHub Actions. Kontrollera in filen efter att du uppdaterat den så att rätt token följer med byggsteget.
+
 
 ## CLI usage
 
