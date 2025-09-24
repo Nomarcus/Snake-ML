@@ -7,38 +7,60 @@
 <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <style>
 :root {
-  --bg:#0f1220;
-  --panel:#151936;
-  --ink:#e7eaf6;
-  --muted:#9aa3c7;
-  --accent-a:#6c7bff;
-  --accent-b:#9b5cff;
-  --danger:#ff4b6e;
+  --bg:#090d1f;
+  --panel:#141936;
+  --ink:#eef2ff;
+  --muted:#9ba8d6;
+  --accent-a:#8b5cf6;
+  --accent-b:#ec4899;
+  --danger:#f43f5e;
+  --stroke:rgba(134,144,214,0.18);
 }
 *{box-sizing:border-box}
 body{
   margin:0;
   min-height:100vh;
-  background:radial-gradient(1200px 600px at 20% -10%,#1a2050 0%,#101326 40%,#0b0e1c 100%);
+  background:radial-gradient(160% 140% at 20% -20%,#202866 0%,#131834 45%,#090d1f 100%);
   color:var(--ink);
   font:14px/1.5 "Inter","Segoe UI",Roboto,sans-serif;
 }
 header{
-  padding:16px 24px;
-  display:flex;
-  align-items:center;
-  gap:14px;
+  padding:20px 0;
   position:sticky;
   top:0;
   z-index:10;
-  background:rgba(10,13,24,.65);
-  backdrop-filter:blur(10px);
-  border-bottom:1px solid #1b1f3a;
+  background:linear-gradient(135deg,rgba(28,33,72,0.85),rgba(12,16,36,0.88));
+  backdrop-filter:blur(18px);
+  border-bottom:1px solid var(--stroke);
+  box-shadow:0 20px 40px rgba(6,8,20,0.6);
+}
+header .header-inner{
+  max-width:1180px;
+  margin:0 auto;
+  padding:0 32px;
+  display:flex;
+  align-items:center;
+  gap:18px;
 }
 .logo{
-  font-weight:900;
-  font-size:18px;
-  background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
+  font-weight:800;
+  font-size:20px;
+  display:flex;
+  align-items:center;
+  gap:12px;
+  color:var(--ink);
+  letter-spacing:0.01em;
+}
+.logo::before{
+  content:"";
+  width:24px;
+  height:24px;
+  border-radius:8px;
+  background:linear-gradient(140deg,var(--accent-a),var(--accent-b));
+  box-shadow:0 0 24px rgba(236,72,153,0.4);
+}
+.logo-text{
+  background:linear-gradient(140deg,var(--accent-a),var(--accent-b));
   -webkit-background-clip:text;
   -webkit-text-fill-color:transparent;
 }
@@ -52,40 +74,52 @@ header{
 .badge{
   padding:6px 12px;
   border-radius:999px;
-  border:1px solid #2a2f61;
-  background:#1a1f46;
-  color:#cfd6ff;
+  border:1px solid rgba(134,144,214,0.35);
+  background:rgba(26,32,74,0.75);
+  color:#cfd5ff;
   font-size:12px;
   font-weight:600;
+  box-shadow:0 8px 18px rgba(8,12,32,0.35);
 }
 .badge.soft{
-  background:rgba(108,123,255,.15);
-  color:#cfd6ff;
-  border-color:rgba(108,123,255,.4);
+  background:rgba(139,92,246,0.18);
+  color:#e9ecff;
+  border-color:rgba(139,92,246,0.45);
 }
 main.layout{
-  max-width:1200px;
-  margin:24px auto;
-  padding:0 16px 40px;
+  max-width:1180px;
+  margin:32px auto 48px;
+  padding:0 24px 40px;
   display:grid;
-  gap:16px;
-  grid-template-columns:520px 1fr;
+  gap:32px;
+  grid-template-columns:minmax(0,1fr) 380px;
+  align-items:start;
 }
 .card{
-  background:var(--panel);
-  border:1px solid #1b1f3a;
-  border-radius:16px;
-  padding:18px;
-  box-shadow:0 10px 30px rgba(0,0,0,.25);
+  background:linear-gradient(155deg,rgba(34,41,82,0.88) 0%,rgba(18,21,46,0.92) 100%);
+  border:1px solid var(--stroke);
+  border-radius:24px;
+  padding:24px;
+  box-shadow:0 24px 50px rgba(6,8,24,0.55);
   display:flex;
   flex-direction:column;
-  gap:12px;
+  gap:18px;
+  backdrop-filter:blur(18px);
 }
 .card-head{
   display:flex;
   justify-content:space-between;
   align-items:center;
   gap:12px;
+}
+.game-card .card-head{
+  align-items:flex-start;
+  gap:18px;
+}
+.game-card .card-head .subtitle{
+  margin:4px 0 0;
+  font-size:13px;
+  color:var(--muted);
 }
 .card-actions{
   display:flex;
@@ -94,55 +128,90 @@ main.layout{
 }
 h2{
   margin:0;
-  font-size:16px;
-  color:#dfe3ff;
+  font-size:20px;
+  color:#f0f2ff;
+  letter-spacing:0.01em;
 }
 canvas#board{
-  width:500px;
-  height:500px;
-  border-radius:18px;
-  background:radial-gradient(120% 120% at 30% 20%,#151d4c 0%,#0f1328 60%);
-  border:1px solid #1b1f3a;
-  box-shadow:0 14px 40px rgba(15,20,60,.45);
+  width:100%;
+  max-width:560px;
+  aspect-ratio:1/1;
+  border-radius:26px;
+  background:radial-gradient(140% 140% at 30% 20%,#273067 0%,#151a3a 50%,#0d1127 100%);
+  border:1px solid rgba(128,140,210,0.25);
+  box-shadow:0 40px 80px rgba(8,12,42,0.55);
   align-self:center;
 }
 .controls{
   display:flex;
   flex-wrap:wrap;
-  gap:10px;
+  gap:12px;
   align-items:center;
+}
+.controls.primary{
+  width:100%;
+  justify-content:center;
+  background:rgba(21,26,60,0.62);
+  border-radius:18px;
+  padding:14px;
+  border:1px solid rgba(128,138,206,0.25);
+  box-shadow:0 18px 36px rgba(8,12,34,0.45);
+}
+.controls.primary button{
+  flex:1 1 140px;
+  min-width:140px;
 }
 .controls.secondary{
+  width:100%;
   justify-content:space-between;
+  background:rgba(19,24,54,0.6);
+  border-radius:16px;
+  padding:14px 16px;
+  border:1px solid rgba(128,138,206,0.2);
+  box-shadow:0 16px 34px rgba(6,10,30,0.38);
 }
 .controls.tertiary{
+  width:100%;
   justify-content:space-between;
   align-items:center;
-  gap:12px;
+  gap:14px;
   flex-wrap:wrap;
+  background:rgba(19,24,54,0.6);
+  border-radius:16px;
+  padding:14px 16px;
+  border:1px solid rgba(128,138,206,0.2);
+  box-shadow:0 16px 34px rgba(6,10,30,0.38);
 }
 button{
   appearance:none;
   border:none;
-  padding:10px 14px;
-  border-radius:10px;
+  padding:11px 16px;
+  border-radius:12px;
   color:#fff;
   background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
   font-weight:700;
   cursor:pointer;
-  transition:.2s transform,.2s box-shadow;
-  box-shadow:0 6px 20px rgba(108,123,255,.35);
+  transition:.25s transform,.25s box-shadow;
+  box-shadow:0 18px 36px rgba(236,72,153,0.35);
+  letter-spacing:0.01em;
 }
-button:hover{transform:translateY(-1px)}
+button:hover{transform:translateY(-2px)}
 button.secondary{
-  background:#23284f;
+  background:rgba(32,38,82,0.85);
   box-shadow:none;
-  color:#cfd6ff;
-  border:1px solid #2a2f61;
+  color:#d4dcff;
+  border:1px solid rgba(128,138,206,0.35);
+}
+button.secondary:hover{
+  background:rgba(40,48,102,0.9);
+  border-color:rgba(155,168,235,0.45);
 }
 button.danger{
-  background:linear-gradient(135deg,#ff6b6b,#ff3d77);
+  background:linear-gradient(135deg,#fb7185,#ef4444);
   box-shadow:none;
+}
+button.danger:hover{
+  background:linear-gradient(135deg,#f43f5e,#dc2626);
 }
 button:disabled{
   opacity:0.6;
@@ -150,29 +219,34 @@ button:disabled{
   transform:none;
   box-shadow:none;
 }
+button:focus-visible{
+  outline:2px solid rgba(139,92,246,0.6);
+  outline-offset:3px;
+}
 .pill-group{
   display:inline-flex;
   gap:6px;
-  background:#1a1f46;
-  padding:4px;
+  background:rgba(26,32,74,0.8);
+  padding:6px;
   border-radius:999px;
-  border:1px solid #2a2f61;
+  border:1px solid rgba(128,138,206,0.35);
+  box-shadow:0 14px 30px rgba(8,12,34,0.4);
 }
 .pill-group .pill{
   appearance:none;
   border:none;
-  padding:8px 14px;
+  padding:8px 16px;
   border-radius:999px;
   background:transparent;
-  color:#cfd6ff;
+  color:#d4dcff;
   font-weight:600;
   cursor:pointer;
-  transition:.2s background,.2s color;
+  transition:.2s background,.2s color,.2s box-shadow;
 }
 .pill-group .pill.active{
   background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
   color:#fff;
-  box-shadow:0 4px 14px rgba(108,123,255,.35);
+  box-shadow:0 12px 26px rgba(236,72,153,0.35);
 }
 .field{
   display:flex;
@@ -194,25 +268,59 @@ button:disabled{
 }
 input[type="range"]{
   width:200px;
+  -webkit-appearance:none;
+  background:rgba(38,45,92,0.85);
+  height:6px;
+  border-radius:999px;
+  outline:none;
+}
+input[type="range"]::-webkit-slider-runnable-track{
+  height:6px;
+  border-radius:999px;
+  background:rgba(38,45,92,0.85);
+}
+input[type="range"]::-webkit-slider-thumb{
+  -webkit-appearance:none;
+  width:16px;
+  height:16px;
+  border-radius:50%;
+  background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
+  box-shadow:0 6px 16px rgba(236,72,153,0.35);
+  margin-top:-5px;
+  border:none;
+}
+input[type="range"]::-moz-range-track{
+  height:6px;
+  border-radius:999px;
+  background:rgba(38,45,92,0.85);
+}
+input[type="range"]::-moz-range-thumb{
+  width:16px;
+  height:16px;
+  border-radius:50%;
+  background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
+  box-shadow:0 6px 16px rgba(236,72,153,0.35);
+  border:none;
 }
 select{
-  background:#1a1f46;
-  border:1px solid #2a2f61;
-  border-radius:10px;
-  color:#cfd6ff;
-  padding:10px 12px;
+  background:rgba(20,24,56,0.85);
+  border:1px solid rgba(128,138,206,0.35);
+  border-radius:12px;
+  color:#d4dcff;
+  padding:11px 12px;
   font-size:14px;
 }
 .kpi{
   display:grid;
   grid-template-columns:repeat(4,1fr);
-  gap:10px;
+  gap:12px;
 }
 .kpi .item{
-  background:#111533;
-  padding:12px;
-  border-radius:12px;
-  border:1px solid #1b1f3a;
+  background:linear-gradient(160deg,rgba(30,36,78,0.9) 0%,rgba(17,20,44,0.92) 100%);
+  padding:14px;
+  border-radius:16px;
+  border:1px solid var(--stroke);
+  box-shadow:0 20px 36px rgba(8,12,32,0.45);
 }
 .kpi .item b{
   display:block;
@@ -222,21 +330,23 @@ select{
 }
 .kpi .item span{
   font-weight:900;
-  font-size:18px;
+  font-size:20px;
+  color:#f6f7ff;
 }
 .split{
   display:grid;
-  gap:12px;
+  gap:16px;
   grid-template-columns:repeat(auto-fit,minmax(240px,1fr));
 }
 .telemetry-panel{
-  background:#111533;
-  border:1px solid #1b1f3a;
-  border-radius:12px;
-  padding:12px 14px;
+  background:linear-gradient(160deg,rgba(24,29,66,0.9) 0%,rgba(14,17,40,0.92) 100%);
+  border:1px solid var(--stroke);
+  border-radius:16px;
+  padding:16px 18px;
   display:flex;
   flex-direction:column;
-  gap:10px;
+  gap:12px;
+  box-shadow:0 22px 40px rgba(6,8,26,0.5);
 }
 .telemetry-panel__header{
   display:flex;
@@ -284,8 +394,8 @@ select{
   color:#7d86c6;
 }
 .telemetry-table tbody td{
-  padding:6px 4px;
-  border-top:1px solid #1b1f3a;
+  padding:8px 4px;
+  border-top:1px solid rgba(45,52,96,0.75);
 }
 .telemetry-table tbody tr:first-child td{
   border-top:none;
@@ -320,51 +430,76 @@ select{
   font-size:12px;
 }
 .hint{
-  color:#9aa3c7;
+  color:#a7b2e8;
   font-size:12px;
 }
+.game-card .hint{
+  font-size:13px;
+  line-height:1.6;
+  max-width:520px;
+}
 .tabs{
-  margin-left:16px;
+  margin-left:32px;
   display:flex;
-  gap:10px;
+  gap:24px;
   align-items:center;
 }
 .tabs button{
   appearance:none;
-  border:1px solid #2a2f61;
-  padding:8px 14px;
-  border-radius:999px;
+  border:none;
+  padding:8px 0;
   background:transparent;
-  color:#b5bce0;
+  color:#9fa8db;
   font-weight:600;
+  letter-spacing:0.02em;
   cursor:pointer;
-  box-shadow:none;
-  transition:.2s background,.2s color;
+  position:relative;
+  transition:.2s color ease;
+}
+.tabs button::after{
+  content:"";
+  position:absolute;
+  left:0;
+  bottom:0;
+  width:100%;
+  height:3px;
+  border-radius:999px;
+  background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
+  opacity:0;
+  transform:scaleX(0.3);
+  transform-origin:center;
+  transition:.25s opacity ease,.25s transform ease;
 }
 .tabs button.active{
-  background:linear-gradient(135deg,var(--accent-a),var(--accent-b));
-  color:#fff;
-  border-color:transparent;
+  color:#f0f2ff;
+}
+.tabs button.active::after{
+  opacity:1;
+  transform:scaleX(1);
 }
 .tabs button:hover{
-  transform:none;
-  background:#1c2148;
   color:#fff;
 }
 .tabs button:focus-visible{
-  outline:2px solid var(--accent-a);
-  outline-offset:2px;
+  outline:none;
+  color:#fff;
+  box-shadow:0 8px 20px rgba(139,92,246,0.35);
+}
+.tabs button:focus-visible::after{
+  opacity:1;
+  transform:scaleX(1);
 }
 .auto-log{
-  background:#111533;
-  border:1px solid #1b1f3a;
-  border-radius:12px;
-  padding:12px 14px;
+  background:linear-gradient(165deg,rgba(24,29,66,0.9) 0%,rgba(14,17,40,0.92) 100%);
+  border:1px solid var(--stroke);
+  border-radius:16px;
+  padding:14px 18px;
   display:flex;
   flex-direction:column;
-  gap:10px;
+  gap:12px;
   font-size:12px;
   color:#c7cdef;
+  box-shadow:0 20px 38px rgba(8,10,30,0.45);
 }
 .auto-log__header{
   display:flex;
@@ -387,11 +522,11 @@ select{
   padding-right:4px;
 }
 .auto-log__entry{
-  background:rgba(17,21,60,.9);
-  border:1px solid #202652;
+  background:rgba(23,28,68,0.95);
+  border:1px solid rgba(58,68,132,0.6);
   border-left:3px solid var(--accent-a);
-  border-radius:10px;
-  padding:8px 10px;
+  border-radius:12px;
+  padding:10px 12px;
   display:flex;
   flex-direction:column;
   gap:3px;
@@ -429,10 +564,11 @@ button.micro{
   box-shadow:none;
 }
 details{
-  background:#111533;
-  border-radius:12px;
-  border:1px solid #1b1f3a;
-  padding:12px 14px;
+  background:linear-gradient(170deg,rgba(24,29,66,0.92) 0%,rgba(14,17,40,0.94) 100%);
+  border-radius:18px;
+  border:1px solid var(--stroke);
+  padding:16px 18px;
+  box-shadow:0 20px 38px rgba(6,8,24,0.45);
 }
 details[open]{
   padding-bottom:16px;
@@ -440,10 +576,11 @@ details[open]{
 details summary{
   cursor:pointer;
   font-weight:700;
-  color:#dfe3ff;
-  margin:-12px -14px 12px;
-  padding:12px 14px;
-  border-radius:12px;
+  color:#f0f2ff;
+  margin:-16px -18px 18px;
+  padding:16px 18px;
+  border-radius:18px;
+  background:rgba(26,32,74,0.35);
 }
 details summary::-webkit-details-marker{display:none}
 .stack{
@@ -522,7 +659,8 @@ footer{
   }
 }
 @media(max-width:640px){
-  header{
+  header .header-inner{
+    padding:0 16px;
     flex-wrap:wrap;
     gap:12px;
   }
@@ -535,6 +673,14 @@ footer{
     width:100%;
     justify-content:flex-start;
   }
+  .controls.primary{
+    flex-direction:column;
+    align-items:stretch;
+  }
+  .controls.primary button{
+    min-width:0;
+    width:100%;
+  }
   input[type="range"]{
     width:160px;
   }
@@ -543,24 +689,29 @@ footer{
 </head>
 <body>
 <header>
-  <div class="logo">Snake • RL Studio</div>
-  <div class="status-group">
-    <span class="badge" id="trainState">idle</span>
-    <span class="badge" id="algoBadge">Dueling DQN</span>
-    <span class="badge">ε <span id="epsReadout">1.00</span></span>
-    <span class="badge">γ <span id="gammaBadge">0.98</span></span>
-    <span class="badge">LR <span id="lrBadge">0.0005</span></span>
+  <div class="header-inner">
+    <div class="logo"><span class="logo-text">Snake Simulation</span></div>
+    <div class="status-group">
+      <span class="badge" id="trainState">idle</span>
+      <span class="badge" id="algoBadge">Dueling DQN</span>
+      <span class="badge">ε <span id="epsReadout">1.00</span></span>
+      <span class="badge">γ <span id="gammaBadge">0.98</span></span>
+      <span class="badge">LR <span id="lrBadge">0.0005</span></span>
+    </div>
+    <nav class="tabs">
+      <button type="button" id="tabTraining" class="active">Training</button>
+      <button type="button" id="tabGuide">Guide</button>
+    </nav>
   </div>
-  <nav class="tabs">
-    <button type="button" id="tabTraining" class="active">Training</button>
-    <button type="button" id="tabGuide">Guide</button>
-  </nav>
 </header>
 
 <main id="trainingView" class="layout">
   <section class="card game-card">
     <div class="card-head">
-      <h2>Live-board</h2>
+      <div>
+        <h2>Snake Simulation</h2>
+        <p class="subtitle">Smooth rendering for reinforcement learning experiments.</p>
+      </div>
       <span class="badge soft" id="playbackLabel">Smooth realtime</span>
     </div>
     <canvas id="board" width="500" height="500"></canvas>
@@ -583,7 +734,7 @@ footer{
         <span class="mono" id="gridLabel">20×20</span>
       </div>
     </div>
-    <p class="hint">Each episode renders smoothly without extra tweaks. Turbo skips some frames but keeps learning.</p>
+    <p class="hint">Your goal is to find the best adjustments to complete the board. Adjust grid size for longer simulations. If the snake would crash, open the guide to tune the parameters — or pick one of the presets.</p>
   </section>
 
   <section class="card control-card">
@@ -2419,12 +2570,12 @@ const cloneState=state=>({
   snake:state.snake.map(p=>({x:p.x,y:p.y})),
   fruit:{x:state.fruit.x,y:state.fruit.y},
 });
-const BG_COLOR='#0f1328';
-const GRID_COLOR='#17204a';
-const HEAD_COLOR='#23d18b';
-const BODY_COLOR='#6c7bff';
-const HEAD_GLOW='rgba(35,209,139,0.55)';
-const BODY_GLOW='rgba(108,123,255,0.45)';
+const BG_COLOR='#101532';
+const GRID_COLOR='rgba(135,143,210,0.16)';
+const HEAD_GRADIENT=['#f472b6','#c084fc'];
+const BODY_GRADIENT=['#8b5cf6','#6366f1'];
+const HEAD_GLOW='rgba(244,114,182,0.65)';
+const BODY_GLOW='rgba(99,102,241,0.5)';
 let lastDrawnState=snapshotEnv(env);
 let renderQueue=[];
 let currentAnim=null;
@@ -2550,12 +2701,13 @@ function drawFruit(fruit,alpha=1){
   const cy=(fruit.y+0.5)*CELL;
   const radius=CELL*0.35;
   const gradient=bctx.createRadialGradient(cx,cy,radius*0.2,cx,cy,radius);
-  gradient.addColorStop(0,`rgba(255,200,120,${alpha})`);
-  gradient.addColorStop(1,`rgba(255,70,150,${alpha})`);
+  gradient.addColorStop(0,`rgba(255,214,102,${alpha})`);
+  gradient.addColorStop(0.65,`rgba(253,149,102,${alpha})`);
+  gradient.addColorStop(1,`rgba(236,72,153,${alpha})`);
   bctx.save();
   bctx.fillStyle=gradient;
-  bctx.shadowBlur=12;
-  bctx.shadowColor='rgba(255,90,160,0.5)';
+  bctx.shadowBlur=14;
+  bctx.shadowColor='rgba(236,72,153,0.45)';
   bctx.beginPath();
   bctx.arc(cx,cy,radius,0,Math.PI*2);
   bctx.fill();
@@ -2565,15 +2717,26 @@ function drawSnakeSegments(segments){
   if(!segments.length) return;
   bctx.save();
   segments.forEach((seg,i)=>{
-    const color=i===0?HEAD_COLOR:BODY_COLOR;
+    const colors=i===0?HEAD_GRADIENT:BODY_GRADIENT;
     const glow=i===0?HEAD_GLOW:BODY_GLOW;
-    const size=CELL*0.72;
+    const size=CELL*0.74;
     const offset=(CELL-size)/2;
-    const radius=Math.min(size*0.45,10);
-    bctx.shadowBlur=i===0?14:8;
+    const radius=Math.min(size*0.45,12);
+    const x=seg.x*CELL+offset;
+    const y=seg.y*CELL+offset;
+    const gradient=bctx.createLinearGradient(x,y,x,y+size);
+    gradient.addColorStop(0,colors[0]);
+    gradient.addColorStop(1,colors[1]);
+    bctx.shadowBlur=i===0?18:12;
     bctx.shadowColor=glow;
-    bctx.fillStyle=color;
-    drawRoundedRect(seg.x*CELL+offset,seg.y*CELL+offset,size,size,radius);
+    bctx.fillStyle=gradient;
+    drawRoundedRect(x,y,size,size,radius);
+    bctx.shadowBlur=0;
+    const highlight=bctx.createRadialGradient(x+size*0.35,y+size*0.35,0,x+size*0.35,y+size*0.35,size*0.9);
+    highlight.addColorStop(0,'rgba(255,255,255,0.32)');
+    highlight.addColorStop(1,'rgba(255,255,255,0)');
+    bctx.fillStyle=highlight;
+    drawRoundedRect(x,y,size,size,radius);
   });
   bctx.restore();
 }
