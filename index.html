@@ -4,6 +4,25 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Snake — RL studio with smooth rendering</title>
+<script>
+  (() => {
+    const registry = window.customElements;
+    if (!registry || typeof registry.define !== 'function') return;
+    const originalDefine = registry.define.bind(registry);
+    registry.define = (name, constructor, options) => {
+      try {
+        originalDefine(name, constructor, options);
+      } catch (error) {
+        const message = String(error?.message ?? '');
+        if (name === 'mce-autosize-textarea' && message.includes('has already been defined')) {
+          console.warn(`[Snake-ML] Duplicate definition for "${name}" ignored.`);
+          return;
+        }
+        throw error;
+      }
+    };
+  })();
+</script>
 <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
 <style>
 :root {
@@ -3192,10 +3211,10 @@ function bindUI(){
   ui.btnPause.addEventListener('click',stopTraining);
   ui.btnStep.addEventListener('click',async()=>{ await playSingleEpisode(); });
   ui.btnWatch.addEventListener('click',watchSmoothEpisode);
-  ui.btnSave.addEventListener('click',saveTrainingToFile);
-  ui.btnLoad.addEventListener('click',()=>ui.fileLoader?.click());
-  ui.btnLoadModel.addEventListener('click',()=>ui.modelLoader?.click());
-  ui.btnClear.addEventListener('click',()=>{
+  ui.btnSave?.addEventListener('click',saveTrainingToFile);
+  ui.btnLoad?.addEventListener('click',()=>ui.fileLoader?.click());
+  ui.btnLoadModel?.addEventListener('click',()=>ui.modelLoader?.click());
+  ui.btnClear?.addEventListener('click',()=>{
     for(const k in localStorage){
       if(k.includes('tensorflowjs')) localStorage.removeItem(k);
     }
