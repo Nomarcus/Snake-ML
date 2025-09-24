@@ -59,6 +59,7 @@ const payload = {
     });
 
     const text = await response.text();
+    console.log('HF raw response:', text);
     const content = text ? safeJsonParse(text) : null;
 
     if (!response.ok) {
