@@ -13,6 +13,7 @@ Refactored reinforcement learning playground for the Snake environment with supp
 
 ## Hugging Face-proxy för AI Auto-Tune
 
+
 AI Auto-Tune går via en liten Express-server (`api/proxy.js`) som körs som en Render Web Service. Den exponerar `POST /api/proxy`, accepterar ett JSON-objekt `{ "telemetry": ..., "instruction": ... }`, läser din Hugging Face-token från miljövariabeln `HF_TOKEN` och returnerar svar från Inference API:t utan att tokenen någonsin lämnar backend.
 
 ### Deploya på Render

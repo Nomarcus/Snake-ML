@@ -1,5 +1,7 @@
+
 import express from 'express';
 import fetch from 'node-fetch';
+
 
 const HF_API_URL = 'https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.3';
 
@@ -90,3 +92,4 @@ function safeJsonParse(text) {
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
+
