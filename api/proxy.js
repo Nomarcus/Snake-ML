@@ -93,6 +93,7 @@ app.post('/api/proxy', async (req, res) => {
 
       return res.status(response.status).json({
         error: typeof message === 'string' ? message.slice(0, 500) : 'Fel från Hugging Face.',
+
         raw: rawText ? rawText.slice(0, 2000) : undefined,
       });
     }
@@ -100,6 +101,7 @@ app.post('/api/proxy', async (req, res) => {
     if (parseError) {
       throw parseError;
     }
+
 
     return res.status(200).json({
       data: content,
@@ -133,7 +135,42 @@ function safeJsonParse(text) {
       return streamed;
     }
     throw new JsonParseError('Kunde inte tolka svaret från Hugging Face.', text);
+
   }
+}
+
+function tryParseEventStream(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    return null;
+
+  }
+
+  const lines = text.split(/\r?\n/);
+  const jsonCandidates = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === 'data: [DONE]') {
+      continue;
+    }
+    if (trimmed.startsWith('data:')) {
+      const payload = trimmed.slice(5).trim();
+      if (payload) {
+        jsonCandidates.push(payload);
+      }
+    }
+  }
+
+  for (let i = jsonCandidates.length - 1; i >= 0; i -= 1) {
+    const candidate = jsonCandidates[i];
+    try {
+      return JSON.parse(candidate);
+    } catch (err) {
+      // Ignorera och prova nästa kandidat
+    }
+  }
+
+  return null;
 }
 
 function tryParseEventStream(text) {
