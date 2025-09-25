@@ -1,5 +1,5 @@
 const PROXY_PATH = '/api/proxy';
-const DEFAULT_MODEL_ID = 'mistralai/Mistral-7B-Instruct-v0.3';
+const DEFAULT_MODEL_ID = 'HuggingFaceH4/zephyr-7b-beta';
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
 Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
