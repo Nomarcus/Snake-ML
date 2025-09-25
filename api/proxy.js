@@ -4,7 +4,9 @@ import cors from 'cors';
 import fetch from 'node-fetch';
 
 
-const HF_BASE_URL = 'https://huggingface.co/models';
+const HF_BASE_URL =
+  (process.env.HF_BASE_URL && process.env.HF_BASE_URL.trim().replace(/\/+$/, '')) ||
+  'https://api-inference.huggingface.co/models';
 const DEFAULT_MODEL_ID =
   (process.env.HF_MODEL_ID && process.env.HF_MODEL_ID.trim()) ||
   'HuggingFaceH4/zephyr-7b-beta';
