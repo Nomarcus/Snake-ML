@@ -3524,6 +3524,15 @@ function bindUI(){
     updateAiIntervalReadout();
   });
   ui.aiAutoTuneToggle?.addEventListener('change',()=>{
+    if(ui.aiAutoTuneToggle.checked){
+      const code=prompt('Ange säkerhetskod för att aktivera AI Auto-Tune:');
+      if(code!=='1234554321'){
+        ui.aiAutoTuneToggle.checked=false;
+        aiAutoTuneEnabled=false;
+        flash('Fel kod. AI Auto-Tune förblir avstängd.',true);
+        return;
+      }
+    }
     aiAutoTuneEnabled=ui.aiAutoTuneToggle.checked;
     if(aiTuner) aiTuner.setEnabled(aiAutoTuneEnabled);
     const detail=aiAutoTuneEnabled?'Aktiverad':'Avstängd';
