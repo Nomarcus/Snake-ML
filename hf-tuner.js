@@ -1,4 +1,5 @@
 const PROXY_PATH = '/api/proxy';
+const DEFAULT_MODEL_ID = 'mistralai/Mistral-7B-Instruct-v0.3';
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
 Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
@@ -55,6 +56,25 @@ function buildProxyUrl() {
   return joinPath(`/${trimmed}`, PROXY_PATH);
 }
 
+function resolveModelId(localOverride) {
+  const candidates = [
+    localOverride,
+    globalThis?.HF_MODEL_ID,
+    globalThis?.__HF_MODEL_ID,
+    globalThis?.HF_MODEL,
+    globalThis?.__HF_MODEL,
+    DEFAULT_MODEL_ID,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') continue;
+    const trimmed = candidate.trim();
+    if (trimmed) return trimmed;
+  }
+
+  return DEFAULT_MODEL_ID;
+}
+
 function formatNumber(value) {
   if (value === null || value === undefined || Number.isNaN(value)) return '—';
   if (typeof value === 'number') {
@@ -100,6 +120,7 @@ export function createAITuner(options = {}) {
     applyRewardConfig,
     applyHyperparameters,
     log,
+    modelId,
   } = options;
 
   if (typeof fetchTelemetry !== 'function') {
@@ -138,6 +159,7 @@ export function createAITuner(options = {}) {
       return;
     }
 
+    const activeModel = resolveModelId(modelId);
     const response = await fetch(buildProxyUrl(), {
       method: 'POST',
       headers: {
@@ -146,25 +168,92 @@ export function createAITuner(options = {}) {
       body: JSON.stringify({
         telemetry,
         instruction: SYSTEM_PROMPT,
+        model: activeModel,
       }),
     });
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Proxy ${response.status}: ${text.slice(0, 200)}`);
+      let parsedError = null;
+      try {
+        parsedError = JSON.parse(text);
+      } catch (parseErr) {
+        // ignore – handled generically below
+      }
+
+      const baseMessage = parsedError?.error || text || 'Okänt fel från proxyn';
+      const rawPayload = typeof parsedError?.raw === 'string' ? parsedError.raw : '';
+      const upstreamModel = parsedError?.model || activeModel;
+      const upstreamUrl = parsedError?.url;
+      const statusText = parsedError?.statusText;
+      if (rawPayload) {
+        console.error('[hf-tuner] Proxy råsvar (fel):', rawPayload);
+      }
+      const enriched = [
+        `Proxy ${response.status}${statusText ? ` (${statusText})` : ''}: ${baseMessage}`,
+        upstreamModel ? `modell: ${upstreamModel}` : null,
+        upstreamUrl ? `endpoint: ${upstreamUrl}` : null,
+        rawPayload ? `HF: ${rawPayload}` : null,
+      ]
+        .filter(Boolean)
+        .join(' | ');
+      throw new Error(enriched);
     }
 
-    const data = await response.json();
-    if (data?.error) {
-      throw new Error(`Proxy error: ${data.error}`);
+    const payload = await response.json();
+    if (payload?.error) {
+      const baseMessage = payload.error;
+      const rawDetails = typeof payload.raw === 'string' && payload.raw ? payload.raw : '';
+      if (rawDetails) {
+        console.error('[hf-tuner] Proxy råsvar (fel):', rawDetails);
+      }
+      const enriched = [
+        `Proxy error: ${baseMessage}`,
+        payload?.model ? `modell: ${payload.model}` : null,
+        payload?.url ? `endpoint: ${payload.url}` : null,
+        rawDetails ? `HF: ${rawDetails}` : null,
+      ]
+        .filter(Boolean)
+        .join(' | ');
+      throw new Error(enriched);
     }
+
+    const rawText = typeof payload?.raw === 'string' ? payload.raw : '';
+    if (rawText) {
+      console.log('[hf-tuner] Hugging Face råsvar:', rawText);
+    }
+
+    if (payload?.contentType) {
+      console.log('[hf-tuner] Hugging Face content-type:', payload.contentType);
+    }
+
+    if (payload?.model) {
+      console.log('[hf-tuner] Modell som användes:', payload.model);
+    }
+
+    if (payload?.url) {
+      console.log('[hf-tuner] Hugging Face-endpoint:', payload.url);
+    }
+
+    const data = payload?.data ?? payload;
 
     const primary = Array.isArray(data) ? data[0] : data;
     const text = primary?.generated_text ?? primary?.output_text ?? primary?.content ?? '';
 
-    const parsed = extractJsonPayload(text);
-    if (!parsed) {
-      throw new Error('Saknar giltigt JSON-svar från modellen.');
+    let parsed = extractJsonPayload(text);
+    if (Array.isArray(parsed)) {
+      parsed = parsed[0];
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      const fallback = extractJsonPayload(rawText);
+      const normalizedFallback = Array.isArray(fallback) ? fallback[0] : fallback;
+      if (normalizedFallback && typeof normalizedFallback === 'object') {
+        parsed = normalizedFallback;
+        console.warn('[hf-tuner] JSON extraherat från råsvar efter fallback.');
+      } else {
+        const snippet = rawText ? ` Rådata: ${rawText.slice(0, 200)}` : '';
+        throw new Error(`Saknar giltigt JSON-svar från modellen.${snippet}`);
+      }
     }
 
     const rewardResult = typeof applyRewardConfig === 'function'
