@@ -1,18 +1,10 @@
-
 import express from 'express';
 import fetch from 'node-fetch';
 
-const HF_API_URL =
-  'https://api-inference.huggingface.co/models/Qwen/Qwen1.5-7B-Chat';
-
-
-const HF_BASE_URL =
-  (process.env.HF_BASE_URL && process.env.HF_BASE_URL.trim().replace(/\/+$/, '')) ||
-  'https://api-inference.huggingface.co/models';
-const DEFAULT_MODEL_ID =
+const HF_ROUTER_URL = 'https://router.huggingface.co/v1/chat/completions';
+const DEFAULT_MODEL =
   (process.env.HF_MODEL_ID && process.env.HF_MODEL_ID.trim()) ||
-  'Qwen/Qwen1.5-7B-Chat';
-
+  'mistralai/Mistral-7B-Instruct-v0.2:featherless-ai';
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
 Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
@@ -65,46 +57,36 @@ app.options('/api/proxy', (req, res) => {
   return res.sendStatus(204);
 });
 
-
 app.post('/api/proxy', async (req, res) => {
   const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
   if (req.headers.origin && !allowed) {
     return res.status(403).json({ error: 'Otillåten origin.' });
   }
 
-  let targetModelId = DEFAULT_MODEL_ID;
-  let targetUrl = buildModelUrl(targetModelId);
-  try {
-    const { telemetry, instruction, model, modelId } = req.body ?? {};
+  const token = process.env.HF_TOKEN;
+  if (!token) {
+    return res.status(500).json({ error: 'HF_TOKEN saknas i miljön.' });
+  }
 
-    if (!telemetry) {
+  try {
+    const { telemetry, instruction, model } = req.body ?? {};
+
+    if (typeof telemetry === 'undefined') {
       return res.status(400).json({ error: 'Fältet "telemetry" saknas.' });
     }
 
-    const token = process.env.HF_TOKEN;
-    if (!token) {
-      return res.status(500).json({ error: 'HF_TOKEN saknas i miljön.' });
-    }
-
-    targetModelId = resolveModelId(model ?? modelId);
-    targetUrl = buildModelUrl(targetModelId);
-
+    const targetModel = resolveModelId(model);
+    const userContent = buildUserContent({ telemetry, instruction });
 
     const payload = {
-      inputs: `${
-        typeof instruction === 'string' && instruction.trim()
-          ? instruction
-          : SYSTEM_PROMPT
-      }\n\n${JSON.stringify(telemetry)}`,
-      parameters: {
-        temperature: 0.2,
-        max_new_tokens: 300,
-      },
+      model: targetModel,
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: userContent },
+      ],
     };
 
-
-    const response = await fetch(targetUrl, {
-
+    const response = await fetch(HF_ROUTER_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -113,108 +95,58 @@ app.post('/api/proxy', async (req, res) => {
       body: JSON.stringify(payload),
     });
 
-    const text = await response.text();
-    console.log('HF raw response:', text);
-    let content = null;
-    let parseError = null;
-
-    const contentType = response.headers.get('content-type') || '';
-
-
-    if (text) {
-      try {
-        content = safeJsonParse(text);
-      } catch (err) {
-        parseError = err;
-
-
-        const recovered = tryRecoverInlineJson(text);
-        if (recovered !== null) {
-          content = recovered;
-          parseError = null;
-        }
-      }
-    }
-
-    const rawText = typeof text === 'string' ? text : '';
+    const rawText = await response.text();
+    console.log('HF raw response:', rawText);
 
     if (!response.ok) {
-
-      const upstreamError =
-        (content && typeof content.error === 'string' && content.error.trim())
-          ? content.error.trim()
-          : rawText.trim();
-
-
-      let message = upstreamError || `Hugging Face svarade ${response.status}`;
-
-      if (response.status === 401) {
-        message = upstreamError || 'Ogiltig eller saknad Hugging Face-token.';
-      } else if (response.status === 403) {
-        message =
-          upstreamError || 'Behörighet saknas för den valda Hugging Face-modellen.';
-      } else if (response.status === 404) {
-        const default404 =
-          'Hugging Face rapporterade 404 (Not Found). Kontrollera modellnamnet.';
-        message = upstreamError || default404;
-
-      }
-
+      const parsedError = safeJsonParse(rawText);
+      const message = extractErrorMessage(parsedError) || `Hugging Face svarade ${response.status}`;
       return res.status(response.status).json({
-        error: typeof message === 'string' ? message.slice(0, 500) : 'Fel från Hugging Face.',
-
-        raw: rawText ? rawText.slice(0, 2000) : undefined,
-        model: targetModelId,
-        url: targetUrl,
-        statusText: response.statusText,
-
+        error: message,
+        raw: rawText.slice(0, 2000),
+        status: response.status,
       });
     }
 
-    if (parseError) {
-
-      if (rawText.trim().toLowerCase() === 'not found') {
-        return res.status(404).json({
-          error: 'Hugging Face svarade "Not Found" – kontrollera modellnamn eller åtkomst.',
-          raw: rawText.slice(0, 2000),
-          model: targetModelId,
-          url: targetUrl,
-
-        });
-      }
-      throw parseError;
+    const data = safeJsonParse(rawText);
+    if (data === null) {
+      return res.status(502).json({
+        error: 'Kunde inte tolka svaret från Hugging Face.',
+        raw: rawText.slice(0, 2000),
+        status: 502,
+      });
     }
 
     return res.status(200).json({
-      data: content,
+      data,
       raw: rawText,
-      contentType,
-
-      model: targetModelId,
-      url: targetUrl,
-
+      status: 200,
+      model: targetModel,
     });
   } catch (error) {
     console.error('Proxyfel:', error);
-    const statusCode = error instanceof JsonParseError ? 502 : 500;
-    const message = error instanceof JsonParseError ? error.message : 'Oväntat fel i proxyn.';
-
-    const responsePayload = {
-      error: message,
-      raw: error instanceof JsonParseError && error.raw ? error.raw.slice(0, 2000) : undefined,
-    };
-
-    if (targetModelId) {
-      responsePayload.model = targetModelId;
-    }
-    if (targetUrl) {
-      responsePayload.url = targetUrl;
-    }
-
-    return res.status(statusCode).json(responsePayload);
-
+    return res.status(500).json({
+      error: 'Oväntat fel i proxyn.',
+      raw: error instanceof Error && error.message ? error.message : undefined,
+      status: 500,
+    });
   }
 });
+
+function buildUserContent({ telemetry, instruction }) {
+  const parts = [];
+  if (typeof instruction === 'string' && instruction.trim()) {
+    parts.push(instruction.trim());
+  }
+
+  const telemetryPart =
+    typeof telemetry === 'string'
+      ? telemetry
+      : JSON.stringify(telemetry);
+  parts.push(telemetryPart);
+
+  return parts.join('\n\n');
+}
 
 function applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet }) {
   appendVaryHeader(res, 'Origin');
@@ -296,122 +228,57 @@ function appendVaryHeader(res, value) {
   }
 }
 
-class JsonParseError extends Error {
-  constructor(message, raw) {
-    super(message);
-    this.name = 'JsonParseError';
-    this.raw = raw;
-  }
-}
+function resolveModelId(candidate) {
+  const candidates = [candidate, process.env.HF_MODEL_ID, DEFAULT_MODEL];
 
-function safeJsonParse(text) {
-  try {
-    return JSON.parse(text);
-  } catch (err) {
-    const streamed = tryParseEventStream(text);
-    if (streamed !== null) {
-      return streamed;
-    }
-    throw new JsonParseError('Kunde inte tolka svaret från Hugging Face.', text);
-
-  }
-}
-
-function tryRecoverInlineJson(text) {
-  if (typeof text !== 'string') {
-    return null;
-
-  }
-
-  const candidates = [];
-
-  const objectStart = text.indexOf('{');
-  const objectEnd = text.lastIndexOf('}');
-  if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
-    candidates.push(text.slice(objectStart, objectEnd + 1));
-  }
-
-
-  const arrayStart = text.indexOf('[');
-  const arrayEnd = text.lastIndexOf(']');
-  if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
-    candidates.push(text.slice(arrayStart, arrayEnd + 1));
-  }
-
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate);
-    } catch (err) {
-      // ignore candidate and keep trying
-    }
-  }
-
-  return null;
-}
-
-function tryParseEventStream(text) {
-  if (typeof text !== 'string' || !text.trim()) {
-    return null;
-  }
-
-  const lines = text.split(/\r?\n/);
-  const jsonCandidates = [];
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed === 'data: [DONE]') {
+  for (const item of candidates) {
+    if (typeof item !== 'string') {
       continue;
     }
-    if (trimmed.startsWith('data:')) {
-      const payload = trimmed.slice(5).trim();
-      if (payload) {
-        jsonCandidates.push(payload);
-      }
-    }
-  }
-
-  for (let i = jsonCandidates.length - 1; i >= 0; i -= 1) {
-    const candidate = jsonCandidates[i];
-    try {
-      return JSON.parse(candidate);
-    } catch (err) {
-      // Ignorera och prova nästa kandidat
-    }
-  }
-
-  return null;
-
-}
-
-function resolveModelId(value) {
-  const candidates = [value, process.env.HF_MODEL_ID, DEFAULT_MODEL_ID];
-
-  for (const candidate of candidates) {
-    if (typeof candidate !== 'string') {
-      continue;
-    }
-    const trimmed = candidate.trim();
+    const trimmed = item.trim();
     if (trimmed) {
       return trimmed;
     }
   }
 
-  return DEFAULT_MODEL_ID;
+  return DEFAULT_MODEL;
 }
 
-function buildModelUrl(modelId) {
-  if (typeof modelId === 'string' && /^https?:\/\//i.test(modelId.trim())) {
-    return modelId.trim();
+function safeJsonParse(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    return null;
   }
 
-  const trimmed = typeof modelId === 'string' ? modelId.trim().replace(/^\/+/, '') : '';
-  if (!trimmed) {
-    return `${HF_BASE_URL}/${DEFAULT_MODEL_ID}`;
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return null;
   }
-
-  return `${HF_BASE_URL}/${trimmed}`;
-
 }
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server listening on ${PORT}`));
+function extractErrorMessage(parsed) {
+  if (!parsed || typeof parsed !== 'object') {
+    return '';
+  }
+
+  if (typeof parsed.error === 'string') {
+    return parsed.error;
+  }
+
+  if (parsed.error && typeof parsed.error === 'object') {
+    if (typeof parsed.error.message === 'string') {
+      return parsed.error.message;
+    }
+    if (typeof parsed.error.error === 'string') {
+      return parsed.error.error;
+    }
+  }
+
+  if (typeof parsed.message === 'string') {
+    return parsed.message;
+  }
+
+  return '';
+}
+
+export default app;
