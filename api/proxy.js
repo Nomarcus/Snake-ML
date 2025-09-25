@@ -3,7 +3,7 @@ import express from 'express';
 import fetch from 'node-fetch';
 
 const HF_API_URL =
-  'https://api-inference.huggingface.co/models/Qwen/Qwen2-7B-Instruct';
+  'https://api-inference.huggingface.co/models/Qwen/Qwen1.5-7B-Chat';
 
 
 const HF_BASE_URL =
@@ -11,7 +11,7 @@ const HF_BASE_URL =
   'https://api-inference.huggingface.co/models';
 const DEFAULT_MODEL_ID =
   (process.env.HF_MODEL_ID && process.env.HF_MODEL_ID.trim()) ||
-  'Qwen/Qwen2-7B-Instruct';
+  'Qwen/Qwen1.5-7B-Chat';
 
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
