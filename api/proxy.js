@@ -2,9 +2,7 @@ import express from 'express';
 import fetch from 'node-fetch';
 
 const HF_ROUTER_URL = 'https://router.huggingface.co/v1/chat/completions';
-const DEFAULT_MODEL =
-  (process.env.HF_MODEL_ID && process.env.HF_MODEL_ID.trim()) ||
-  'mistralai/Mistral-7B-Instruct-v0.2:featherless-ai';
+const DEFAULT_MODEL_ID = process.env.HF_MODEL_ID?.trim() || 'bigscience/bloomz-1b1';
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
 Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
@@ -234,7 +232,7 @@ function appendVaryHeader(res, value) {
 }
 
 function resolveModelId(candidate) {
-  const candidates = [candidate, process.env.HF_MODEL_ID, DEFAULT_MODEL];
+  const candidates = [candidate, DEFAULT_MODEL_ID];
 
   for (const item of candidates) {
     if (typeof item !== 'string') {
@@ -246,7 +244,7 @@ function resolveModelId(candidate) {
     }
   }
 
-  return DEFAULT_MODEL;
+  return DEFAULT_MODEL_ID;
 }
 
 function safeJsonParse(text) {
