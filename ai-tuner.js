@@ -2,11 +2,17 @@ const API_URL='https://api.openai.com/v1/chat/completions';
 const SYSTEM_PROMPT=`Du är en expert på reinforcement learning.
 Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
 hyperparametrar så att ormen klarar spelet konsekvent.
+Analysera alltid den senaste telemetrin, inklusive Reward telemetry,
+och motivera hur den påverkar dina val av parametrar.
 Returnera ENDAST minifierad JSON med nya värden för alla parametrar
-du vill uppdatera, t.ex.
+du vill uppdatera samt en förklaring, t.ex.
 {
-  "rewardConfig": {stepPenalty:0.008, fruitReward:12, ...},
-  "hyper": {gamma:0.985, lr:0.0004, epsDecay:90000, ...}
+  "analysis":{
+    "justeringar":"Beskriv varför värdena ändras baserat på trenderna",
+    "rewardTelemetryTrend":"Summera hur belöningar och straff utvecklas"
+  },
+  "rewardConfig":{stepPenalty:0.008,fruitReward:12,...},
+  "hyper":{gamma:0.985,lr:0.0004,epsDecay:90000,...}
 }`;
 
 function resolveApiKey(preferred){
