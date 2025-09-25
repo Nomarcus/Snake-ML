@@ -4,7 +4,11 @@ import cors from 'cors';
 import fetch from 'node-fetch';
 
 
-const HF_API_URL = 'https://api-inference.huggingface.co/models/HuggingFaceH4/zephyr-7b-beta';
+const HF_BASE_URL = 'https://api-inference.huggingface.co/models';
+const DEFAULT_MODEL_ID =
+  (process.env.HF_MODEL_ID && process.env.HF_MODEL_ID.trim()) ||
+  'mistralai/Mistral-7B-Instruct-v0.3';
+
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
 Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
@@ -25,8 +29,10 @@ app.use(express.json({ limit: '1mb' }));
 
 
 app.post('/api/proxy', async (req, res) => {
+  let targetModelId = DEFAULT_MODEL_ID;
+  let targetUrl = buildModelUrl(targetModelId);
   try {
-    const { telemetry, instruction } = req.body ?? {};
+    const { telemetry, instruction, model, modelId } = req.body ?? {};
 
     if (!telemetry) {
       return res.status(400).json({ error: 'Fältet "telemetry" saknas.' });
@@ -36,6 +42,10 @@ app.post('/api/proxy', async (req, res) => {
     if (!token) {
       return res.status(500).json({ error: 'HF_TOKEN saknas i miljön.' });
     }
+
+    targetModelId = resolveModelId(model ?? modelId);
+    targetUrl = buildModelUrl(targetModelId);
+
 
     const payload = {
       inputs: `${
@@ -49,7 +59,9 @@ app.post('/api/proxy', async (req, res) => {
       },
     };
 
-    const response = await fetch(HF_API_URL, {
+
+    const response = await fetch(targetUrl, {
+
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -72,6 +84,7 @@ app.post('/api/proxy', async (req, res) => {
       } catch (err) {
         parseError = err;
 
+
         const recovered = tryRecoverInlineJson(text);
         if (recovered !== null) {
           content = recovered;
@@ -89,23 +102,29 @@ app.post('/api/proxy', async (req, res) => {
           ? content.error.trim()
           : rawText.trim();
 
-      let message;
+
+      let message = upstreamError || `Hugging Face svarade ${response.status}`;
+
       if (response.status === 401) {
-        message = 'Ogiltig eller saknad Hugging Face-token.';
+        message = upstreamError || 'Ogiltig eller saknad Hugging Face-token.';
       } else if (response.status === 403) {
-        message = 'Behörighet saknas för den valda Hugging Face-modellen.';
+        message =
+          upstreamError || 'Behörighet saknas för den valda Hugging Face-modellen.';
       } else if (response.status === 404) {
-        message = 'Hugging Face rapporterade 404 (Not Found). Kontrollera modellnamnet.';
-      } else if (upstreamError) {
-        message = upstreamError;
-      } else {
-        message = `Hugging Face svarade ${response.status}`;
+        const default404 =
+          'Hugging Face rapporterade 404 (Not Found). Kontrollera modellnamnet.';
+        message = upstreamError || default404;
+
       }
 
       return res.status(response.status).json({
         error: typeof message === 'string' ? message.slice(0, 500) : 'Fel från Hugging Face.',
 
         raw: rawText ? rawText.slice(0, 2000) : undefined,
+        model: targetModelId,
+        url: targetUrl,
+        statusText: response.statusText,
+
       });
     }
 
@@ -115,6 +134,9 @@ app.post('/api/proxy', async (req, res) => {
         return res.status(404).json({
           error: 'Hugging Face svarade "Not Found" – kontrollera modellnamn eller åtkomst.',
           raw: rawText.slice(0, 2000),
+          model: targetModelId,
+          url: targetUrl,
+
         });
       }
       throw parseError;
@@ -125,15 +147,29 @@ app.post('/api/proxy', async (req, res) => {
       raw: rawText,
       contentType,
 
+      model: targetModelId,
+      url: targetUrl,
+
     });
   } catch (error) {
     console.error('Proxyfel:', error);
     const statusCode = error instanceof JsonParseError ? 502 : 500;
     const message = error instanceof JsonParseError ? error.message : 'Oväntat fel i proxyn.';
-    return res.status(statusCode).json({
+
+    const responsePayload = {
       error: message,
       raw: error instanceof JsonParseError && error.raw ? error.raw.slice(0, 2000) : undefined,
-    });
+    };
+
+    if (targetModelId) {
+      responsePayload.model = targetModelId;
+    }
+    if (targetUrl) {
+      responsePayload.url = targetUrl;
+    }
+
+    return res.status(statusCode).json(responsePayload);
+
   }
 });
 
@@ -161,6 +197,7 @@ function safeJsonParse(text) {
 function tryRecoverInlineJson(text) {
   if (typeof text !== 'string') {
     return null;
+
   }
 
   const candidates = [];
@@ -170,6 +207,7 @@ function tryRecoverInlineJson(text) {
   if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
     candidates.push(text.slice(objectStart, objectEnd + 1));
   }
+
 
   const arrayStart = text.indexOf('[');
   const arrayEnd = text.lastIndexOf(']');
@@ -192,7 +230,6 @@ function tryParseEventStream(text) {
   if (typeof text !== 'string' || !text.trim()) {
     return null;
   }
-
 
   const lines = text.split(/\r?\n/);
   const jsonCandidates = [];
@@ -220,6 +257,37 @@ function tryParseEventStream(text) {
   }
 
   return null;
+
+}
+
+function resolveModelId(value) {
+  const candidates = [value, process.env.HF_MODEL_ID, DEFAULT_MODEL_ID];
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== 'string') {
+      continue;
+    }
+    const trimmed = candidate.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+
+  return DEFAULT_MODEL_ID;
+}
+
+function buildModelUrl(modelId) {
+  if (typeof modelId === 'string' && /^https?:\/\//i.test(modelId.trim())) {
+    return modelId.trim();
+  }
+
+  const trimmed = typeof modelId === 'string' ? modelId.trim().replace(/^\/+/, '') : '';
+  if (!trimmed) {
+    return `${HF_BASE_URL}/${DEFAULT_MODEL_ID}`;
+  }
+
+  return `${HF_BASE_URL}/${trimmed}`;
+
 }
 
 const PORT = process.env.PORT || 3000;
