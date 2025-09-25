@@ -5,16 +5,45 @@ const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const DEFAULT_MODEL_ID =
   process.env.GROQ_MODEL?.trim() || 'llama-3.1-8b-instant';
 
-const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
-Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
-hyperparametrar så att ormen klarar spelet konsekvent.
-Returnera ENDAST minifierad JSON med nya värden för alla parametrar
-du vill uppdatera, t.ex.
+const SYSTEM_PROMPT = `
+You are a senior reinforcement learning researcher and data analyst.
+You will receive the FULL Snake game telemetry in JSON: recent and historical trends, per-episode stats, moving averages, current record, reward components and breakdowns, death causes, fruit rate, path-planning efficiency, episode length distributions, exploration vs. exploitation schedule, current rewardConfig and core hyperparameters, and any other metrics provided.
+
+TASK
+1) Perform a DEEP and LONG-TERM analysis of the agent’s performance:
+   • Identify trends (improving/flat/declining), variance, stability, plateaus, or overfitting.
+   • Evaluate exploration vs. exploitation balance and reward-shaping side-effects.
+   • Judge whether overall progress is good, stable, bad, or uncertain.
+   • Consider long-term trajectory—will performance keep improving?
+
+2) Decide IF and HOW to adjust rewardConfig and core hyperparameters to maximize long-term success,
+   preferring small, justified changes and avoiding oscillations.
+
+3) Provide a concise but thorough reasoning referencing observed data and trade-offs.
+
+OUTPUT FORMAT — return ONE SINGLE LINE of valid, minified JSON (no extra text, no code fences):
 {
-  "rewardConfig": {stepPenalty:0.008, fruitReward:12, ...},
-  "hyper": {gamma:0.985, lr:0.0004, epsDecay:90000, ...}
+  "assessment": {
+    "status": "good|stable|bad|uncertain",
+    "trend": "improving|flat|declining",
+    "score": 0-100,
+    "confidence": 0.0-1.0,
+    "horizon": "short|medium|long",
+    "key_findings": ["...", "..."]
+  },
+  "recommendations": {
+    "priority": ["...", "..."],
+    "next_actions": ["...", "..."]
+  },
+  "rewardConfig": { /* only keys to change; else {} */ },
+  "hyper": { /* only keys to change; else {} */ },
+  "reasoning": "<=1200 chars; clear step-by-step explanation of trends and why changes help long-term performance."
 }
-Svara **endast** med en enda rad giltig JSON utan någon extra text eller förklaring.`;
+
+If evidence is insufficient, return {} for rewardConfig and hyper and explain "maintain course" in reasoning.
+Never invent metrics not present in the telemetry; state uncertainties explicitly.
+Output ONLY the single JSON object.
+`;
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://nomarcus.github.io',
