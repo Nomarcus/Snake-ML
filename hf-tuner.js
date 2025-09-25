@@ -174,6 +174,7 @@ export function createAITuner(options = {}) {
 
     if (!response.ok) {
       const text = await response.text();
+
       let parsedError = null;
       try {
         parsedError = JSON.parse(text);

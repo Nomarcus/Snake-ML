@@ -3,10 +3,12 @@ import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
 
+
 const HF_BASE_URL = 'https://api-inference.huggingface.co/models';
 const DEFAULT_MODEL_ID =
   (process.env.HF_MODEL_ID && process.env.HF_MODEL_ID.trim()) ||
   'mistralai/Mistral-7B-Instruct-v0.3';
+
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
 Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
@@ -44,6 +46,7 @@ app.post('/api/proxy', async (req, res) => {
     targetModelId = resolveModelId(model ?? modelId);
     targetUrl = buildModelUrl(targetModelId);
 
+
     const payload = {
       inputs: `${
         typeof instruction === 'string' && instruction.trim()
@@ -56,7 +59,9 @@ app.post('/api/proxy', async (req, res) => {
       },
     };
 
+
     const response = await fetch(targetUrl, {
+
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -69,13 +74,17 @@ app.post('/api/proxy', async (req, res) => {
     console.log('HF raw response:', text);
     let content = null;
     let parseError = null;
+
     const contentType = response.headers.get('content-type') || '';
+
 
     if (text) {
       try {
         content = safeJsonParse(text);
       } catch (err) {
         parseError = err;
+
+
         const recovered = tryRecoverInlineJson(text);
         if (recovered !== null) {
           content = recovered;
@@ -87,10 +96,12 @@ app.post('/api/proxy', async (req, res) => {
     const rawText = typeof text === 'string' ? text : '';
 
     if (!response.ok) {
+
       const upstreamError =
         (content && typeof content.error === 'string' && content.error.trim())
           ? content.error.trim()
           : rawText.trim();
+
 
       let message = upstreamError || `Hugging Face svarade ${response.status}`;
 
@@ -103,24 +114,29 @@ app.post('/api/proxy', async (req, res) => {
         const default404 =
           'Hugging Face rapporterade 404 (Not Found). Kontrollera modellnamnet.';
         message = upstreamError || default404;
+
       }
 
       return res.status(response.status).json({
         error: typeof message === 'string' ? message.slice(0, 500) : 'Fel från Hugging Face.',
+
         raw: rawText ? rawText.slice(0, 2000) : undefined,
         model: targetModelId,
         url: targetUrl,
         statusText: response.statusText,
+
       });
     }
 
     if (parseError) {
+
       if (rawText.trim().toLowerCase() === 'not found') {
         return res.status(404).json({
           error: 'Hugging Face svarade "Not Found" – kontrollera modellnamn eller åtkomst.',
           raw: rawText.slice(0, 2000),
           model: targetModelId,
           url: targetUrl,
+
         });
       }
       throw parseError;
@@ -130,13 +146,16 @@ app.post('/api/proxy', async (req, res) => {
       data: content,
       raw: rawText,
       contentType,
+
       model: targetModelId,
       url: targetUrl,
+
     });
   } catch (error) {
     console.error('Proxyfel:', error);
     const statusCode = error instanceof JsonParseError ? 502 : 500;
     const message = error instanceof JsonParseError ? error.message : 'Oväntat fel i proxyn.';
+
     const responsePayload = {
       error: message,
       raw: error instanceof JsonParseError && error.raw ? error.raw.slice(0, 2000) : undefined,
@@ -150,6 +169,7 @@ app.post('/api/proxy', async (req, res) => {
     }
 
     return res.status(statusCode).json(responsePayload);
+
   }
 });
 
@@ -170,12 +190,14 @@ function safeJsonParse(text) {
       return streamed;
     }
     throw new JsonParseError('Kunde inte tolka svaret från Hugging Face.', text);
+
   }
 }
 
 function tryRecoverInlineJson(text) {
   if (typeof text !== 'string') {
     return null;
+
   }
 
   const candidates = [];
@@ -185,6 +207,7 @@ function tryRecoverInlineJson(text) {
   if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
     candidates.push(text.slice(objectStart, objectEnd + 1));
   }
+
 
   const arrayStart = text.indexOf('[');
   const arrayEnd = text.lastIndexOf(']');
@@ -234,6 +257,7 @@ function tryParseEventStream(text) {
   }
 
   return null;
+
 }
 
 function resolveModelId(value) {
@@ -263,6 +287,7 @@ function buildModelUrl(modelId) {
   }
 
   return `${HF_BASE_URL}/${trimmed}`;
+
 }
 
 const PORT = process.env.PORT || 3000;
