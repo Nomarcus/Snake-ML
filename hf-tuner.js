@@ -151,28 +151,42 @@ export function createAITuner(options = {}) {
 
     if (!response.ok) {
       const text = await response.text();
+
+      let parsedError = null;
       try {
-        const parsedError = JSON.parse(text);
-        const baseMessage = parsedError?.error || text;
-        const rawDetails = typeof parsedError?.raw === 'string' && parsedError.raw
-          ? ` Råsvar: ${parsedError.raw.slice(0, 200)}`
-          : '';
-        throw new Error(`Proxy ${response.status}: ${baseMessage}${rawDetails}`);
+        parsedError = JSON.parse(text);
       } catch (parseErr) {
-        throw new Error(`Proxy ${response.status}: ${text.slice(0, 200)}`);
+        // ignore – handled generically below
       }
+
+      const baseMessage = parsedError?.error || text || 'Okänt fel från proxyn';
+      const rawPayload = typeof parsedError?.raw === 'string' ? parsedError.raw : '';
+      if (rawPayload) {
+        console.error('[hf-tuner] Proxy råsvar (fel):', rawPayload);
+      }
+      throw new Error(`Proxy ${response.status}: ${baseMessage}`);
+
     }
 
     const payload = await response.json();
     if (payload?.error) {
       const baseMessage = payload.error;
-      const rawDetails = typeof payload.raw === 'string' && payload.raw ? ` Råsvar: ${payload.raw.slice(0, 200)}` : '';
-      throw new Error(`Proxy error: ${baseMessage}${rawDetails}`);
+
+      const rawDetails = typeof payload.raw === 'string' && payload.raw ? payload.raw : '';
+      if (rawDetails) {
+        console.error('[hf-tuner] Proxy råsvar (fel):', rawDetails);
+      }
+      throw new Error(`Proxy error: ${baseMessage}`);
     }
 
     const rawText = typeof payload?.raw === 'string' ? payload.raw : '';
     if (rawText) {
       console.log('[hf-tuner] Hugging Face råsvar:', rawText);
+    }
+
+    if (payload?.contentType) {
+      console.log('[hf-tuner] Hugging Face content-type:', payload.contentType);
+
     }
 
     const data = payload?.data ?? payload;

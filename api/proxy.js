@@ -63,16 +63,27 @@ app.post('/api/proxy', async (req, res) => {
     let content = null;
     let parseError = null;
 
+    const contentType = response.headers.get('content-type') || '';
+
+
     if (text) {
       try {
         content = safeJsonParse(text);
       } catch (err) {
         parseError = err;
+
+        const recovered = tryRecoverInlineJson(text);
+        if (recovered !== null) {
+          content = recovered;
+          parseError = null;
+        }
       }
     }
 
+    const rawText = typeof text === 'string' ? text : '';
+
     if (!response.ok) {
-      const rawText = typeof text === 'string' ? text : '';
+
       const upstreamError =
         (content && typeof content.error === 'string' && content.error.trim())
           ? content.error.trim()
@@ -99,13 +110,21 @@ app.post('/api/proxy', async (req, res) => {
     }
 
     if (parseError) {
+
+      if (rawText.trim().toLowerCase() === 'not found') {
+        return res.status(404).json({
+          error: 'Hugging Face svarade "Not Found" – kontrollera modellnamn eller åtkomst.',
+          raw: rawText.slice(0, 2000),
+        });
+      }
       throw parseError;
     }
 
-
     return res.status(200).json({
       data: content,
-      raw: typeof text === 'string' ? text : '',
+      raw: rawText,
+      contentType,
+
     });
   } catch (error) {
     console.error('Proxyfel:', error);
@@ -139,34 +158,30 @@ function safeJsonParse(text) {
   }
 }
 
-function tryParseEventStream(text) {
-  if (typeof text !== 'string' || !text.trim()) {
+function tryRecoverInlineJson(text) {
+  if (typeof text !== 'string') {
     return null;
-
   }
 
-  const lines = text.split(/\r?\n/);
-  const jsonCandidates = [];
+  const candidates = [];
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed === 'data: [DONE]') {
-      continue;
-    }
-    if (trimmed.startsWith('data:')) {
-      const payload = trimmed.slice(5).trim();
-      if (payload) {
-        jsonCandidates.push(payload);
-      }
-    }
+  const objectStart = text.indexOf('{');
+  const objectEnd = text.lastIndexOf('}');
+  if (objectStart !== -1 && objectEnd !== -1 && objectEnd > objectStart) {
+    candidates.push(text.slice(objectStart, objectEnd + 1));
   }
 
-  for (let i = jsonCandidates.length - 1; i >= 0; i -= 1) {
-    const candidate = jsonCandidates[i];
+  const arrayStart = text.indexOf('[');
+  const arrayEnd = text.lastIndexOf(']');
+  if (arrayStart !== -1 && arrayEnd !== -1 && arrayEnd > arrayStart) {
+    candidates.push(text.slice(arrayStart, arrayEnd + 1));
+  }
+
+  for (const candidate of candidates) {
     try {
       return JSON.parse(candidate);
     } catch (err) {
-      // Ignorera och prova nästa kandidat
+      // ignore candidate and keep trying
     }
   }
 
@@ -177,6 +192,7 @@ function tryParseEventStream(text) {
   if (typeof text !== 'string' || !text.trim()) {
     return null;
   }
+
 
   const lines = text.split(/\r?\n/);
   const jsonCandidates = [];
