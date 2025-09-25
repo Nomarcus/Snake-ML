@@ -23,8 +23,14 @@ Svara **endast** med en enda rad giltig JSON utan någon extra text eller förkl
 
 const app = express();
 
+const corsOptions = {
+  origin: 'https://nomarcus.github.io',
+  methods: ['POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
 
-app.use(cors({ origin: 'https://nomarcus.github.io' }));
+app.use(cors(corsOptions));
+app.options('/api/proxy', cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
 
 
