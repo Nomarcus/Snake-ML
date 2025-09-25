@@ -151,6 +151,7 @@ export function createAITuner(options = {}) {
 
     if (!response.ok) {
       const text = await response.text();
+
       let parsedError = null;
       try {
         parsedError = JSON.parse(text);
@@ -164,11 +165,13 @@ export function createAITuner(options = {}) {
         console.error('[hf-tuner] Proxy råsvar (fel):', rawPayload);
       }
       throw new Error(`Proxy ${response.status}: ${baseMessage}`);
+
     }
 
     const payload = await response.json();
     if (payload?.error) {
       const baseMessage = payload.error;
+
       const rawDetails = typeof payload.raw === 'string' && payload.raw ? payload.raw : '';
       if (rawDetails) {
         console.error('[hf-tuner] Proxy råsvar (fel):', rawDetails);
@@ -183,6 +186,7 @@ export function createAITuner(options = {}) {
 
     if (payload?.contentType) {
       console.log('[hf-tuner] Hugging Face content-type:', payload.contentType);
+
     }
 
     const data = payload?.data ?? payload;

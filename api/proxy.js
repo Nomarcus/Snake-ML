@@ -62,13 +62,16 @@ app.post('/api/proxy', async (req, res) => {
     console.log('HF raw response:', text);
     let content = null;
     let parseError = null;
+
     const contentType = response.headers.get('content-type') || '';
+
 
     if (text) {
       try {
         content = safeJsonParse(text);
       } catch (err) {
         parseError = err;
+
         const recovered = tryRecoverInlineJson(text);
         if (recovered !== null) {
           content = recovered;
@@ -80,6 +83,7 @@ app.post('/api/proxy', async (req, res) => {
     const rawText = typeof text === 'string' ? text : '';
 
     if (!response.ok) {
+
       const upstreamError =
         (content && typeof content.error === 'string' && content.error.trim())
           ? content.error.trim()
@@ -100,11 +104,13 @@ app.post('/api/proxy', async (req, res) => {
 
       return res.status(response.status).json({
         error: typeof message === 'string' ? message.slice(0, 500) : 'Fel från Hugging Face.',
+
         raw: rawText ? rawText.slice(0, 2000) : undefined,
       });
     }
 
     if (parseError) {
+
       if (rawText.trim().toLowerCase() === 'not found') {
         return res.status(404).json({
           error: 'Hugging Face svarade "Not Found" – kontrollera modellnamn eller åtkomst.',
@@ -118,6 +124,7 @@ app.post('/api/proxy', async (req, res) => {
       data: content,
       raw: rawText,
       contentType,
+
     });
   } catch (error) {
     console.error('Proxyfel:', error);
@@ -147,6 +154,7 @@ function safeJsonParse(text) {
       return streamed;
     }
     throw new JsonParseError('Kunde inte tolka svaret från Hugging Face.', text);
+
   }
 }
 
@@ -184,6 +192,7 @@ function tryParseEventStream(text) {
   if (typeof text !== 'string' || !text.trim()) {
     return null;
   }
+
 
   const lines = text.split(/\r?\n/);
   const jsonCandidates = [];
