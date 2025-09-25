@@ -1,8 +1,9 @@
 import express from 'express';
 import fetch from 'node-fetch';
 
-const HF_ROUTER_URL = 'https://router.huggingface.co/v1/chat/completions';
-const DEFAULT_MODEL_ID = process.env.HF_MODEL_ID?.trim() || 'bigscience/bloomz-1b1';
+const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+const DEFAULT_MODEL_ID =
+  process.env.GROQ_MODEL?.trim() || 'llama-3.1-8b-instant';
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
 Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
@@ -61,9 +62,9 @@ app.post('/api/proxy', async (req, res) => {
     return res.status(403).json({ error: 'Otillåten origin.' });
   }
 
-  const token = process.env.HF_TOKEN;
+  const token = process.env.GROQ_API_KEY;
   if (!token) {
-    return res.status(500).json({ error: 'HF_TOKEN saknas i miljön.' });
+    return res.status(500).json({ error: 'GROQ_API_KEY saknas i miljön.' });
   }
 
   try {
@@ -84,7 +85,7 @@ app.post('/api/proxy', async (req, res) => {
       ],
     };
 
-    const response = await fetch(HF_ROUTER_URL, {
+    const response = await fetch(GROQ_API_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
@@ -94,11 +95,12 @@ app.post('/api/proxy', async (req, res) => {
     });
 
     const rawText = await response.text();
-    console.log('HF raw response:', rawText);
+    console.log('Groq raw response:', rawText);
 
     if (!response.ok) {
       const parsedError = safeJsonParse(rawText);
-      const message = extractErrorMessage(parsedError) || `Hugging Face svarade ${response.status}`;
+      const message =
+        extractErrorMessage(parsedError) || `Groq svarade ${response.status}`;
       return res.status(response.status).json({
         error: message,
         raw: rawText.slice(0, 2000),
@@ -109,7 +111,7 @@ app.post('/api/proxy', async (req, res) => {
     const data = safeJsonParse(rawText);
     if (data === null) {
       return res.status(502).json({
-        error: 'Kunde inte tolka svaret från Hugging Face.',
+        error: 'Kunde inte tolka svaret från Groq.',
         raw: rawText.slice(0, 2000),
         status: 502,
       });
