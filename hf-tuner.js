@@ -1,5 +1,5 @@
 const PROXY_PATH = '/api/proxy';
-const DEFAULT_MODEL_ID = 'mistralai/Mistral-7B-Instruct-v0.2:featherless-ai';
+const DEFAULT_MODEL_ID = 'bigscience/bloomz-1b1';
 
 function resolveApiBase() {
   if (typeof globalThis === 'undefined') return '';
