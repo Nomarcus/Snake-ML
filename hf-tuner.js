@@ -1,5 +1,5 @@
 const PROXY_PATH = '/api/proxy';
-const DEFAULT_MODEL_ID = 'bigscience/bloomz-1b1';
+const DEFAULT_MODEL_ID = 'llama-3.1-8b-instant';
 
 function resolveApiBase() {
   if (typeof globalThis === 'undefined') return '';
