@@ -66,26 +66,76 @@ const payload = {
       const message = (content && content.error) || text || `Hugging Face svarade ${response.status}`;
       return res.status(response.status).json({
         error: typeof message === 'string' ? message.slice(0, 500) : 'Fel från Hugging Face.',
+        raw: typeof text === 'string' ? text.slice(0, 2000) : undefined,
       });
     }
 
-    return res.status(200).json(content);
+    return res.status(200).json({
+      data: content,
+      raw: typeof text === 'string' ? text : '',
+    });
   } catch (error) {
     console.error('Proxyfel:', error);
     const statusCode = error instanceof JsonParseError ? 502 : 500;
     const message = error instanceof JsonParseError ? error.message : 'Oväntat fel i proxyn.';
-    return res.status(statusCode).json({ error: message });
+    return res.status(statusCode).json({
+      error: message,
+      raw: error instanceof JsonParseError && error.raw ? error.raw.slice(0, 2000) : undefined,
+    });
   }
 });
 
-class JsonParseError extends Error {}
+class JsonParseError extends Error {
+  constructor(message, raw) {
+    super(message);
+    this.name = 'JsonParseError';
+    this.raw = raw;
+  }
+}
 
 function safeJsonParse(text) {
   try {
     return JSON.parse(text);
   } catch (err) {
-    throw new JsonParseError('Kunde inte tolka svaret från Hugging Face.');
+    const streamed = tryParseEventStream(text);
+    if (streamed !== null) {
+      return streamed;
+    }
+    throw new JsonParseError('Kunde inte tolka svaret från Hugging Face.', text);
   }
+}
+
+function tryParseEventStream(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    return null;
+  }
+
+  const lines = text.split(/\r?\n/);
+  const jsonCandidates = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed === 'data: [DONE]') {
+      continue;
+    }
+    if (trimmed.startsWith('data:')) {
+      const payload = trimmed.slice(5).trim();
+      if (payload) {
+        jsonCandidates.push(payload);
+      }
+    }
+  }
+
+  for (let i = jsonCandidates.length - 1; i >= 0; i -= 1) {
+    const candidate = jsonCandidates[i];
+    try {
+      return JSON.parse(candidate);
+    } catch (err) {
+      // Ignorera och prova nästa kandidat
+    }
+  }
+
+  return null;
 }
 
 const PORT = process.env.PORT || 3000;
