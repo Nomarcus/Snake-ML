@@ -133,6 +133,11 @@ app.post('/api/proxy', async (req, res) => {
   }
 });
 
+const port = resolvePort(process.env.PORT);
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Proxyserver lyssnar på port ${port}`);
+});
+
 function buildUserContent({ telemetry, instruction }) {
   const parts = [];
   if (typeof instruction === 'string' && instruction.trim()) {
@@ -279,6 +284,15 @@ function extractErrorMessage(parsed) {
   }
 
   return '';
+}
+
+function resolvePort(candidate) {
+  const parsed = Number.parseInt(candidate ?? '', 10);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+
+  return 3001;
 }
 
 export default app;
