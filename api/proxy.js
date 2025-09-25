@@ -1,6 +1,5 @@
 
 import express from 'express';
-import cors from 'cors';
 import fetch from 'node-fetch';
 
 const HF_API_URL =
@@ -12,7 +11,7 @@ const HF_BASE_URL =
   'https://api-inference.huggingface.co/models';
 const DEFAULT_MODEL_ID =
   (process.env.HF_MODEL_ID && process.env.HF_MODEL_ID.trim()) ||
-  'HuggingFaceH4/zephyr-7b-beta';
+  'Qwen/Qwen2-7B-Instruct';
 
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
@@ -26,20 +25,53 @@ du vill uppdatera, t.ex.
 }
 Svara **endast** med en enda rad giltig JSON utan någon extra text eller förklaring.`;
 
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://nomarcus.github.io',
+  'http://localhost:3000',
+  'http://localhost:4173',
+  'http://localhost:5173',
+  'http://localhost:8080',
+  'http://127.0.0.1:3000',
+  'http://127.0.0.1:4173',
+  'http://127.0.0.1:5173',
+  'http://127.0.0.1:8080',
+];
+
+const allowedOriginSet = buildAllowedOriginSet(
+  process.env.CORS_ALLOW_ORIGINS,
+  DEFAULT_ALLOWED_ORIGINS,
+);
+const allowAllOrigins = allowedOriginSet.has('*');
+if (allowAllOrigins) {
+  allowedOriginSet.delete('*');
+}
+
 const app = express();
 
-const corsOptions = {
-  origin: 'https://nomarcus.github.io',
-  methods: ['POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-};
+app.use((req, res, next) => {
+  applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
+  next();
+});
 
-app.use(cors(corsOptions));
-app.options('/api/proxy', cors(corsOptions));
 app.use(express.json({ limit: '1mb' }));
+
+app.options('/api/proxy', (req, res) => {
+  const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
+  if (req.headers.origin && !allowed) {
+    return res.status(403).json({ error: 'Otillåten origin.' });
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  return res.sendStatus(204);
+});
 
 
 app.post('/api/proxy', async (req, res) => {
+  const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
+  if (req.headers.origin && !allowed) {
+    return res.status(403).json({ error: 'Otillåten origin.' });
+  }
+
   let targetModelId = DEFAULT_MODEL_ID;
   let targetUrl = buildModelUrl(targetModelId);
   try {
@@ -183,6 +215,86 @@ app.post('/api/proxy', async (req, res) => {
 
   }
 });
+
+function applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet }) {
+  appendVaryHeader(res, 'Origin');
+
+  const origin = req.headers.origin;
+  if (!origin) {
+    return { allowed: true, applied: false };
+  }
+
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) {
+    return { allowed: false, applied: false };
+  }
+
+  if (allowAllOrigins) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (allowedOriginSet.has(normalizedOrigin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    return { allowed: false, applied: false };
+  }
+
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  return { allowed: true, applied: true };
+}
+
+function buildAllowedOriginSet(envValue, defaults = []) {
+  const baseList = Array.isArray(defaults) ? defaults : [];
+  const extraList =
+    typeof envValue === 'string' && envValue.trim()
+      ? envValue
+          .split(',')
+          .map(value => value.trim())
+          .filter(Boolean)
+      : [];
+
+  const result = new Set();
+
+  for (const value of [...baseList, ...extraList]) {
+    if (value === '*') {
+      result.add('*');
+      continue;
+    }
+
+    const normalized = normalizeOrigin(value);
+    if (normalized) {
+      result.add(normalized);
+    }
+  }
+
+  return result;
+}
+
+function normalizeOrigin(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.trim().replace(/\/+$/, '').toLowerCase();
+}
+
+function appendVaryHeader(res, value) {
+  const current = res.getHeader('Vary');
+  if (!current) {
+    res.setHeader('Vary', value);
+    return;
+  }
+
+  const existing = String(current)
+    .split(',')
+    .map(part => part.trim())
+    .filter(Boolean);
+
+  if (!existing.includes(value)) {
+    existing.push(value);
+    res.setHeader('Vary', existing.join(', '));
+  }
+}
 
 class JsonParseError extends Error {
   constructor(message, raw) {
