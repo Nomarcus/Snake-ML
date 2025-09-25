@@ -1,16 +1,6 @@
 const PROXY_PATH = '/api/proxy';
 const DEFAULT_MODEL_ID = 'Qwen/Qwen1.5-7B-Chat';
 
-const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
-Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
-hyperparametrar så att ormen klarar spelet konsekvent.
-Returnera ENDAST minifierad JSON med nya värden för alla parametrar
-du vill uppdatera, t.ex.
-{
-  "rewardConfig": {stepPenalty:0.008, fruitReward:12, ...},
-  "hyper": {gamma:0.985, lr:0.0004, epsDecay:90000, ...}
-}`;
-
 function resolveApiBase() {
   if (typeof globalThis === 'undefined') return '';
   const value = globalThis.API_BASE_URL || globalThis.__API_BASE_URL || '';
@@ -113,6 +103,166 @@ function extractJsonPayload(text) {
   }
 }
 
+function extractTuningPayload(data, rawText) {
+  if (isTuningPayload(data)) {
+    return data;
+  }
+
+  if (Array.isArray(data)) {
+    for (const item of data) {
+      const nested = extractTuningPayload(item, null);
+      if (nested) {
+        return nested;
+      }
+    }
+    return null;
+  }
+
+  const candidates = collectTextCandidates(data);
+
+  if (typeof rawText === 'string' && rawText.trim()) {
+    candidates.push(rawText.trim());
+  }
+
+  for (const candidate of candidates) {
+    const parsed = extractJsonPayload(candidate);
+    if (!parsed) {
+      continue;
+    }
+
+    if (Array.isArray(parsed)) {
+      for (const item of parsed) {
+        const nested = extractTuningPayload(item, null);
+        if (nested) {
+          return nested;
+        }
+      }
+      continue;
+    }
+
+    if (isTuningPayload(parsed)) {
+      return parsed;
+    }
+
+    const nestedSources = [
+      parsed.data,
+      parsed.result,
+      parsed.response,
+      parsed.payload,
+      parsed.output,
+      parsed.message,
+      parsed.messages,
+      parsed.choice,
+      parsed.choices,
+    ];
+
+    for (const source of nestedSources) {
+      if (!source) {
+        continue;
+      }
+      const nested = extractTuningPayload(source, null);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+
+  return null;
+}
+
+function collectTextCandidates(root) {
+  const results = [];
+  const queue = [root];
+  const seen = typeof WeakSet === 'function' ? new WeakSet() : null;
+
+  while (queue.length) {
+    const current = queue.shift();
+    if (!current) {
+      continue;
+    }
+
+    if (typeof current === 'string') {
+      const trimmed = current.trim();
+      if (trimmed) {
+        results.push(trimmed);
+      }
+      continue;
+    }
+
+    if (typeof current !== 'object') {
+      continue;
+    }
+
+    if (seen) {
+      if (seen.has(current)) {
+        continue;
+      }
+      seen.add(current);
+    }
+
+    if (Array.isArray(current)) {
+      for (const item of current) {
+        queue.push(item);
+      }
+      continue;
+    }
+
+    const stringFields = [
+      current.content,
+      current.generated_text,
+      current.generatedText,
+      current.output_text,
+      current.outputText,
+      current.text,
+      current.completion,
+      current.delta?.content,
+      current.message?.content,
+    ];
+
+    for (const value of stringFields) {
+      if (typeof value === 'string' && value.trim()) {
+        results.push(value.trim());
+      }
+    }
+
+    const nestedFields = [
+      current.data,
+      current.result,
+      current.response,
+      current.payload,
+      current.output,
+      current.message,
+      current.delta,
+      current.messages,
+      current.choices,
+    ];
+
+    for (const nested of nestedFields) {
+      if (!nested) {
+        continue;
+      }
+      if (Array.isArray(nested)) {
+        for (const item of nested) {
+          queue.push(item);
+        }
+      } else {
+        queue.push(nested);
+      }
+    }
+  }
+
+  return results;
+}
+
+function isTuningPayload(value) {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const keys = ['rewardConfig', 'reward', 'hyper', 'hyperparameters'];
+  return keys.some(key => key in value);
+}
+
 export function createAITuner(options = {}) {
   const {
     getVecEnv = () => null,
@@ -121,6 +271,8 @@ export function createAITuner(options = {}) {
     applyHyperparameters,
     log,
     modelId,
+    instruction,
+    getInstruction,
   } = options;
 
   if (typeof fetchTelemetry !== 'function') {
@@ -134,6 +286,25 @@ export function createAITuner(options = {}) {
   let busy = false;
   let warnedNoFetch = false;
 
+  async function resolveInstructionValue(context) {
+    try {
+      if (typeof getInstruction === 'function') {
+        const dynamicValue = await Promise.resolve(getInstruction(context));
+        if (typeof dynamicValue === 'string' && dynamicValue.trim()) {
+          return dynamicValue.trim();
+        }
+      }
+    } catch (err) {
+      console.warn('[hf-tuner] kunde inte hämta dynamisk instruktion', err);
+    }
+
+    if (typeof instruction === 'string' && instruction.trim()) {
+      return instruction.trim();
+    }
+
+    return '';
+  }
+
   function logEvent(payload) {
     try {
       logger(payload);
@@ -143,9 +314,6 @@ export function createAITuner(options = {}) {
   }
 
   async function runTuningCycle(telemetry, episode) {
-    // 👇 Ny rad för felsökning
-    console.log('[hf-tuner] Telemetry som skickas till proxy:', telemetry);
-
     if (typeof fetch !== 'function') {
       if (!warnedNoFetch) {
         logEvent({
@@ -160,16 +328,22 @@ export function createAITuner(options = {}) {
     }
 
     const activeModel = resolveModelId(modelId);
+    const instructionText = await resolveInstructionValue({ telemetry, episode, interval, model: activeModel });
+    const requestBody = {
+      telemetry,
+      model: activeModel,
+    };
+
+    if (instructionText) {
+      requestBody.instruction = instructionText;
+    }
+
     const response = await fetch(buildProxyUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        telemetry,
-        instruction: SYSTEM_PROMPT,
-        model: activeModel,
-      }),
+      body: JSON.stringify(requestBody),
     });
 
     if (!response.ok) {
@@ -237,24 +411,11 @@ export function createAITuner(options = {}) {
     }
 
     const data = payload?.data ?? payload;
+    const parsed = extractTuningPayload(data, rawText);
 
-    const primary = Array.isArray(data) ? data[0] : data;
-    const text = primary?.generated_text ?? primary?.output_text ?? primary?.content ?? '';
-
-    let parsed = extractJsonPayload(text);
-    if (Array.isArray(parsed)) {
-      parsed = parsed[0];
-    }
-    if (!parsed || typeof parsed !== 'object') {
-      const fallback = extractJsonPayload(rawText);
-      const normalizedFallback = Array.isArray(fallback) ? fallback[0] : fallback;
-      if (normalizedFallback && typeof normalizedFallback === 'object') {
-        parsed = normalizedFallback;
-        console.warn('[hf-tuner] JSON extraherat från råsvar efter fallback.');
-      } else {
-        const snippet = rawText ? ` Rådata: ${rawText.slice(0, 200)}` : '';
-        throw new Error(`Saknar giltigt JSON-svar från modellen.${snippet}`);
-      }
+    if (!parsed) {
+      const snippet = rawText ? ` Rådata: ${rawText.slice(0, 200)}` : '';
+      throw new Error(`Saknar giltigt JSON-svar från modellen.${snippet}`);
     }
 
     const rewardResult = typeof applyRewardConfig === 'function'
