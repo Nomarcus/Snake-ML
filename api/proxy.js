@@ -3,6 +3,9 @@ import express from 'express';
 import cors from 'cors';
 import fetch from 'node-fetch';
 
+const HF_API_URL =
+  'https://api-inference.huggingface.co/models/Qwen/Qwen2-7B-Instruct';
+
 
 const HF_BASE_URL =
   (process.env.HF_BASE_URL && process.env.HF_BASE_URL.trim().replace(/\/+$/, '')) ||
