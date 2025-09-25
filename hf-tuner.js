@@ -151,20 +151,59 @@ export function createAITuner(options = {}) {
 
     if (!response.ok) {
       const text = await response.text();
-      throw new Error(`Proxy ${response.status}: ${text.slice(0, 200)}`);
+      let parsedError = null;
+      try {
+        parsedError = JSON.parse(text);
+      } catch (parseErr) {
+        // ignore – handled generically below
+      }
+
+      const baseMessage = parsedError?.error || text || 'Okänt fel från proxyn';
+      const rawPayload = typeof parsedError?.raw === 'string' ? parsedError.raw : '';
+      if (rawPayload) {
+        console.error('[hf-tuner] Proxy råsvar (fel):', rawPayload);
+      }
+      throw new Error(`Proxy ${response.status}: ${baseMessage}`);
     }
 
-    const data = await response.json();
-    if (data?.error) {
-      throw new Error(`Proxy error: ${data.error}`);
+    const payload = await response.json();
+    if (payload?.error) {
+      const baseMessage = payload.error;
+      const rawDetails = typeof payload.raw === 'string' && payload.raw ? payload.raw : '';
+      if (rawDetails) {
+        console.error('[hf-tuner] Proxy råsvar (fel):', rawDetails);
+      }
+      throw new Error(`Proxy error: ${baseMessage}`);
     }
+
+    const rawText = typeof payload?.raw === 'string' ? payload.raw : '';
+    if (rawText) {
+      console.log('[hf-tuner] Hugging Face råsvar:', rawText);
+    }
+
+    if (payload?.contentType) {
+      console.log('[hf-tuner] Hugging Face content-type:', payload.contentType);
+    }
+
+    const data = payload?.data ?? payload;
 
     const primary = Array.isArray(data) ? data[0] : data;
     const text = primary?.generated_text ?? primary?.output_text ?? primary?.content ?? '';
 
-    const parsed = extractJsonPayload(text);
-    if (!parsed) {
-      throw new Error('Saknar giltigt JSON-svar från modellen.');
+    let parsed = extractJsonPayload(text);
+    if (Array.isArray(parsed)) {
+      parsed = parsed[0];
+    }
+    if (!parsed || typeof parsed !== 'object') {
+      const fallback = extractJsonPayload(rawText);
+      const normalizedFallback = Array.isArray(fallback) ? fallback[0] : fallback;
+      if (normalizedFallback && typeof normalizedFallback === 'object') {
+        parsed = normalizedFallback;
+        console.warn('[hf-tuner] JSON extraherat från råsvar efter fallback.');
+      } else {
+        const snippet = rawText ? ` Rådata: ${rawText.slice(0, 200)}` : '';
+        throw new Error(`Saknar giltigt JSON-svar från modellen.${snippet}`);
+      }
     }
 
     const rewardResult = typeof applyRewardConfig === 'function'
