@@ -4,10 +4,10 @@ import cors from 'cors';
 import fetch from 'node-fetch';
 
 
-const HF_BASE_URL = 'https://api-inference.huggingface.co/models';
+const HF_BASE_URL = 'https://huggingface.co/models';
 const DEFAULT_MODEL_ID =
   (process.env.HF_MODEL_ID && process.env.HF_MODEL_ID.trim()) ||
-  'mistralai/Mistral-7B-Instruct-v0.3';
+  'HuggingFaceH4/zephyr-7b-beta';
 
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
