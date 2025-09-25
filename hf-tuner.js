@@ -1,5 +1,5 @@
 const PROXY_PATH = '/api/proxy';
-const DEFAULT_MODEL_ID = 'Qwen/Qwen1.5-7B-Chat';
+const DEFAULT_MODEL_ID = 'mistralai/Mistral-7B-Instruct-v0.2:featherless-ai';
 
 function resolveApiBase() {
   if (typeof globalThis === 'undefined') return '';
