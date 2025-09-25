@@ -12,7 +12,7 @@ const HF_BASE_URL =
   'https://api-inference.huggingface.co/models';
 const DEFAULT_MODEL_ID =
   (process.env.HF_MODEL_ID && process.env.HF_MODEL_ID.trim()) ||
-  'HuggingFaceH4/zephyr-7b-beta';
+  'Qwen/Qwen2-7B-Instruct';
 
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
