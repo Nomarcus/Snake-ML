@@ -1,5 +1,5 @@
 const PROXY_PATH = '/api/proxy';
-const DEFAULT_MODEL_ID = 'HuggingFaceH4/zephyr-7b-beta';
+const DEFAULT_MODEL_ID = 'Qwen/Qwen2-7B-Instruct';
 
 const SYSTEM_PROMPT = `Du är en expert på reinforcement learning.
 Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
