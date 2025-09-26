@@ -48,6 +48,187 @@ function formatChanges(changes=[]){
   }).join(', ');
 }
 
+function wordCount(text){
+  if(typeof text!=='string') return 0;
+  const trimmed=text.trim();
+  if(!trimmed) return 0;
+  return trimmed.split(/\s+/).filter(Boolean).length;
+}
+
+function limitWords(text,maxWords){
+  if(typeof text!=='string') return '';
+  const trimmed=text.trim();
+  if(!trimmed) return '';
+  const parts=trimmed.split(/\s+/).filter(Boolean);
+  if(parts.length<=maxWords) return parts.join(' ');
+  return parts.slice(0,maxWords).join(' ');
+}
+
+function ensureSentence(text){
+  if(typeof text!=='string') return '';
+  const trimmed=text.trim();
+  if(!trimmed) return '';
+  const punctuation=/[.!?]$/.test(trimmed)?'':'';
+  return `${trimmed}${punctuation}`;
+}
+
+function describeTrend(value,positiveWord='rising',negativeWord='falling',zeroWord='flat'){
+  if(!Number.isFinite(value)||Math.abs(value)<1e-6) return zeroWord;
+  const magnitude=Math.abs(value).toFixed(2);
+  return value>0?`${positiveWord} by ${magnitude}`:`${negativeWord} by ${magnitude}`;
+}
+
+const CRASH_LABELS={
+  wall:'wall hits',
+  self:'self collisions',
+  timeout:'timeouts',
+  enemy:'enemy collisions',
+  none:'no crash',
+};
+
+function humanizeCrash(key){
+  if(!key) return '';
+  return CRASH_LABELS[key]||key.replace(/_/g,' ');
+}
+
+function selectDominantCrash(crashCounts={},totalEpisodes=0){
+  const entries=Object.entries(crashCounts).filter(([,count])=>Number.isFinite(count)&&count>0);
+  if(!entries.length) return null;
+  entries.sort((a,b)=>b[1]-a[1]);
+  const [key,count]=entries[0];
+  const share=totalEpisodes>0?Math.round((count/totalEpisodes)*100):null;
+  return {key,count,share};
+}
+
+function summariseChangeList(changes=[],maxItems=3){
+  if(!Array.isArray(changes)||!changes.length) return [];
+  const entries=changes.slice(0,maxItems).map(change=>{
+    const key=change.key??change.id??'value';
+    const before=formatNumber(change.oldValue);
+    const after=formatNumber(change.newValue);
+    return `${key} ${before}→${after}`;
+  });
+  if(changes.length>maxItems&&entries.length){
+    const lastIndex=entries.length-1;
+    entries[lastIndex]=`${entries[lastIndex]} (+${changes.length-maxItems} more)`;
+  }
+  return entries;
+}
+
+function extractReasoningSnippet(response){
+  if(!response||typeof response!=='object') return '';
+  const candidates=[
+    response.reasoning,
+    response.analysis?.justeringar,
+    response.analysis?.reasoning,
+    response.analysis?.summary,
+    Array.isArray(response.analysis?.key_findings)?response.analysis.key_findings.join(' '):'',
+  ];
+  for(const candidate of candidates){
+    if(typeof candidate==='string'&&candidate.trim()){
+      return limitWords(candidate,40);
+    }
+  }
+  return '';
+}
+
+function buildAnalysisParagraph({telemetry,response,rewardChanges=[],hyperChanges=[]}){
+  if(!telemetry||typeof telemetry!=='object'||!response) return '';
+  const meta=telemetry.meta||{};
+  const stats=telemetry.stats||{};
+  const interval=Number(meta.interval)||0;
+  const episode=Number(meta.episode)||0;
+  const startEpisode=interval&&episode?Math.max(1,episode-interval+1):null;
+  const spanText=interval&&episode?`Last ${interval} episodes (${startEpisode}–${episode})`:'Recent episodes';
+  const rewardAvgText=Number.isFinite(stats.rewardAvg)?stats.rewardAvg.toFixed(2):'n/a';
+  const rewardTrendText=describeTrend(stats.rewardTrend,'rising','falling','flat');
+  const fruitTrendDescriptor=Number.isFinite(stats.fruitTrend)?describeTrend(stats.fruitTrend,'growing','shrinking','flat'):'flat';
+  const bestLen=Number.isFinite(meta.best)?meta.best:null;
+
+  const observationSentence=ensureSentence(
+    `${spanText} show average reward ${rewardAvgText} with a ${rewardTrendText} trend, while fruit momentum is ${fruitTrendDescriptor}`+
+    (bestLen?` and best length reached ${bestLen}`:'')
+  );
+
+  const stepsAvg=Number.isFinite(stats.stepsAvg)?Math.round(stats.stepsAvg):null;
+  const loopsAvg=Number.isFinite(stats.loopsAvg)?stats.loopsAvg.toFixed(2):null;
+  const fruitRate=Number.isFinite(stats.fruitRate)?stats.fruitRate.toFixed(3):null;
+  const dominantCrash=selectDominantCrash(telemetry.crash,interval||telemetry.meta?.interval||rewardChanges.length+hyperChanges.length);
+  const crashText=dominantCrash&&dominantCrash.share!==null?`${humanizeCrash(dominantCrash.key)} at ${dominantCrash.share}%`:(dominantCrash?humanizeCrash(dominantCrash.key):'');
+  const trendParts=[];
+  if(stepsAvg!==null) trendParts.push(`mean steps ${stepsAvg}`);
+  if(loopsAvg!==null) trendParts.push(`loop hits ${loopsAvg}`);
+  if(fruitRate!==null) trendParts.push(`fruit rate ${fruitRate} per step`);
+  if(crashText) trendParts.push(`dominant exit ${crashText}`);
+  const trendsSentence=trendParts.length?ensureSentence(`Telemetry also notes ${trendParts.join(', ')}.`):'';
+
+  const rewardDescriptions=summariseChangeList(rewardChanges);
+  const hyperDescriptions=summariseChangeList(hyperChanges);
+  const adjustmentParts=[];
+  if(rewardDescriptions.length) adjustmentParts.push(`reward tweaks ${rewardDescriptions.join('; ')}`);
+  if(hyperDescriptions.length) adjustmentParts.push(`hyperparameter updates ${hyperDescriptions.join('; ')}`);
+  const adjustmentsSentence=adjustmentParts.length?ensureSentence(`Adjustments apply ${adjustmentParts.join(' and ')}.`):'';
+
+  const reasoningSnippet=extractReasoningSnippet(response);
+  const reasoningSentence=reasoningSnippet?ensureSentence(`Rationale: ${reasoningSnippet}`):'';
+
+  const statusMap={
+    good:'is going well',
+    stable:'is stable',
+    bad:'needs improvement',
+    uncertain:'needs closer monitoring',
+  };
+  const statusKey=response.assessment?.status;
+  const defaultStatus=stats.rewardTrend>0.01?'is going well':stats.rewardTrend<-0.01?'needs improvement':'is stable';
+  const statusText=statusMap[statusKey]||defaultStatus;
+  const trendWord=response.assessment?.trend;
+  const confidence=Number.isFinite(response.assessment?.confidence)?Math.round(response.assessment.confidence*100):null;
+  const assessmentParts=[`Overall performance ${statusText}`];
+  if(trendWord) assessmentParts.push(`trend looks ${trendWord}`);
+  if(confidence!==null) assessmentParts.push(`confidence ${confidence}%`);
+  const assessmentSentence=ensureSentence(assessmentParts.join(', '));
+
+  const sentences=[observationSentence,trendsSentence,adjustmentsSentence,reasoningSentence,assessmentSentence].filter(Boolean);
+  let text=sentences.join(' ');
+  let totalWords=wordCount(text);
+
+  if(totalWords<80){
+    const extras=[];
+    if(Number.isFinite(stats.timeToFruit)) extras.push(`mean time-to-fruit ${stats.timeToFruit.toFixed(1)} moves`);
+    if(Number.isFinite(meta.envs)&&meta.envs>0) extras.push(`${meta.envs} environments active`);
+    const breakdown=telemetry.rewardBreakdown;
+    if(breakdown&&typeof breakdown==='object'){
+      const entries=Object.entries(breakdown)
+        .filter(([,value])=>Number.isFinite(value))
+        .sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+      if(entries.length){
+        const [key,value]=entries[0];
+        extras.push(`reward share led by ${key} at ${value.toFixed(2)}`);
+      }
+    }
+    if(extras.length){
+      text=`${text} ${ensureSentence(`Additional context: ${extras.join(', ')}.`)}`;
+      totalWords=wordCount(text);
+    }
+  }
+
+  if(totalWords>120&&reasoningSentence){
+    const trimmedReason=ensureSentence(`Rationale: ${limitWords(reasoningSnippet,25)}`);
+    const idx=sentences.indexOf(reasoningSentence);
+    if(idx>=0){
+      sentences[idx]=trimmedReason;
+      text=sentences.filter(Boolean).join(' ');
+      totalWords=wordCount(text);
+    }
+  }
+
+  if(totalWords>120){
+    text=limitWords(text,120);
+  }
+
+  return text.trim();
+}
+
 export function createAITuner(options={}){
   const {
     getVecEnv=()=>null,
@@ -67,6 +248,7 @@ export function createAITuner(options={}){
   let busy=false;
   let warnedNoKey=false;
   let warnedNoFetch=false;
+  let lastAnalysisText='';
 
   function logEvent(payload){
     try{
@@ -140,6 +322,20 @@ export function createAITuner(options={}){
     }
     const rewardSummary=formatChanges(rewardResult?.changes);
     const hyperSummary=formatChanges(hyperResult?.changes);
+    const hasUpdates=((rewardResult?.changes?.length)||0)+((hyperResult?.changes?.length)||0)>0;
+    if(hasUpdates){
+      const analysisText=buildAnalysisParagraph({
+        telemetry,
+        response:parsed,
+        rewardChanges:rewardResult?.changes||[],
+        hyperChanges:hyperResult?.changes||[],
+      });
+      if(analysisText){
+        lastAnalysisText=analysisText;
+        console.log('[AI Analysis]',analysisText);
+        logEvent({title:'AI analys',detail:analysisText,tone:'summary',episodeNumber:episode});
+      }
+    }
     if(rewardSummary){
       logEvent({title:'AI belöningar',detail:rewardSummary,tone:'reward',episodeNumber:episode});
     }
@@ -183,5 +379,6 @@ export function createAITuner(options={}){
     maybeTune,
     isEnabled(){ return enabled; },
     getInterval(){ return interval; },
+    getLastAnalysis(){ return lastAnalysisText; },
   };
 }
