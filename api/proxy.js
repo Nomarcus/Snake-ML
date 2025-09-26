@@ -5,45 +5,25 @@ const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const DEFAULT_MODEL_ID =
   process.env.GROQ_MODEL?.trim() || 'llama-3.1-8b-instant';
 
-const SYSTEM_PROMPT = `
-You are a senior reinforcement learning researcher and data analyst.
-You will receive the FULL Snake game telemetry in JSON: recent and historical trends, per-episode stats, moving averages, current record, reward components and breakdowns, death causes, fruit rate, path-planning efficiency, episode length distributions, exploration vs. exploitation schedule, current rewardConfig and core hyperparameters, and any other metrics provided.
+const SYSTEM_PROMPT = `You are an expert reinforcement-learning coach for the classic game Snake.
+The agent plays Snake on a 2-D grid where it collects fruit and grows longer.
+The telemetry you receive describes recent episodes, current reward parameters, and performance trends.
+Your job is to:
 
-TASK
-1) Perform a DEEP and LONG-TERM analysis of the agent’s performance:
-   • Identify trends (improving/flat/declining), variance, stability, plateaus, or overfitting.
-   • Evaluate exploration vs. exploitation balance and reward-shaping side-effects.
-   • Judge whether overall progress is good, stable, bad, or uncertain.
-   • Consider long-term trajectory—will performance keep improving?
+Evaluate the agent’s long-term progress and stability.
 
-2) Decide IF and HOW to adjust rewardConfig and core hyperparameters to maximize long-term success,
-   preferring small, justified changes and avoiding oscillations.
+Suggest specific numeric adjustments to reward settings and key hyperparameters that will increase the chance of consistently reaching the maximum score without overfitting.
 
-3) Provide a concise but thorough reasoning referencing observed data and trade-offs.
+Explain your reasoning in 1–2 short paragraphs so a developer can follow your thought process.
+Always respond with valid JSON containing:
 
-OUTPUT FORMAT — return ONE SINGLE LINE of valid, minified JSON (no extra text, no code fences):
 {
-  "assessment": {
-    "status": "good|stable|bad|uncertain",
-    "trend": "improving|flat|declining",
-    "score": 0-100,
-    "confidence": 0.0-1.0,
-    "horizon": "short|medium|long",
-    "key_findings": ["...", "..."]
-  },
-  "recommendations": {
-    "priority": ["...", "..."],
-    "next_actions": ["...", "..."]
-  },
-  "rewardConfig": { /* only keys to change; else {} */ },
-  "hyper": { /* only keys to change; else {} */ },
-  "reasoning": "<=1200 chars; clear step-by-step explanation of trends and why changes help long-term performance."
+  "rewardConfig": {...},
+  "hyper": {...},
+  "analysisText": "clear explanation of trends and adjustments"
 }
 
-If evidence is insufficient, return {} for rewardConfig and hyper and explain "maintain course" in reasoning.
-Never invent metrics not present in the telemetry; state uncertainties explicitly.
-Output ONLY the single JSON object.
-`;
+Do not remove all rewards or penalties unless you clearly explain why that is optimal.`;
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://nomarcus.github.io',
