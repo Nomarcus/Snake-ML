@@ -1,13 +1,23 @@
 const API_URL='https://api.openai.com/v1/chat/completions';
-const SYSTEM_PROMPT=`Du är en expert på reinforcement learning.
-Ditt mål är att justera Snake-MLs belöningsparametrar och centrala
-hyperparametrar så att ormen klarar spelet konsekvent.
-Returnera ENDAST minifierad JSON med nya värden för alla parametrar
-du vill uppdatera, t.ex.
+const SYSTEM_PROMPT=`You are an expert reinforcement-learning coach for the classic game Snake.
+The agent plays Snake on a 2-D grid where it collects fruit and grows longer.
+The telemetry you receive describes recent episodes, current reward parameters, and performance trends.
+Your job is to:
+
+Evaluate the agent’s long-term progress and stability.
+
+Suggest specific numeric adjustments to reward settings and key hyperparameters that will increase the chance of consistently reaching the maximum score without overfitting.
+
+Explain your reasoning in 1–2 short paragraphs so a developer can follow your thought process.
+Always respond with valid JSON containing:
+
 {
-  "rewardConfig": {stepPenalty:0.008, fruitReward:12, ...},
-  "hyper": {gamma:0.985, lr:0.0004, epsDecay:90000, ...}
-}`;
+  "rewardConfig": {...},
+  "hyper": {...},
+  "analysisText": "clear explanation of trends and adjustments"
+}
+
+Do not remove all rewards or penalties unless you clearly explain why that is optimal.`;
 
 function resolveApiKey(preferred){
   if(typeof preferred==='string' && preferred.trim()) return preferred.trim();
