@@ -778,13 +778,16 @@ footer{
 </header>
 
 <main id="trainingView" class="layout">
-  <section class="card game-card">
+  <section class="card game-card" id="simulationCard">
     <div class="card-head">
       <div>
         <h2>Snake Simulation</h2>
         <p class="subtitle">Smooth rendering for reinforcement learning experiments.</p>
       </div>
-      <span class="badge soft" id="playbackLabel">Smooth realtime</span>
+      <div class="card-actions">
+        <span class="badge soft" id="playbackLabel">Smooth realtime</span>
+        <button id="btnToggleLiveView" class="secondary" type="button">Hide live view</button>
+      </div>
     </div>
     <canvas id="board" width="500" height="500"></canvas>
     <div class="controls primary">
@@ -815,7 +818,6 @@ footer{
         <button id="btnCheckpointToggle" class="secondary" type="button">Enable Checkpoint Save</button>
         <button id="btnSave" class="secondary">Save</button>
         <button id="btnLoad" class="secondary">Load</button>
-        <button id="btnLoadModel" class="secondary">Load model</button>
         <button id="btnClear" class="danger">Clear cache</button>
       </div>
     </div>
@@ -1276,7 +1278,6 @@ footer{
 </section>
 
 <input type="file" id="fileLoader" accept="application/json" hidden>
-<input type="file" id="modelLoader" accept="application/json" hidden>
 
 <footer class="hint">© Marcus — Snake learns with multiple RL strategies and cinematic movement.</footer>
 
@@ -2660,6 +2661,7 @@ function createRewardTelemetry(max=1200){
 /* ---------------- Rendering helpers ---------------- */
 const board=document.getElementById('board');
 const bctx=board.getContext('2d');
+board.setAttribute('aria-hidden','false');
 let COLS=20,ROWS=20,CELL=board.width/COLS;
 let envCount=1;
 let vecEnv=new VecSnakeEnv(envCount,{cols:COLS,rows:ROWS,rewardConfig});
@@ -2688,6 +2690,8 @@ let currentAnim=null;
 let renderActive=false;
 let renderToken=0;
 let watching=false;
+let liveViewHidden=false;
+let renderSuspended=false;
 const MAX_RENDER_QUEUE=240;
 
 function queueLimit(){ return watching?MAX_RENDER_QUEUE*2:MAX_RENDER_QUEUE; }
@@ -2701,9 +2705,13 @@ function setImmediateState(environment){
   renderQueue.length=0;
   currentAnim=null;
   lastDrawnState=cloneState(state);
-  drawFrame(state,state,1);
+  if(!renderSuspended) drawFrame(state,state,1);
 }
 function enqueueRenderFrame(from,to,duration){
+  if(renderSuspended){
+    lastDrawnState=cloneState(to);
+    return;
+  }
   const entry={from:cloneState(from),to:cloneState(to),start:null,duration:Math.max(16,duration||80)};
   renderQueue.push(entry);
   const limit=queueLimit();
@@ -2723,6 +2731,13 @@ const easeProgress=t=>{
   return t<0.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
 };
 function stepRender(ts){
+  if(renderSuspended){
+    renderQueue.length=0;
+    currentAnim=null;
+    renderActive=false;
+    renderToken=0;
+    return;
+  }
   if(!currentAnim){
     currentAnim=renderQueue.shift();
     if(!currentAnim){
@@ -2754,6 +2769,7 @@ async function waitForRenderIdle(){
   }
 }
 function drawFrame(from,to,t){
+  if(renderSuspended) return;
   bctx.fillStyle=BG_COLOR;
   bctx.fillRect(0,0,board.width,board.height);
   drawGrid();
@@ -2948,6 +2964,7 @@ const ui={
   playbackButtons:Array.from(document.querySelectorAll('#playbackGroup .pill')),
   gridSize:document.getElementById('gridSize'),
   gridLabel:document.getElementById('gridLabel'),
+  btnToggleLiveView:document.getElementById('btnToggleLiveView'),
   btnTrain:document.getElementById('btnTrain'),
   btnPause:document.getElementById('btnPause'),
   btnStep:document.getElementById('btnStep'),
@@ -2956,7 +2973,6 @@ const ui={
   btnCheckpointToggle:document.getElementById('btnCheckpointToggle'),
   btnSave:document.getElementById('btnSave'),
   btnLoad:document.getElementById('btnLoad'),
-  btnLoadModel:document.getElementById('btnLoadModel'),
   btnClear:document.getElementById('btnClear'),
   modeButtons:Array.from(document.querySelectorAll('#modeGroup .pill')),
   algoSelect:document.getElementById('algoSelect'),
@@ -3047,7 +3063,6 @@ const ui={
   autoLogStream:document.getElementById('autoLogStream'),
   autoLogClear:document.getElementById('autoLogClear'),
   fileLoader:document.getElementById('fileLoader'),
-  modelLoader:document.getElementById('modelLoader'),
   advancedPanel:document.getElementById('advancedPanel'),
   advancedSections:{
     dqn:document.querySelector('[data-config="dqn"]'),
@@ -3519,10 +3534,12 @@ function bindUI(){
   ui.btnPause.addEventListener('click',stopTraining);
   ui.btnStep.addEventListener('click',async()=>{ await playSingleEpisode(); });
   ui.btnWatch.addEventListener('click',watchSmoothEpisode);
+  ui.btnToggleLiveView?.addEventListener('click',()=>{
+    setLiveViewHidden(!liveViewHidden);
+  });
   ui.btnCheckpointToggle?.addEventListener('click',handleCheckpointToggle);
   ui.btnSave.addEventListener('click',saveTrainingToFile);
   ui.btnLoad.addEventListener('click',()=>ui.fileLoader?.click());
-  ui.btnLoadModel.addEventListener('click',()=>ui.modelLoader?.click());
   ui.btnClear.addEventListener('click',()=>{
     for(const k in localStorage){
       if(k.includes('tensorflowjs')) localStorage.removeItem(k);
@@ -3555,24 +3572,6 @@ function bindUI(){
     const [file]=ev.target.files||[];
     if(file) await loadTrainingFromFile(file);
     ev.target.value='';
-  });
-  ui.modelLoader?.addEventListener('change',async ev=>{
-    const [file]=ev.target.files||[];
-    if(!file){ ev.target.value=''; return; }
-    const resume=training;
-    if(resume) stopTraining();
-    try{
-      const text=await file.text();
-      const data=JSON.parse(text);
-      await applyCheckpointData(data);
-      flash('Model loaded');
-    }catch(err){
-      console.error(err);
-      flash('Failed to load model',true);
-    }finally{
-      ev.target.value='';
-      if(resume&&!watching) startTraining();
-    }
   });
   ui.algoSelect.addEventListener('change',()=>{
     if(watching) return;
@@ -3748,7 +3747,33 @@ function setPlaybackMode(mode){
   ui.playbackButtons.forEach(btn=>{
     btn.classList.toggle('active',btn.dataset.speed===mode);
   });
-  ui.playbackLabel.textContent=playbackModes[mode].label;
+  ui.playbackLabel.textContent=liveViewHidden?'Rendering paused':playbackModes[mode].label;
+}
+function setLiveViewHidden(hidden){
+  hidden=!!hidden;
+  if(hidden===liveViewHidden) return;
+  liveViewHidden=hidden;
+  if(ui.btnToggleLiveView){
+    ui.btnToggleLiveView.textContent=hidden?'Show live view':'Hide live view';
+    ui.btnToggleLiveView.setAttribute('aria-pressed',hidden?'true':'false');
+  }
+  board.classList.toggle('hidden',hidden);
+  board.setAttribute('aria-hidden',hidden?'true':'false');
+  if(hidden){
+    renderSuspended=true;
+    if(renderToken){
+      cancelAnimationFrame(renderToken);
+      renderToken=0;
+    }
+    renderActive=false;
+    renderQueue.length=0;
+    currentAnim=null;
+    ui.playbackLabel.textContent='Rendering paused';
+  }else{
+    renderSuspended=false;
+    setImmediateState(env);
+    setPlaybackMode(playbackMode);
+  }
 }
 function applyConfigToAgent(){
   if(!agent) return;
@@ -4533,6 +4558,7 @@ async function watchSmoothEpisode(){
   if(watching||!agent) return;
   const wasTraining=training;
   if(wasTraining) stopTraining();
+  if(liveViewHidden) setLiveViewHidden(false);
   watching=true;
   ui.trainState.textContent='watching';
   ui.btnWatch.disabled=true;
