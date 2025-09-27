@@ -19,6 +19,7 @@ Always respond with valid JSON containing:
 Do not remove all rewards or penalties unless you clearly explain why that is optimal.`;
 
 const PROXY_PATH = '/api/proxy';
+const HISTORY_LOG_PATH = '/api/logs/snake-history.jsonl';
 const DEFAULT_MODEL_ID = 'llama-3.1-8b-instant';
 
 function resolveApiBase() {
@@ -64,6 +65,19 @@ function buildProxyUrl() {
     return joinPath(trimmed, PROXY_PATH);
   }
   return joinPath(`/${trimmed}`, PROXY_PATH);
+}
+
+function buildHistoryUrl() {
+  const base = resolveApiBase();
+  if (!base) return HISTORY_LOG_PATH;
+  const trimmed = base.replace(/\/+$/, '');
+  if (/^https?:\/\//i.test(trimmed)) {
+    return joinPath(trimmed, HISTORY_LOG_PATH);
+  }
+  if (trimmed.startsWith('/')) {
+    return joinPath(trimmed, HISTORY_LOG_PATH);
+  }
+  return joinPath(`/${trimmed}`, HISTORY_LOG_PATH);
 }
 
 function resolveModelId(localOverride) {
@@ -621,6 +635,44 @@ function collectTextCandidates(root) {
   return results;
 }
 
+async function appendSnakeHistory(entry) {
+  if (!entry || typeof entry !== 'object') return;
+  if (typeof fetch !== 'function') return;
+  try {
+    const response = await fetch(buildHistoryUrl(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ entry }),
+    });
+    if (!response.ok) {
+      const text = await response.text();
+      console.warn('[hf-tuner] misslyckades skriva history-logg', response.status, text);
+    }
+  } catch (err) {
+    console.warn('[hf-tuner] kunde inte skriva history-logg', err);
+  }
+}
+
+function fillMissingKeys(candidate, reference) {
+  const base = reference && typeof reference === 'object' ? reference : {};
+  const updates = candidate && typeof candidate === 'object' ? candidate : {};
+  const result = {};
+  for (const key of Object.keys(base)) {
+    if (Object.prototype.hasOwnProperty.call(updates, key)) {
+      const numeric = Number(updates[key]);
+      result[key] = Number.isFinite(numeric) ? numeric : updates[key];
+    } else {
+      result[key] = base[key];
+    }
+  }
+  for (const [key, value] of Object.entries(updates)) {
+    if (Object.prototype.hasOwnProperty.call(result, key)) continue;
+    const numeric = Number(value);
+    result[key] = Number.isFinite(numeric) ? numeric : value;
+  }
+  return result;
+}
+
 function isTuningPayload(value) {
   if (!value || typeof value !== 'object') {
     return false;
@@ -640,6 +692,7 @@ export function createAITuner(options = {}) {
     modelId,
     instruction,
     getInstruction,
+    isCheckpointEnabled,
   } = options;
 
   if (typeof fetchTelemetry !== 'function') {
@@ -696,9 +749,79 @@ export function createAITuner(options = {}) {
     }
 
     const activeModel = resolveModelId(modelId);
-    const instructionText = await resolveInstructionValue({ telemetry, episode, interval, model: activeModel });
+    const meta = telemetry && typeof telemetry === 'object' ? telemetry.meta || {} : {};
+    const intervalEpisodes = telemetry?.intervalEpisodes ?? interval;
+    const rewardReference = telemetry?.currentConfig?.reward || telemetry?.rewardConfig || {};
+    const hyperReference = telemetry?.currentConfig?.hyper || telemetry?.hyper || {};
+    const currentConfig = {
+      reward: { ...rewardReference },
+      hyper: { ...hyperReference },
+    };
+
+    const messagePayload = {
+      version: 2,
+      algoId: meta.algo ?? null,
+      intervalEpisodes,
+      meta: {
+        episode: meta.episode ?? null,
+        board: meta.board ?? null,
+        envs: meta.envs ?? null,
+        best: meta.best ?? null,
+        agent: meta.agent ?? null,
+      },
+      stats: telemetry?.stats ?? {},
+      currentConfig,
+    };
+
+    if (telemetry?.rewardBreakdown) {
+      messagePayload.rewardBreakdown = telemetry.rewardBreakdown;
+    }
+    if (telemetry?.crash) {
+      messagePayload.crash = telemetry.crash;
+    }
+    if (telemetry?.rollup) {
+      messagePayload.rollup = telemetry.rollup;
+    }
+    if (Array.isArray(telemetry?.recentEpisodes) && telemetry.recentEpisodes.length) {
+      messagePayload.recent = {
+        window: telemetry.recentEpisodes.length,
+        episodes: telemetry.recentEpisodes,
+      };
+    }
+    if (telemetry?.latestEpisode) {
+      messagePayload.latestEpisode = telemetry.latestEpisode;
+      const checkpointEntry = {
+        type: 'checkpoint',
+        ts: new Date().toISOString(),
+        intervalEpisodes,
+        episode: telemetry.latestEpisode.episode ?? meta.episode ?? null,
+        algoId: meta.algo ?? null,
+        reward: telemetry.latestEpisode.reward ?? null,
+        fruits: telemetry.latestEpisode.fruits ?? null,
+        steps: telemetry.latestEpisode.steps ?? null,
+        crash: telemetry.latestEpisode.crash ?? null,
+      };
+      if (telemetry.latestEpisode.loopHits !== undefined) {
+        checkpointEntry.loopHits = telemetry.latestEpisode.loopHits;
+      }
+      if (telemetry.latestEpisode.revisitPenalty !== undefined) {
+        checkpointEntry.revisitPenalty = telemetry.latestEpisode.revisitPenalty;
+      }
+      if (telemetry.latestEpisode.timeToFruitAvg !== undefined) {
+        checkpointEntry.timeToFruitAvg = telemetry.latestEpisode.timeToFruitAvg;
+      }
+      await appendSnakeHistory(checkpointEntry);
+    }
+
+    const instructionText = await resolveInstructionValue({
+      telemetry: messagePayload,
+      rawTelemetry: telemetry,
+      episode,
+      interval,
+      model: activeModel,
+    });
     const requestBody = {
-      telemetry,
+      telemetry: messagePayload,
       model: activeModel,
     };
 
@@ -781,17 +904,21 @@ export function createAITuner(options = {}) {
     const data = payload?.data ?? payload;
     const parsed = extractTuningPayload(data, rawText);
 
-    if (!parsed) {
+    if (!parsed || typeof parsed !== 'object') {
       const snippet = rawText ? ` Rådata: ${rawText.slice(0, 200)}` : '';
       throw new Error(`Saknar giltigt JSON-svar från modellen.${snippet}`);
     }
 
+    const rewardTarget = fillMissingKeys(parsed.rewardConfig || parsed.reward || {}, currentConfig.reward);
+    const hyperTarget = fillMissingKeys(parsed.hyper || parsed.hyperparameters || {}, currentConfig.hyper);
+    const shouldLogPrompt = typeof isCheckpointEnabled === 'function' ? !!isCheckpointEnabled() : false;
+
     const rewardResult = typeof applyRewardConfig === 'function'
-      ? applyRewardConfig(parsed.rewardConfig || parsed.reward || {})
+      ? applyRewardConfig(rewardTarget)
       : { changes: [], config: null };
 
     const hyperResult = typeof applyHyperparameters === 'function'
-      ? applyHyperparameters(parsed.hyper || parsed.hyperparameters || {})
+      ? applyHyperparameters(hyperTarget)
       : { changes: [], hyper: null };
 
     const envInstance = resolveEnv?.();
@@ -806,19 +933,56 @@ export function createAITuner(options = {}) {
     const rewardSummary = formatChanges(rewardResult?.changes);
     const hyperSummary = formatChanges(hyperResult?.changes);
 
-    const hasUpdates = (rewardResult?.changes?.length || 0) + (hyperResult?.changes?.length || 0) > 0;
-    if (hasUpdates) {
-      const analysisText = buildAnalysisParagraph({
-        telemetry,
-        response: parsed,
-        rewardChanges: rewardResult?.changes || [],
-        hyperChanges: hyperResult?.changes || [],
-      });
-      if (analysisText) {
-        lastAnalysisText = analysisText;
-        console.log('[AI Analysis]', analysisText);
-        logEvent({ title: 'AI analys', detail: analysisText, tone: 'summary', episodeNumber: episode });
+    const analysisParts = [];
+    const primaryAnalysis =
+      typeof parsed.analysisText === 'string'
+        ? parsed.analysisText.trim()
+        : typeof parsed.analysis?.analysisText === 'string'
+          ? parsed.analysis.analysisText.trim()
+          : '';
+    if (primaryAnalysis) {
+      analysisParts.push(primaryAnalysis);
+    }
+    const summaryField = parsed.summary ?? parsed.analysis?.summary ?? null;
+    if (Array.isArray(summaryField)) {
+      const joined = summaryField
+        .map(item => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean)
+        .join(' ');
+      if (joined) {
+        analysisParts.push(joined);
       }
+    } else if (typeof summaryField === 'string') {
+      const trimmed = summaryField.trim();
+      if (trimmed) {
+        analysisParts.push(trimmed);
+      }
+    }
+    let combinedAnalysis = analysisParts.join(' ').replace(/\s+/g, ' ').trim();
+    if (combinedAnalysis) {
+      combinedAnalysis = limitWords(combinedAnalysis, 80).trim();
+    }
+
+    if (combinedAnalysis) {
+      lastAnalysisText = combinedAnalysis;
+      console.log('[AI Analysis]', combinedAnalysis);
+      logEvent({ title: 'AI analys', detail: combinedAnalysis, tone: 'summary', episodeNumber: episode });
+    }
+
+    if (shouldLogPrompt) {
+      await appendSnakeHistory({
+        type: 'analysis',
+        ts: new Date().toISOString(),
+        episode: meta.episode ?? telemetry?.latestEpisode?.episode ?? null,
+        model: payload?.model ?? activeModel,
+        prompt: messagePayload,
+        response: {
+          rewardConfig: rewardTarget,
+          hyper: hyperTarget,
+          analysisText: primaryAnalysis || null,
+          summary: summaryField ?? null,
+        },
+      });
     }
 
     if (rewardSummary) {
