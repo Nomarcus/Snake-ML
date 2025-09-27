@@ -1,9 +1,13 @@
 import express from 'express';
 import fetch from 'node-fetch';
+import fs from 'fs/promises';
+import path from 'path';
 
 const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
 const DEFAULT_MODEL_ID =
   process.env.GROQ_MODEL?.trim() || 'llama-3.1-8b-instant';
+const HISTORY_LOG_MAX_BYTES = 8 * 1024 * 1024;
+const HISTORY_LOG_PATH = path.join(process.cwd(), 'api', 'logs', 'snake-history.jsonl');
 
 const SYSTEM_PROMPT = `You are an expert reinforcement-learning coach for the classic game Snake.
 The agent plays Snake on a 2-D grid where it collects fruit and grows longer.
@@ -56,6 +60,16 @@ app.use((req, res, next) => {
 app.use(express.json({ limit: '1mb' }));
 
 app.options('/api/proxy', (req, res) => {
+  const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
+  if (req.headers.origin && !allowed) {
+    return res.status(403).json({ error: 'Otillåten origin.' });
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  return res.sendStatus(204);
+});
+
+app.options('/api/logs/snake-history.jsonl', (req, res) => {
   const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
   if (req.headers.origin && !allowed) {
     return res.status(403).json({ error: 'Otillåten origin.' });
@@ -139,6 +153,41 @@ app.post('/api/proxy', async (req, res) => {
       raw: error instanceof Error && error.message ? error.message : undefined,
       status: 500,
     });
+  }
+});
+
+app.post('/api/logs/snake-history.jsonl', async (req, res) => {
+  const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
+  if (req.headers.origin && !allowed) {
+    return res.status(403).json({ error: 'Otillåten origin.' });
+  }
+
+  const body = req.body ?? {};
+  let line = '';
+  if (typeof body.line === 'string' && body.line.trim()) {
+    line = body.line.trim();
+  } else if (body.entry && typeof body.entry === 'object') {
+    try {
+      line = JSON.stringify(body.entry);
+    } catch (err) {
+      return res.status(400).json({ error: 'Kunde inte serialisera loggpost.' });
+    }
+  }
+
+  if (!line) {
+    return res.status(400).json({ error: 'Saknar loggrad.' });
+  }
+
+  if (line.length > 200000) {
+    return res.status(413).json({ error: 'Loggrad för stor.' });
+  }
+
+  try {
+    await appendHistoryLine(line);
+    return res.status(204).end();
+  } catch (error) {
+    console.error('Misslyckades spara history-logg', error);
+    return res.status(500).json({ error: 'Kunde inte skriva history-logg.' });
   }
 });
 
@@ -302,6 +351,41 @@ function resolvePort(candidate) {
   }
 
   return 3001;
+}
+
+async function appendHistoryLine(line) {
+  await ensureHistoryDir();
+  await fs.appendFile(HISTORY_LOG_PATH, `${line}\n`);
+  await rotateHistoryLog();
+}
+
+async function ensureHistoryDir() {
+  const dir = path.dirname(HISTORY_LOG_PATH);
+  await fs.mkdir(dir, { recursive: true });
+}
+
+async function rotateHistoryLog() {
+  let stat;
+  try {
+    stat = await fs.stat(HISTORY_LOG_PATH);
+  } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw err;
+  }
+
+  if (stat.size <= HISTORY_LOG_MAX_BYTES) {
+    return;
+  }
+
+  const backupPath = `${HISTORY_LOG_PATH}.1`;
+  try {
+    await fs.unlink(backupPath);
+  } catch (err) {
+    if (err.code !== 'ENOENT') throw err;
+  }
+
+  await fs.rename(HISTORY_LOG_PATH, backupPath);
+  await fs.writeFile(HISTORY_LOG_PATH, '');
 }
 
 export default app;

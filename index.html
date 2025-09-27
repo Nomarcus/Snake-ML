@@ -1337,6 +1337,23 @@ const REWARD_LABELS={
   compactWeight:'Compactness weight',
   compactness:'Compactness bonus',
 };
+const REWARD_INPUT_IDS={
+  stepPenalty:'rewardStep',
+  turnPenalty:'rewardTurn',
+  approachBonus:'rewardApproach',
+  retreatPenalty:'rewardRetreat',
+  loopPenalty:'rewardLoop',
+  revisitPenalty:'rewardRevisit',
+  trapPenalty:'rewardTrap',
+  spaceGainBonus:'rewardSpace',
+  wallPenalty:'rewardWall',
+  selfPenalty:'rewardSelf',
+  timeoutPenalty:'rewardTimeout',
+  fruitReward:'rewardFruit',
+  compactWeight:'rewardCompact',
+};
+const RECENT_EPISODES_MAX=32;
+const ROLLUP_WINDOW=1000;
 let rewardConfig={...REWARD_DEFAULTS};
 const LOOP_PATTERNS=new Set(['1,2,1,2','2,1,2,1']);
 
@@ -3083,7 +3100,7 @@ let checkpointDirHandle=null;
 let checkpointEnabled=false;
 let checkpointFileHandle=null;
 let checkpointSupportWarned=false;
-const CHECKPOINT_EPISODE_INTERVAL=1000;
+let checkpointEpisodeInterval=1000;
 let lastFrame=0;
 let targetSyncSteps=2000;
 let episode=0,totalSteps=0,bestLen=0;
@@ -3305,6 +3322,7 @@ function updateAiIntervalReadout(){
   if(!ui.aiIntervalSlider||!ui.aiIntervalReadout) return;
   const raw=+ui.aiIntervalSlider.value||aiAnalysisInterval||1000;
   aiAnalysisInterval=Math.max(100,Math.min(5000,Math.round(raw/100)*100));
+  checkpointEpisodeInterval=aiAnalysisInterval;
   ui.aiIntervalReadout.textContent=`${aiAnalysisInterval} ep`;
   if(aiTuner) aiTuner.setInterval(aiAnalysisInterval);
 }
@@ -3351,27 +3369,51 @@ function getHyperparameterSnapshot(){
   return snapshot;
 }
 
-function buildAITelemetrySnapshot(){
-  const lookback=Math.min(aiAnalysisInterval,aiEpisodeHistory.length);
-  if(!lookback) return null;
-  const recent=aiEpisodeHistory.slice(-lookback);
+function compactEpisodeSummary(entry,includeDetail=false){
+  if(!entry) return null;
+  const summary={
+    episode:entry.episode??null,
+    reward:round(Number(entry.reward)||0,3),
+    fruits:Number(entry.fruits)||0,
+    steps:Number(entry.steps)||0,
+    crash:entry.crash||'none',
+  };
+  if(includeDetail){
+    summary.loopHits=Number(entry.loopHits)||0;
+    if(entry.revisitPenalty!==undefined) summary.revisitPenalty=round(Number(entry.revisitPenalty)||0,3);
+    if(entry.timeToFruitAvg!==undefined&&entry.timeToFruitAvg!==null){
+      summary.timeToFruitAvg=round(Number(entry.timeToFruitAvg)||0,3);
+    }
+  }
+  return summary;
+}
+
+function aggregateEpisodeWindow(windowSize){
+  const size=Math.min(windowSize,aiEpisodeHistory.length);
+  if(!size) return null;
+  const slice=aiEpisodeHistory.slice(-size);
+  let rewardSum=0,fruitSum=0,stepsSum=0,loopsSum=0,timeToFruitSum=0,timeToFruitCount=0;
   const rewardValues=[];
   const fruitValues=[];
   const crashCounts={};
   const breakdownTotals={};
   let breakdownCount=0;
-  let rewardSum=0,fruitSum=0,stepsSum=0,loopsSum=0,timeToFruitSum=0,timeToFruitCount=0;
-  recent.forEach(item=>{
-    rewardValues.push(item.reward);
-    fruitValues.push(item.fruits);
-    rewardSum+=item.reward;
-    fruitSum+=item.fruits;
-    stepsSum+=item.steps;
-    loopsSum+=item.loopHits;
+  slice.forEach(item=>{
+    const reward=Number(item.reward)||0;
+    const fruits=Number(item.fruits)||0;
+    const steps=Number(item.steps)||0;
+    const loops=Number(item.loopHits)||0;
+    rewardValues.push(reward);
+    fruitValues.push(fruits);
+    rewardSum+=reward;
+    fruitSum+=fruits;
+    stepsSum+=steps;
+    loopsSum+=loops;
     const crashKey=item.crash||'none';
     crashCounts[crashKey]=(crashCounts[crashKey]||0)+1;
     if(item.timeToFruitAvg!==null&&item.timeToFruitAvg!==undefined){
-      timeToFruitSum+=item.timeToFruitAvg;
+      const timeVal=Number(item.timeToFruitAvg)||0;
+      timeToFruitSum+=timeVal;
       timeToFruitCount++;
     }
     if(item.breakdown){
@@ -3381,25 +3423,25 @@ function buildAITelemetrySnapshot(){
       });
     }
   });
-  const rewardAvg=rewardSum/lookback;
-  const fruitAvg=fruitSum/lookback;
-  const stepsAvg=stepsSum/lookback;
-  const loopsAvg=loopsSum/lookback;
+  const rewardAvg=size?rewardSum/size:0;
+  const fruitAvg=size?fruitSum/size:0;
+  const stepsAvg=size?stepsSum/size:0;
+  const loopsAvg=size?loopsSum/size:0;
   const rewardVariance=rewardValues.length?rewardValues.reduce((acc,val)=>acc+(val-rewardAvg)**2,0)/rewardValues.length:0;
   const fruitVariance=fruitValues.length?fruitValues.reduce((acc,val)=>acc+(val-fruitAvg)**2,0)/fruitValues.length:0;
   const rewardStd=Math.sqrt(rewardVariance);
   const fruitStd=Math.sqrt(fruitVariance);
-  const fruitRate=stepsAvg?fruitAvg/stepsAvg:0;
+  const fruitRate=stepsSum>0?fruitSum/stepsSum:0;
   const fillRate=(COLS*ROWS)?fruitAvg/(COLS*ROWS):0;
-  const half=Math.floor(lookback/2);
+  const half=Math.floor(slice.length/2);
   let rewardTrend=0,fruitTrend=0;
   if(half>0){
-    const first=recent.slice(0,half);
-    const last=recent.slice(-half);
-    const firstReward=first.reduce((acc,item)=>acc+item.reward,0)/half;
-    const lastReward=last.reduce((acc,item)=>acc+item.reward,0)/half;
-    const firstFruit=first.reduce((acc,item)=>acc+item.fruits,0)/half;
-    const lastFruit=last.reduce((acc,item)=>acc+item.fruits,0)/half;
+    const first=slice.slice(0,half);
+    const last=slice.slice(-half);
+    const firstReward=first.reduce((acc,item)=>acc+((Number(item.reward)||0)),0)/half;
+    const lastReward=last.reduce((acc,item)=>acc+((Number(item.reward)||0)),0)/half;
+    const firstFruit=first.reduce((acc,item)=>acc+((Number(item.fruits)||0)),0)/half;
+    const lastFruit=last.reduce((acc,item)=>acc+((Number(item.fruits)||0)),0)/half;
     rewardTrend=lastReward-firstReward;
     fruitTrend=lastFruit-firstFruit;
   }
@@ -3420,20 +3462,56 @@ function buildAITelemetrySnapshot(){
   }
   const breakdownAvg=breakdownCount?Object.fromEntries(Object.entries(breakdownTotals).map(([key,val])=>[key,round(val/breakdownCount,4)])):undefined;
   return {
+    window:size,
+    firstEpisode:slice[0]?.episode??null,
+    lastEpisode:slice[slice.length-1]?.episode??null,
+    stats,
+    crash:crashCounts,
+    rewardBreakdown:breakdownAvg,
+  };
+}
+
+function buildAITelemetrySnapshot(intervalOverride){
+  const candidate=Number(intervalOverride);
+  const requestedInterval=Number.isFinite(candidate)&&candidate>0?Math.floor(candidate):aiAnalysisInterval;
+  const lookback=Math.min(requestedInterval,aiEpisodeHistory.length);
+  if(!lookback) return null;
+  const hyperSnapshot=getHyperparameterSnapshot();
+  const intervalSummary=aggregateEpisodeWindow(lookback);
+  const rollupSummary=aggregateEpisodeWindow(Math.min(ROLLUP_WINDOW,aiEpisodeHistory.length));
+  const recentWindow=Math.min(RECENT_EPISODES_MAX,lookback);
+  const recentEpisodes=aiEpisodeHistory.slice(-recentWindow).map(entry=>compactEpisodeSummary(entry));
+  const latestEpisode=compactEpisodeSummary(aiEpisodeHistory[aiEpisodeHistory.length-1],true);
+  return {
+    intervalEpisodes:intervalSummary?.window??lookback,
     meta:{
       episode,
-      interval:lookback,
+      interval:intervalSummary?.window??lookback,
       board:{cols:COLS,rows:ROWS},
       envs:envCount,
       algo:currentAlgoKey,
       agent:agent?.kind||null,
       best:bestLen,
     },
-    stats,
-    crash:crashCounts,
-    rewardBreakdown:breakdownAvg,
+    stats:intervalSummary?.stats||{},
+    crash:intervalSummary?.crash||{},
+    rewardBreakdown:intervalSummary?.rewardBreakdown,
+    rollup:rollupSummary?{
+      window:rollupSummary.window,
+      firstEpisode:rollupSummary.firstEpisode,
+      lastEpisode:rollupSummary.lastEpisode,
+      stats:rollupSummary.stats,
+      crash:rollupSummary.crash,
+      rewardBreakdown:rollupSummary.rewardBreakdown,
+    }:null,
     rewardConfig:{...rewardConfig},
-    hyper:getHyperparameterSnapshot(),
+    hyper:hyperSnapshot,
+    currentConfig:{
+      reward:{...rewardConfig},
+      hyper:hyperSnapshot,
+    },
+    recentEpisodes,
+    latestEpisode,
   };
 }
 
@@ -3445,10 +3523,17 @@ function applyAITunerRewardConfig(newConfig={}){
     if(!(key in merged)) return;
     const num=Number(value);
     if(!Number.isFinite(num)) return;
+    let clamped=num;
+    const inputId=REWARD_INPUT_IDS[key];
+    const input=ui[inputId];
+    if(input){
+      if(input.min!==''&&input.min!==undefined) clamped=Math.max(clamped,+input.min);
+      if(input.max!==''&&input.max!==undefined) clamped=Math.min(clamped,+input.max);
+    }
     const current=merged[key];
-    if(Math.abs(current-num)<1e-6) return;
-    merged[key]=num;
-    result.changes.push({key,oldValue:current,newValue:num});
+    if(Math.abs(current-clamped)<1e-6) return;
+    merged[key]=clamped;
+    result.changes.push({key,oldValue:current,newValue:clamped});
   });
   if(result.changes.length){
     applyRewardConfigToUI(merged);
@@ -4321,7 +4406,7 @@ async function finalizeContextEpisode(ctx,envIndex){
   updateStatsUI();
   rewardTelemetry.record(breakdown);
   updateRewardTelemetryUI();
-  if(checkpointEnabled && episode%CHECKPOINT_EPISODE_INTERVAL===0){
+  if(checkpointEnabled && checkpointEpisodeInterval>0 && episode%checkpointEpisodeInterval===0){
     try{
       const snapshot=await buildAppState();
       await saveCheckpoint(snapshot);
@@ -4362,10 +4447,12 @@ async function finalizeContextEpisode(ctx,envIndex){
     }
   }
   aiEpisodeHistory.push({
+    episode,
     reward:ctx.totalReward,
     fruits:ctx.fruits,
     steps:ctx.steps,
     loopHits,
+    revisitPenalty,
     crash:crashType||'none',
     timeToFruitAvg:avgTimeToFruit,
     breakdown:breakdown?{...breakdown}:null,
@@ -4857,10 +4944,11 @@ async function loadTrainingFromFile(file){
 /* ---------------- Init ---------------- */
 aiTuner=createAITuner({
   getVecEnv:()=>vecEnv,
-  fetchTelemetry:()=>buildAITelemetrySnapshot(),
+  fetchTelemetry:({interval})=>buildAITelemetrySnapshot(interval),
   applyRewardConfig:applyAITunerRewardConfig,
   applyHyperparameters:applyAITunerHyperparameters,
   log:logAITunerEvent,
+  isCheckpointEnabled:()=>checkpointEnabled,
 });
 aiTuner.setInterval(aiAnalysisInterval);
 aiTuner.setEnabled(aiAutoTuneEnabled);
