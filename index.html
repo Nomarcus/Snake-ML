@@ -128,6 +128,11 @@ main.layout{
   gap:8px;
   flex-wrap:wrap;
 }
+.card-actions button.secondary.active{
+  background:rgba(139,92,246,0.22);
+  border-color:rgba(139,92,246,0.55);
+  color:#f5f4ff;
+}
 h2{
   margin:0;
   font-size:20px;
@@ -807,6 +812,7 @@ footer{
     <div class="card-head">
       <h2>Learning</h2>
       <div class="card-actions">
+        <button id="btnCheckpointToggle" class="secondary" type="button">Enable Checkpoint Save</button>
         <button id="btnSave" class="secondary">Save</button>
         <button id="btnLoad" class="secondary">Load</button>
         <button id="btnLoadModel" class="secondary">Load model</button>
@@ -2947,6 +2953,7 @@ const ui={
   btnStep:document.getElementById('btnStep'),
   btnWatch:document.getElementById('btnWatch'),
   btnReset:document.getElementById('btnReset'),
+  btnCheckpointToggle:document.getElementById('btnCheckpointToggle'),
   btnSave:document.getElementById('btnSave'),
   btnLoad:document.getElementById('btnLoad'),
   btnLoadModel:document.getElementById('btnLoadModel'),
@@ -3058,6 +3065,10 @@ let playbackMode='cinematic';
 let training=false;
 let trainingToken=0;
 let checkpointDirHandle=null;
+let checkpointEnabled=false;
+let checkpointFileHandle=null;
+let checkpointSupportWarned=false;
+const CHECKPOINT_EPISODE_INTERVAL=1000;
 let lastFrame=0;
 let targetSyncSteps=2000;
 let episode=0,totalSteps=0,bestLen=0;
@@ -3508,6 +3519,7 @@ function bindUI(){
   ui.btnPause.addEventListener('click',stopTraining);
   ui.btnStep.addEventListener('click',async()=>{ await playSingleEpisode(); });
   ui.btnWatch.addEventListener('click',watchSmoothEpisode);
+  ui.btnCheckpointToggle?.addEventListener('click',handleCheckpointToggle);
   ui.btnSave.addEventListener('click',saveTrainingToFile);
   ui.btnLoad.addEventListener('click',()=>ui.fileLoader?.click());
   ui.btnLoadModel.addEventListener('click',()=>ui.modelLoader?.click());
@@ -3588,6 +3600,7 @@ function bindUI(){
   updateAutoLogVisibility();
   updateAiIntervalReadout();
   if(ui.aiAutoTuneToggle) ui.aiAutoTuneToggle.checked=aiAutoTuneEnabled;
+  updateCheckpointToggleUI();
 }
 function setActiveTab(tab){
   const showGuide=tab==='guide';
@@ -4283,6 +4296,14 @@ async function finalizeContextEpisode(ctx,envIndex){
   updateStatsUI();
   rewardTelemetry.record(breakdown);
   updateRewardTelemetryUI();
+  if(checkpointEnabled && episode%CHECKPOINT_EPISODE_INTERVAL===0){
+    try{
+      const snapshot=await buildAppState();
+      await saveCheckpoint(snapshot);
+    }catch(err){
+      console.error('Periodic checkpoint save failed',err);
+    }
+  }
   const latestLoss=lossHist.length?lossHist[lossHist.length-1]:null;
   let adjustments=[];
   if(trainingMode==='auto' && autoPilot){
@@ -4564,6 +4585,103 @@ async function watchSmoothEpisode(){
 }
 
 /* ---------------- Save / load ---------------- */
+function ensureFileAccessSupport(){
+  const secureOk=window.isSecureContext||['localhost','127.0.0.1','::1'].includes(window.location.hostname);
+  if(!('showSaveFilePicker' in window)){
+    if(!checkpointSupportWarned){
+      console.warn('File System Access API is unavailable in this browser; checkpoint saving disabled.');
+      checkpointSupportWarned=true;
+    }
+    return false;
+  }
+  if(!secureOk){
+    if(!checkpointSupportWarned){
+      console.warn('Checkpoint saving requires HTTPS or localhost to access the File System Access API.');
+      checkpointSupportWarned=true;
+    }
+    return false;
+  }
+  return true;
+}
+
+function updateCheckpointToggleUI(){
+  if(!ui.btnCheckpointToggle) return;
+  ui.btnCheckpointToggle.classList.toggle('active',checkpointEnabled);
+  ui.btnCheckpointToggle.textContent=checkpointEnabled?'Disable Checkpoint Save':'Enable Checkpoint Save';
+  ui.btnCheckpointToggle.setAttribute('aria-pressed',checkpointEnabled?'true':'false');
+}
+
+async function handleCheckpointToggle(){
+  if(checkpointEnabled){
+    checkpointEnabled=false;
+    updateCheckpointToggleUI();
+    return;
+  }
+  if(!ensureFileAccessSupport()){
+    flash('File access unsupported',true);
+    return;
+  }
+  try{
+    if(!checkpointFileHandle){
+      checkpointFileHandle=await window.showSaveFilePicker({
+        suggestedName:'snake-training-checkpoint.json',
+        types:[{
+          description:'JSON files',
+          accept:{'application/json':['.json']},
+        }],
+      });
+    }
+    if(checkpointFileHandle?.queryPermission){
+      const status=await checkpointFileHandle.queryPermission({mode:'readwrite'});
+      if(status==='denied') throw new Error('Permission denied');
+      if(status==='prompt'){
+        const granted=await checkpointFileHandle.requestPermission({mode:'readwrite'});
+        if(granted!=='granted') throw new Error('Permission denied');
+      }
+    }else if(checkpointFileHandle?.requestPermission){
+      const granted=await checkpointFileHandle.requestPermission({mode:'readwrite'});
+      if(granted!=='granted') throw new Error('Permission denied');
+    }
+    checkpointEnabled=true;
+    updateCheckpointToggleUI();
+  }catch(err){
+    if(err?.name==='AbortError'){
+      console.warn('Checkpoint save selection was cancelled by the user.');
+    }else{
+      console.error('Failed to enable checkpoint saving',err);
+      flash('Failed to enable checkpoint save',true);
+    }
+    checkpointEnabled=false;
+    updateCheckpointToggleUI();
+  }
+}
+
+async function saveCheckpoint(data){
+  if(!checkpointEnabled||!checkpointFileHandle) return false;
+  if(!ensureFileAccessSupport()) return false;
+  try{
+    if(checkpointFileHandle?.queryPermission){
+      const status=await checkpointFileHandle.queryPermission({mode:'readwrite'});
+      if(status==='denied') throw new Error('Permission denied');
+      if(status==='prompt'){
+        const granted=await checkpointFileHandle.requestPermission({mode:'readwrite'});
+        if(granted!=='granted') throw new Error('Permission denied');
+      }
+    }else if(checkpointFileHandle?.requestPermission){
+      const granted=await checkpointFileHandle.requestPermission({mode:'readwrite'});
+      if(granted!=='granted') throw new Error('Permission denied');
+    }
+    const writable=await checkpointFileHandle.createWritable();
+    const payload=JSON.stringify(data,null,2);
+    await writable.write(payload);
+    await writable.close();
+    return true;
+  }catch(err){
+    console.error('Failed to save checkpoint',err);
+    return false;
+  }
+}
+
 async function buildAppState(){
   const agentState=await agent.exportState();
   return {
