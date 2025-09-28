@@ -476,12 +476,50 @@ function extractJsonPayload(text) {
   const end = text.lastIndexOf('}');
   if (start === -1 || end === -1 || end < start) return null;
   const snippet = text.slice(start, end + 1);
+
   try {
     return JSON.parse(snippet);
   } catch (err) {
-    console.warn('[hf-tuner] kunde inte tolka JSON från modellen', err);
+    const repaired = repairJsonSnippet(snippet);
+    if (repaired !== snippet) {
+      try {
+        return JSON.parse(repaired);
+      } catch (innerErr) {
+        console.warn('[hf-tuner] kunde inte tolka reparerad JSON från modellen', innerErr, {
+          snippet: repaired,
+        });
+      }
+    }
+
+    console.warn('[hf-tuner] kunde inte tolka JSON från modellen', err, { snippet });
     return null;
   }
+}
+
+function repairJsonSnippet(snippet) {
+  if (typeof snippet !== 'string') return snippet;
+
+  let repaired = snippet;
+  let mutated = false;
+
+  const replacements = [
+    [/[“”]/g, '"'],
+    [/[‘’]/g, "'"],
+    [/([{,]\s*)'([^'\\]*?)'\s*:/g, '$1"$2":'],
+    [/([{,]\s*)([A-Za-z0-9_]+)\s*:(?=\s)/g, '$1"$2":'],
+    [/(:\s*)'([^'\\]*(?:\\.[^'\\]*)*)'/g, '$1"$2"'],
+    [/,(\s*[}\]])/g, '$1'],
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    const updated = repaired.replace(pattern, replacement);
+    if (updated !== repaired) {
+      repaired = updated;
+      mutated = true;
+    }
+  }
+
+  return mutated ? repaired : snippet;
 }
 
 function extractTuningPayload(data, rawText) {
@@ -702,7 +740,7 @@ export function createAITuner(options = {}) {
   const logger = typeof log === 'function' ? log : () => {};
   const resolveEnv = typeof getVecEnv === 'function' ? getVecEnv : () => getVecEnv ?? null;
   let enabled = false;
-  let interval = 1000;
+  let interval = 500;
   let busy = false;
   let warnedNoFetch = false;
   let lastAnalysisText = '';

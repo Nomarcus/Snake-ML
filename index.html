@@ -855,8 +855,8 @@ footer{
         <span class="hint">Analysera var</span>
         <div class="field compact">
           <label for="aiIntervalSlider">Avslutade episoder</label>
-          <input type="range" id="aiIntervalSlider" min="100" max="5000" step="100" value="1000">
-          <span class="mono" id="aiIntervalReadout">1000 ep</span>
+          <input type="range" id="aiIntervalSlider" min="100" max="5000" step="100" value="500">
+          <span class="mono" id="aiIntervalReadout">500 ep</span>
         </div>
       </div>
     </div>
@@ -1119,6 +1119,25 @@ footer{
       <li><strong>Algorithms:</strong> theoretical explanations of DQN, policy gradient, A2C, and PPO.</li>
       <li><strong>Sliders:</strong> practical guidance for every control and how to adjust it.</li>
     </ul>
+  </div>
+
+  <div class="card">
+    <h2>AI Auto-Tune data &amp; loggning</h2>
+    <p>Auto-Tune skickar inte bara senaste episoden till LLM: varje avslutad episod lagras i ett lokalt minne (<code>aiEpisodeHistory</code>) med plats för 6&nbsp;000 poster innan de äldsta kastas. Därifrån byggs flera vyer upp <em>innan</em> telemetrin serialiseras:</p>
+    <ul>
+      <li><strong>Intervallfönster:</strong> ett glidande fönster på <span class="mono">interval</span> episoder (standard 500) sammanfattar medelvärden, spridning, trender och kraschningsfördelning.</li>
+      <li><strong>Rollup:</strong> en separat summering över upp till 1&nbsp;000 episoder används som långtidsreferens.</li>
+      <li><strong>Senaste körningar:</strong> de 32 färskaste episoderna samt den allra senaste episodens detaljer tas med för att visa kortsiktiga svängningar.</li>
+    </ul>
+    <p>Resultatet packas i samma <code>messagePayload</code> tillsammans med aktuell belöningskonfiguration och hyperparametrar, så modellen kan väga både långsiktiga trender och senaste händelserna.</p>
+    <p>Varje prompt/svar-par och checkpoint markerade episoder loggas dessutom till <code>api/logs/snake-history.jsonl</code> via proxyn. Filen roteras automatiskt när den närmar sig 8&nbsp;MB, så du får en komplett historik utan risk att den checkas in i Git (filtypen ignoreras i <code>.gitignore</code>).</p>
+    <h3>Så tolkas modellens svar</h3>
+    <ul>
+      <li>LLM:en instrueras att svara med JSON som innehåller <code>rewardConfig</code>, <code>hyper</code> och <code>analysisText</code>.</li>
+      <li>Klienten plockar ut första JSON-objektet i svaret och försöker reparera vanliga formateringsfel (t.ex. felciterade nycklar, snygga citattecken eller släpande kommatecken) innan det parsas.</li>
+      <li>Endast giltiga numeriska förändringar appliceras. Allt annat loggas i Auto adjustments-flödet, så du ser exakt vilka justeringar som användes eller avvisades.</li>
+    </ul>
+    <p>Vill du låta modellen analysera längre spann? Dra reglaget <strong>Avslutade episoder</strong> i AI Auto-Tune-panelen. Reglaget stegar i hundratal och går mellan 100 och 5&nbsp;000 episoder.</p>
   </div>
 
   <div class="card">
@@ -3100,7 +3119,7 @@ let checkpointDirHandle=null;
 let checkpointEnabled=false;
 let checkpointFileHandle=null;
 let checkpointSupportWarned=false;
-let checkpointEpisodeInterval=1000;
+let checkpointEpisodeInterval=500;
 let lastFrame=0;
 let targetSyncSteps=2000;
 let episode=0,totalSteps=0,bestLen=0;
@@ -3115,7 +3134,7 @@ const MAX_AUTO_LOG_ENTRIES=24;
 let lastAutoMetrics=null;
 let lastAutoSummaryEpisode=0;
 const aiEpisodeHistory=[];
-let aiAnalysisInterval=1000;
+let aiAnalysisInterval=500;
 let aiAutoTuneEnabled=false;
 let aiTuner=null;
 function avg(arr,n){
@@ -3320,7 +3339,7 @@ function round(value,decimals=3){
 
 function updateAiIntervalReadout(){
   if(!ui.aiIntervalSlider||!ui.aiIntervalReadout) return;
-  const raw=+ui.aiIntervalSlider.value||aiAnalysisInterval||1000;
+  const raw=+ui.aiIntervalSlider.value||aiAnalysisInterval||500;
   aiAnalysisInterval=Math.max(100,Math.min(5000,Math.round(raw/100)*100));
   checkpointEpisodeInterval=aiAnalysisInterval;
   ui.aiIntervalReadout.textContent=`${aiAnalysisInterval} ep`;

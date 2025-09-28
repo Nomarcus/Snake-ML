@@ -315,8 +315,46 @@ function safeJsonParse(text) {
   try {
     return JSON.parse(text);
   } catch (error) {
+    const repaired = repairJsonSnippet(text);
+    if (repaired !== text) {
+      try {
+        return JSON.parse(repaired);
+      } catch (innerError) {
+        console.warn('Kunde inte tolka reparerad JSON-sträng', innerError, {
+          snippet: repaired.slice(0, 2000),
+        });
+      }
+    }
     return null;
   }
+}
+
+function repairJsonSnippet(snippet) {
+  if (typeof snippet !== 'string') {
+    return snippet;
+  }
+
+  let repaired = snippet;
+  let mutated = false;
+
+  const replacements = [
+    [/[“”]/g, '"'],
+    [/[‘’]/g, "'"],
+    [/([{,]\s*)'([^'\\]*?)'\s*:/g, '$1"$2":'],
+    [/([{,]\s*)([A-Za-z0-9_]+)\s*:(?=\s)/g, '$1"$2":'],
+    [/(:\s*)'([^'\\]*(?:\\.[^'\\]*)*)'/g, '$1"$2"'],
+    [/,(\s*[}\]])/g, '$1'],
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    const updated = repaired.replace(pattern, replacement);
+    if (updated !== repaired) {
+      repaired = updated;
+      mutated = true;
+    }
+  }
+
+  return mutated ? repaired : snippet;
 }
 
 function extractErrorMessage(parsed) {
