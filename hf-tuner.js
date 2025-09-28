@@ -740,7 +740,7 @@ export function createAITuner(options = {}) {
   const logger = typeof log === 'function' ? log : () => {};
   const resolveEnv = typeof getVecEnv === 'function' ? getVecEnv : () => getVecEnv ?? null;
   let enabled = false;
-  let interval = 1000;
+  let interval = 500;
   let busy = false;
   let warnedNoFetch = false;
   let lastAnalysisText = '';
