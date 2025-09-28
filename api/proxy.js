@@ -24,7 +24,6 @@ Your goals:
 
 Output must always be valid JSON:
 
-
 Du får telemetri och aktuell runtime-konfiguration. Svara alltid med giltig JSON på formen:
 {
   "rewardConfig": { ... numeric values ... },
@@ -38,7 +37,6 @@ Guidelines:
 - If agent gets stuck in loops, add explicit penalties for repeated states or circling.
 - Only suggest grid-size increase when performance is stable and improving.
 - Do not remove all rewards/penalties unless clearly justified.`;
-
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://nomarcus.github.io',
