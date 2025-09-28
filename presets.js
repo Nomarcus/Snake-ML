@@ -242,13 +242,19 @@
     return evaluateMilestones(runtime,fraction,'updates');
   };
 
-  global.applyPlanByTime=function applyPlanByTime(runtime){
+  global.applyPlanByTime=function applyPlanByTime(runtime,telemetry){
     if(!runtime||!runtime.plan) return [];
     const plan=runtime.plan;
+    if(!plan.startTimestamp){
+      const hintedStart=Number(telemetry?.planStartMs);
+      plan.startTimestamp=Number.isFinite(hintedStart)?hintedStart:Date.now();
+    }
     const start=plan.startTimestamp;
     const totalMs=plan.durationMs??durationToMs(plan.duration);
     if(!start||!totalMs) return [];
-    const elapsed=Math.max(0,Date.now()-start);
+    const nowCandidate=Number(telemetry?.nowMs);
+    const now=Number.isFinite(nowCandidate)?nowCandidate:Date.now();
+    const elapsed=Math.max(0,now-start);
     const fraction=Math.max(0,Math.min(1,elapsed/totalMs));
     plan.progressByTime=fraction;
     return evaluateMilestones(runtime,fraction,'time');
