@@ -24,6 +24,8 @@ Your goals:
 
 Output must always be valid JSON:
 
+
+Du får telemetri och aktuell runtime-konfiguration. Svara alltid med giltig JSON på formen:
 {
   "rewardConfig": { ... numeric values ... },
   "hyper": { ... numeric values ... },
@@ -36,6 +38,7 @@ Guidelines:
 - If agent gets stuck in loops, add explicit penalties for repeated states or circling.
 - Only suggest grid-size increase when performance is stable and improving.
 - Do not remove all rewards/penalties unless clearly justified.`;
+
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://nomarcus.github.io',
@@ -219,6 +222,37 @@ function buildUserContent({ telemetry, instruction }) {
   return parts.join('\n\n');
 }
 
+function buildTuningUserPrompt(telemetry = {}, runtime = {}) {
+  const payload = {
+    updatesCompleted: telemetry?.updatesCompleted ?? null,
+    fruitsPerEpisodeRolling: telemetry?.fruitsPerEpisodeRolling ?? null,
+    avgRewardRolling: telemetry?.avgRewardRolling ?? null,
+    loopRate: telemetry?.loopRate ?? telemetry?.loopRateRolling ?? null,
+    deathsByPocketRate: telemetry?.deathsByPocketRate ?? null,
+    gridSize: telemetry?.gridSize ?? null,
+    evalSummary: telemetry?.evalSummary ?? null,
+    rewardConfig: runtime?.rewardConfig ?? null,
+    ppoHyper: runtime?.ppoHyper ?? null,
+    schedules: runtime?.schedules ?? null,
+    curriculum: runtime?.curriculum ?? null,
+    plan: serializePlan(runtime?.plan),
+  };
+
+  return JSON.stringify(payload, null, 2);
+}
+
+function serializePlan(plan) {
+  if (!plan || typeof plan !== 'object') return null;
+  const { triggered, _stagnationTracker, ...rest } = plan;
+  const copy = { ...rest };
+  if (triggered instanceof Set) {
+    copy.triggered = Array.from(triggered);
+  } else if (Array.isArray(triggered)) {
+    copy.triggered = triggered.slice();
+  }
+  return copy;
+}
+
 function applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet }) {
   appendVaryHeader(res, 'Origin');
 
@@ -398,6 +432,8 @@ function resolvePort(candidate) {
 
   return 3001;
 }
+
+export { SYSTEM_PROMPT_PPO_7DAY, buildTuningUserPrompt };
 
 async function appendHistoryLine(line) {
   await ensureHistoryDir();

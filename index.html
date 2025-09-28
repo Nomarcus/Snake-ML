@@ -6,7 +6,41 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Snake — RL studio with smooth rendering</title>
 <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+<script defer src="./presets.js"></script>
 <style>
+body.minimal-ui .tabs,
+body.minimal-ui #simulationCard .subtitle,
+body.minimal-ui #simulationCard .card-actions,
+body.minimal-ui #simulationCard canvas,
+body.minimal-ui #simulationCard .controls.secondary,
+body.minimal-ui #simulationCard #playbackGroup,
+body.minimal-ui #simulationCard #btnToggleLiveView,
+body.minimal-ui #simulationCard #btnWatch,
+body.minimal-ui #simulationCard #btnStep
+{display:none!important;}
+body.minimal-ui #simulationCard .controls.primary{gap:12px;justify-content:flex-start;}
+body.minimal-ui #simulationCard .controls.primary button.secondary{display:none!important;}
+body.minimal-ui #simulationCard #btnTrain,
+body.minimal-ui #simulationCard #btnPause,
+body.minimal-ui #simulationCard #btnReset{display:inline-flex!important;}
+body.minimal-ui #simulationCard{padding-bottom:16px;}
+body.minimal-ui #controlCard .card-actions,
+body.minimal-ui #controlCard .controls.tertiary,
+body.minimal-ui #controlCard .field.block,
+body.minimal-ui #controlCard .hint:not(.progress-hint):not(.plan-hint),
+body.minimal-ui #aiAutoTunePanel,
+body.minimal-ui #autoLogPanel,
+body.minimal-ui .kpi,
+body.minimal-ui .chart-card,
+body.minimal-ui .split,
+body.minimal-ui .tuning-card,
+body.minimal-ui #guideView,
+body.minimal-ui footer,
+body.minimal-ui .telemetry-panel
+{display:none!important;}
+body.minimal-ui #progressChartPanel{margin-top:0;}
+body.minimal-ui main.layout{max-width:720px;}
 :root {
   --bg:#090d1f;
   --panel:#141936;
@@ -24,6 +58,14 @@ body{
   background:radial-gradient(160% 140% at 20% -20%,#202866 0%,#131834 45%,#090d1f 100%);
   color:var(--ink);
   font:14px/1.5 "Inter","Segoe UI",Roboto,sans-serif;
+}
+.visually-hidden{
+  position:absolute !important;
+  height:1px;
+  width:1px;
+  overflow:hidden;
+  clip:rect(1px,1px,1px,1px);
+  white-space:nowrap;
 }
 header{
   padding:20px 0;
@@ -91,6 +133,8 @@ main.layout{
   padding:0 24px 40px;
   display:grid;
   gap:32px;
+  grid-template-columns:minmax(0,560px) minmax(360px,1fr);
+  align-items:start;
 }
 .card{
   background:linear-gradient(155deg,rgba(34,41,82,0.88) 0%,rgba(18,21,46,0.92) 100%);
@@ -199,6 +243,62 @@ canvas#board{
   border:1px solid rgba(128,138,206,0.2);
   box-shadow:0 16px 34px rgba(6,10,30,0.38);
 }
+.preset-field{
+  gap:10px;
+}
+.preset-field .plan-hint{
+  margin:-6px 0 2px;
+}
+.preset-field__row{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.preset-field__row--period{
+  align-items:flex-end;
+}
+.preset-field__row--period label{
+  font-size:12px;
+  color:var(--muted);
+  font-weight:600;
+}
+.preset-field__inputs{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.preset-field input[type="number"]{
+  padding:10px 12px;
+  border-radius:12px;
+  border:1px solid rgba(128,138,206,0.35);
+  background:rgba(20,24,56,0.85);
+  color:#d4dcff;
+  font-size:14px;
+}
+#planValue{width:72px;}
+.chart-card{
+  background:linear-gradient(160deg,rgba(30,36,78,0.9) 0%,rgba(17,20,44,0.92) 100%);
+  border:1px solid var(--stroke);
+  border-radius:16px;
+  padding:16px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  box-shadow:0 18px 36px rgba(6,10,32,0.4);
+}
+.chart-card h3{
+  margin:0;
+  font-size:14px;
+  letter-spacing:0.06em;
+  text-transform:uppercase;
+  color:#e7ebff;
+}
+.chart-card canvas{
+  width:100%;
+  height:220px;
+}
 .ai-auto-tune__header{
   display:flex;
   align-items:center;
@@ -259,6 +359,12 @@ button.secondary{
 button.secondary:hover{
   background:rgba(40,48,102,0.9);
   border-color:rgba(155,168,235,0.45);
+}
+#activatePresetBtn.preset-active{
+  background:linear-gradient(135deg,#22c55e,#16a34a);
+  color:#ecfdf5;
+  border:none;
+  box-shadow:0 18px 36px rgba(34,197,94,0.35);
 }
 button.danger{
   background:linear-gradient(135deg,#fb7185,#ef4444);
@@ -500,6 +606,16 @@ select{
   flex-wrap:wrap;
   font-size:11px;
   color:var(--muted);
+}
+.progress-chart__summary{
+  margin-top:12px;
+  padding:12px;
+  border-radius:14px;
+  background:rgba(20,25,54,0.65);
+  border:1px solid rgba(134,144,214,0.18);
+  color:#dbe1ff;
+  font-size:13px;
+  line-height:1.4;
 }
 .progress-chart__meta .mono{
   color:#c7d2fe;
@@ -830,8 +946,9 @@ footer{
   padding:18px;
   font-size:12px;
 }
+@media(min-width:1050px){
   main.layout{
-    grid-template-columns:minmax(0,560px) minmax(0,1fr);
+    grid-template-columns:minmax(0,560px) minmax(360px,1fr);
   }
   .control-card{
     grid-column:2;
@@ -892,13 +1009,14 @@ footer{
 }
 </style>
 </head>
-<body>
+<body class="minimal-ui">
 <header>
   <div class="header-inner">
     <div class="logo"><span class="logo-text">Snake Simulation</span></div>
     <div class="status-group">
       <span class="badge" id="trainState">idle</span>
       <span class="badge" id="algoBadge">Dueling DQN</span>
+      <span class="badge soft" id="presetStatusBadge" hidden></span>
       <span class="badge">ε <span id="epsReadout">1.00</span></span>
       <span class="badge">γ <span id="gammaBadge">0.98</span></span>
       <span class="badge">LR <span id="lrBadge">0.0005</span></span>
@@ -944,7 +1062,7 @@ footer{
     </div>
   </section>
 
-  <section class="card control-card">
+  <section class="card control-card" id="controlCard">
     <div class="card-head">
       <h2>Learning</h2>
       <div class="card-actions">
@@ -1002,6 +1120,29 @@ footer{
       <div id="autoLogStream" class="auto-log__stream" role="log" aria-live="polite"></div>
     </div>
 
+    <div class="field block preset-field" id="presetPanel">
+      <label for="presetSelect">PPO-planer</label>
+      <span class="hint plan-hint">Aktivera en tidsstyrd preset med extrema belöningsjusteringar.</span>
+      <div class="preset-field__row">
+        <select id="presetSelect">
+          <option value="">— Välj —</option>
+          <option value="ppo_7day_extreme">PPO 7-dagars Extreme (Snake)</option>
+        </select>
+        <button id="activatePresetBtn" type="button" class="secondary">Aktivera</button>
+      </div>
+      <div class="preset-field__row preset-field__row--period">
+        <label for="planValue">Period</label>
+        <div class="preset-field__inputs">
+          <input id="planValue" type="number" value="7" min="1">
+          <select id="planUnit">
+            <option value="days">dagar</option>
+            <option value="hours">timmar</option>
+            <option value="minutes">minuter</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
     <div class="kpi">
       <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
       <div class="item"><b>Avg reward (100)</b><span id="kAvgRw">0.0</span></div>
@@ -1013,7 +1154,7 @@ footer{
       <div class="progress-chart__header">
         <div>
           <h3>Träningsprogress</h3>
-          <span class="hint">Medel per 100 episoder</span>
+          <span class="hint progress-hint">Medel per 100 episoder</span>
         </div>
         <button type="button" class="secondary micro" id="progressChartToggle" aria-expanded="true" aria-controls="progressChartBody">Dölj diagram</button>
       </div>
@@ -1039,35 +1180,14 @@ footer{
           <span class="hint">AI-förtroende</span>
           <span class="mono confidence" id="progressChartConfidence">—</span>
         </div>
+        <div class="progress-chart__summary" id="progressSummary">Ingen data ännu.</div>
       </div>
     </div>
 
-    <div class="split charts">
-      <div class="telemetry-panel" id="rewardTelemetryPanel">
-        <div class="telemetry-panel__header">
-          <h2>Reward telemetry</h2>
-          <span class="hint">Rolling averages per component</span>
-        </div>
-        <div class="telemetry-summary">
-          <span class="hint">Net reward (avg 100)</span>
-          <span id="rewardTelemetrySummary" class="mono neutral">0.00 (trend +0.00)</span>
-        </div>
-        <table class="telemetry-table">
-          <thead>
-            <tr>
-              <th>Component</th>
-              <th>Last</th>
-              <th>Avg 100</th>
-              <th>Avg 500</th>
-              <th>Share</th>
-              <th>Trend</th>
-            </tr>
-          </thead>
-          <tbody id="rewardTelemetryBody"></tbody>
-        </table>
-      </div>
+    <div class="chart-card">
+      <h3>Policytelemetri</h3>
+      <canvas id="trainingChart"></canvas>
     </div>
-  </section>
 
   <section class="card tuning-card">
     <div class="card-head">
@@ -1542,6 +1662,264 @@ const ROLLUP_WINDOW=1000;
 let rewardConfig={...REWARD_DEFAULTS};
 const LOOP_PATTERNS=new Set(['1,2,1,2','2,1,2,1']);
 
+const runtimeState=window.RUNTIME=window.RUNTIME||{plan:{duration:{value:7,unit:'days'}},progress:{updatesCompleted:0}};
+runtimeState.plan=runtimeState.plan||{duration:{value:7,unit:'days'}};
+runtimeState.progress=runtimeState.progress||{updatesCompleted:0};
+const POLICY_WINDOW=200;
+const policyMetrics={
+  fruits:[],
+  rewards:[],
+  loopRates:[],
+  pocketDeaths:[],
+};
+let policyUpdateCount=runtimeState.progress.updatesCompleted||0;
+let trainingChart=null;
+
+function manhattan(a={},b={}){
+  if(!a||!b) return 0;
+  return Math.abs((a.x??0)-(b.x??0))+Math.abs((a.y??0)-(b.y??0));
+}
+function potentialBasedShaping(prevDist,nextDist,coeff){
+  if(!Number.isFinite(prevDist)||!Number.isFinite(nextDist)||!Number.isFinite(coeff)) return 0;
+  return (prevDist-nextDist)*coeff;
+}
+class LoopGuard{
+  constructor(){
+    this.lastPattern='';
+    this.streak=0;
+  }
+  reset(){
+    this.lastPattern='';
+    this.streak=0;
+  }
+  evaluate(actionHist=[],config={}){
+    if(!Array.isArray(actionHist)||actionHist.length<4) return 0;
+    const pattern=actionHist.slice(-4).join(',');
+    if(!LOOP_PATTERNS.has(pattern)){
+      this.lastPattern='';
+      this.streak=0;
+      return 0;
+    }
+    if(pattern===this.lastPattern){
+      this.streak+=1;
+    }else{
+      this.lastPattern=pattern;
+      this.streak=1;
+    }
+    const base=Number(config.loopPenalty??0);
+    if(base===0) return 0;
+    const escalation=Math.max(1,Number(config.loopPenaltyEscalation)||1);
+    const factor=this.streak>1?Math.pow(escalation,this.streak-1):1;
+    return base*factor;
+  }
+}
+class VisitCounter{
+  constructor(cols,rows){
+    this.resize(cols,rows);
+  }
+  resize(cols,rows){
+    this.cols=Math.max(1,cols|0||1);
+    this.rows=Math.max(1,rows|0||1);
+    this.visited=new Set();
+  }
+  reset(){
+    this.visited.clear();
+  }
+  touch(x,y){
+    if(x<0||y<0||x>=this.cols||y>=this.rows) return 0;
+    const key=`${x},${y}`;
+    if(this.visited.has(key)) return 0;
+    this.visited.add(key);
+    return 1;
+  }
+}
+function floodFillFree(env,x,y,tailWillMove){
+  if(!env) return 0;
+  const stack=[{x,y}];
+  const seen=new Set();
+  const blocked=new Set(env.snakeSet||[]);
+  if(tailWillMove){
+    const tail=env.snake?.[env.snake.length-1];
+    if(tail) blocked.delete(`${tail.x},${tail.y}`);
+  }
+  while(stack.length){
+    const node=stack.pop();
+    const key=`${node.x},${node.y}`;
+    if(seen.has(key)||blocked.has(key)) continue;
+    if(node.x<0||node.y<0||node.x>=env.cols||node.y>=env.rows) continue;
+    seen.add(key);
+    stack.push({x:node.x+1,y:node.y});
+    stack.push({x:node.x-1,y:node.y});
+    stack.push({x:node.x,y:node.y+1});
+    stack.push({x:node.x,y:node.y-1});
+    if(seen.size>env.cols*env.rows) break;
+  }
+  return seen.size;
+}
+function clampValue(value,min,max){
+  let result=Number.isFinite(value)?value:0;
+  if(Number.isFinite(min)) result=Math.max(min,result);
+  if(Number.isFinite(max)) result=Math.min(max,result);
+  return result;
+}
+function computeShapedReward(env,{baseReward=0,prevHead=null,nextHead=null,fruit=null,ateFruit=false,crash=false,tail=null,action=0,willGrow=false}={}){
+  const runtime=window.RUNTIME;
+  if(!runtime||runtime.activePreset!=='ppo_7day_extreme'||!runtime.rewardConfig) return baseReward;
+  if(!env.extremeState){
+    env.extremeState={
+      loopGuard:new LoopGuard(),
+      visitCounter:new VisitCounter(env.cols,env.rows),
+    };
+  }
+  const config=runtime.rewardConfig;
+  const helpers=env.extremeState;
+  if(crash){
+    const scaled=(baseReward+(config.death??0))*(config.extremeFactor??1);
+    return clampValue(scaled,config.clipMin,config.clipMax);
+  }
+  let reward=baseReward;
+  if(Number.isFinite(config.stepCost)) reward+=config.stepCost;
+  if(ateFruit&&Number.isFinite(config.fruit)) reward+=config.fruit;
+  if(helpers.visitCounter){
+    const novelty=helpers.visitCounter.touch(nextHead?.x??0,nextHead?.y??0);
+    if(novelty>0&&Number.isFinite(config.newCellBonus)){
+      reward+=config.newCellBonus*novelty;
+    }
+  }
+  if(Number.isFinite(config.potentialCoeff)){
+    reward+=potentialBasedShaping(
+      manhattan(prevHead,fruit),
+      manhattan(nextHead,fruit),
+      config.potentialCoeff,
+    );
+  }
+  if(helpers.loopGuard&&Number.isFinite(config.loopPenalty)&&config.loopPenalty!==0){
+    reward+=helpers.loopGuard.evaluate(env.actionHist,config);
+  }
+  if(config.tailPathBonus&&tail&&nextHead&&nextHead.x===tail.x&&nextHead.y===tail.y){
+    reward+=config.tailPathBonus;
+  }
+  if(Number.isFinite(config.tightSpacePenalty)&&config.tightSpacePenalty!==0){
+    const free=floodFillFree(env,nextHead?.x??0,nextHead?.y??0,!ateFruit||willGrow);
+    const threshold=env.snake?.length+4||4;
+    if(free<threshold){
+      const severity=1-free/Math.max(1,threshold);
+      reward+=config.tightSpacePenalty*severity;
+    }
+  }
+  if(Number.isFinite(config.wallHugPenalty)&&config.wallHugPenalty!==0&&nextHead){
+    const nearWall=nextHead.x<=1||nextHead.y<=1||nextHead.x>=env.cols-2||nextHead.y>=env.rows-2;
+    if(nearWall) reward+=config.wallHugPenalty;
+  }
+  const scaled=reward*(config.extremeFactor??1);
+  return clampValue(scaled,config.clipMin,config.clipMax);
+}
+
+function recordPolicyEpisode({fruits=0,reward=0,loopHits=0,steps=0,crashType=null}={}){
+  const keep=(arr,value)=>{
+    arr.push(value);
+    if(arr.length>POLICY_WINDOW) arr.shift();
+  };
+  keep(policyMetrics.fruits,fruits);
+  keep(policyMetrics.rewards,reward);
+  const loopRate=steps>0?loopHits/steps:0;
+  keep(policyMetrics.loopRates,loopRate);
+  const pocket=crashType==='self'&&loopHits>0?1:0;
+  keep(policyMetrics.pocketDeaths,pocket);
+}
+
+function buildPolicyTelemetry(){
+  const fruitAvg=avg(policyMetrics.fruits,Math.min(POLICY_WINDOW,policyMetrics.fruits.length));
+  const rewardAvg=avg(policyMetrics.rewards,Math.min(POLICY_WINDOW,policyMetrics.rewards.length));
+  const loopAvg=avg(policyMetrics.loopRates,Math.min(POLICY_WINDOW,policyMetrics.loopRates.length));
+  const pocketRate=avg(policyMetrics.pocketDeaths,Math.min(POLICY_WINDOW,policyMetrics.pocketDeaths.length));
+  return {
+    updatesCompleted:policyUpdateCount,
+    avgFruits:fruitAvg,
+    avgReward:rewardAvg,
+    loopRate:loopAvg,
+    fruitsPerEpisodeRolling:fruitAvg,
+    avgRewardRolling:rewardAvg,
+    loopRateRolling:loopAvg,
+    deathsByPocketRate:pocketRate,
+    gridSize:COLS,
+    episodesCompleted:episode,
+    evalSummary:null,
+  };
+}
+
+function initTrainingChart(){
+  if(trainingChart||!ui.trainingChart||!window.Chart) return;
+  const ctx=ui.trainingChart.getContext('2d');
+  const gridColor='rgba(148,163,226,0.18)';
+  trainingChart=new Chart(ctx,{
+    type:'line',
+    data:{
+      labels:[],
+      datasets:[
+        {label:'Avg Fruits',data:[],borderColor:'#7ef29d',backgroundColor:'rgba(126,242,157,0.2)',tension:0.2,fill:false},
+        {label:'Avg Reward',data:[],borderColor:'#5eead4',backgroundColor:'rgba(94,234,212,0.2)',tension:0.2,fill:false},
+        {label:'Loop Rate %',data:[],borderColor:'#f87171',backgroundColor:'rgba(248,113,113,0.15)',tension:0.2,fill:false,yAxisID:'y1'},
+      ],
+    },
+    options:{
+      responsive:true,
+      maintainAspectRatio:false,
+      plugins:{
+        legend:{labels:{color:'#cbd5f5'}},
+      },
+      scales:{
+        x:{
+          ticks:{color:'#cbd5f5'},
+          grid:{color:gridColor},
+          title:{display:true,text:'Policy updates',color:'#cbd5f5'},
+        },
+        y:{
+          ticks:{color:'#cbd5f5'},
+          grid:{color:gridColor},
+          title:{display:true,text:'Rolling average',color:'#cbd5f5'},
+        },
+        y1:{
+          position:'right',
+          ticks:{color:'#fda4af',callback:value=>`${value.toFixed(1)}%`},
+          grid:{drawOnChartArea:false},
+          title:{display:true,text:'Loop rate',color:'#fda4af'},
+          min:0,
+          max:100,
+        },
+      },
+    },
+  });
+}
+
+function updateChart(updateIndex,telemetry={}){
+  if(!ui.trainingChart||!window.Chart) return;
+  if(!trainingChart) initTrainingChart();
+  if(!trainingChart) return;
+  const labels=trainingChart.data.labels;
+  const fruit=Number.isFinite(telemetry.avgFruits)?telemetry.avgFruits:Number(telemetry.fruitsPerEpisodeRolling??0)||0;
+  const reward=Number.isFinite(telemetry.avgReward)?telemetry.avgReward:Number(telemetry.avgRewardRolling??0)||0;
+  const loop=Number.isFinite(telemetry.loopRate)?telemetry.loopRate:Number(telemetry.loopRateRolling??0)||0;
+  labels.push(updateIndex??labels.length);
+  trainingChart.data.datasets[0].data.push(fruit);
+  trainingChart.data.datasets[1].data.push(reward);
+  trainingChart.data.datasets[2].data.push(loop*100);
+  while(labels.length>200){
+    labels.shift();
+    trainingChart.data.datasets.forEach(ds=>ds.data.shift());
+  }
+  trainingChart.update('none');
+}
+
+function planDurationToMs(value,unit){
+  const val=Math.max(0,Number(value)||0);
+  switch((unit||'days').toLowerCase()){
+    case 'minutes': return val*60000;
+    case 'hours': return val*3600000;
+    default: return val*86400000;
+  }
+}
+
 /* ---------------- Serialization helpers ---------------- */
 const DTYPE_ARRAYS={float32:Float32Array,int32:Int32Array,bool:Uint8Array};
 function typedArrayToBase64(arr){
@@ -1575,6 +1953,10 @@ class SnakeEnv{
   constructor(cols=20,rows=20,rewardOverrides={}){
     this.cols=cols;
     this.rows=rows;
+    this.extremeState={
+      loopGuard:new LoopGuard(),
+      visitCounter:new VisitCounter(this.cols,this.rows),
+    };
     this.setRewardConfig(rewardOverrides);
     this.reset();
   }
@@ -1585,6 +1967,10 @@ class SnakeEnv{
   }
   setRewardConfig(cfg={}){
     this.reward={...REWARD_DEFAULTS,...cfg};
+    if(this.extremeState?.visitCounter){
+      this.extremeState.visitCounter.resize(this.cols,this.rows);
+    }
+    this.extremeState?.loopGuard?.reset();
   }
   neighbors(x,y){
     return [
@@ -1648,6 +2034,10 @@ class SnakeEnv{
     this.timeToFruitCount=0;
     this.episodeFruit=0;
     this.lastCrash=null;
+    if(this.extremeState){
+      this.extremeState.loopGuard?.reset();
+      this.extremeState.visitCounter?.reset();
+    }
     return this.getState();
   }
   idx(x,y){return y*this.cols+x;}
@@ -1676,6 +2066,7 @@ class SnakeEnv{
     const ny=h.y+this.dir.y;
     this.steps++;
     this.stepsSinceFruit++;
+    const nextHead={x:nx,y:ny};
     const key=`${nx},${ny}`;
     const tail=this.snake[this.snake.length-1];
     const willGrow=(nx===this.fruit.x && ny===this.fruit.y);
@@ -1686,9 +2077,22 @@ class SnakeEnv{
       const crashReward=hitsWall?-R.wallPenalty:-R.selfPenalty;
       if(hitsWall) breakdown.wallPenalty+=crashReward;
       else breakdown.selfPenalty+=crashReward;
+      let shaped=computeShapedReward(this,{
+        baseReward:crashReward,
+        prevHead:h,
+        nextHead,
+        fruit:this.fruit,
+        ateFruit:false,
+        crash:true,
+        tail,
+        action:a,
+        willGrow,
+      });
+      const delta=shaped-crashReward;
       breakdown.total+=crashReward;
+      if(delta!==0) breakdown.total+=delta;
       this.lastCrash=hitsWall?'wall':'self';
-      return {state:this.getState(),reward:crashReward,done:true,ateFruit:false};
+      return {state:this.getState(),reward:shaped,done:true,ateFruit:false};
     }
     let spaceReward=0;
     if((R.trapPenalty??0)!==0 || (R.spaceGainBonus??0)!==0){
@@ -1705,7 +2109,7 @@ class SnakeEnv{
       }
     }
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
-    this.snake.unshift({x:nx,y:ny});
+    this.snake.unshift(nextHead);
     let r=-R.stepPenalty;
     breakdown.stepPenalty-=R.stepPenalty;
     r+=spaceReward;
@@ -1731,6 +2135,7 @@ class SnakeEnv{
     this.revisitAccum+=revisitPenalty;
     if(revisitPenalty) breakdown.revisitPenalty-=revisitPenalty;
     let ateFruit=false;
+    let freedTail=null;
     if(nx===this.fruit.x && ny===this.fruit.y){
       ateFruit=true;
       r+=R.fruitReward;
@@ -1742,8 +2147,9 @@ class SnakeEnv{
       this.stepsSinceFruit=0;
       this.episodeFruit++;
     }else{
-      const tail=this.snake.pop();
-      this.snakeSet.delete(`${tail.x},${tail.y}`);
+      const tailSegment=this.snake.pop();
+      this.snakeSet.delete(`${tailSegment.x},${tailSegment.y}`);
+      freedTail=tailSegment;
       this.snakeSet.add(`${nx},${ny}`);
       this.visit[vidx]=Math.min(1,this.visit[vidx]+0.3);
       const pd=Math.abs(h.x-this.fruit.x)+Math.abs(h.y-this.fruit.y);
@@ -1774,6 +2180,17 @@ class SnakeEnv{
       this.rewardBreakdown.total+=r;
       return {state:this.getState(),reward:r,done:true,ateFruit:false};
     }
+    const shaped=computeShapedReward(this,{
+      baseReward:r,
+      prevHead:h,
+      nextHead,
+      fruit:this.fruit,
+      ateFruit,
+      tail:freedTail||tail,
+      action:a,
+      willGrow,
+    });
+    r=shaped;
     this.rewardBreakdown.total+=r;
     return {state:this.getState(),reward:r,done:false,ateFruit};
   }
@@ -3159,6 +3576,7 @@ const AGENT_PRESETS={
 const ui={
   trainState:document.getElementById('trainState'),
   algoBadge:document.getElementById('algoBadge'),
+  presetStatusBadge:document.getElementById('presetStatusBadge'),
   epsReadout:document.getElementById('epsReadout'),
   gammaBadge:document.getElementById('gammaBadge'),
   lrBadge:document.getElementById('lrBadge'),
@@ -3182,6 +3600,10 @@ const ui={
   aiAutoTuneToggle:document.getElementById('aiAutoTuneToggle'),
   aiIntervalSlider:document.getElementById('aiIntervalSlider'),
   aiIntervalReadout:document.getElementById('aiIntervalReadout'),
+  presetSelect:document.getElementById('presetSelect'),
+  activatePresetBtn:document.getElementById('activatePresetBtn'),
+  planValue:document.getElementById('planValue'),
+  planUnit:document.getElementById('planUnit'),
   gamma:document.getElementById('gamma'),
   gammaReadout:document.getElementById('gammaReadout'),
   lr:document.getElementById('lr'),
@@ -3271,7 +3693,9 @@ const ui={
   progressChartLegend:document.getElementById('progressChartLegend'),
   progressChartMeta:document.getElementById('progressChartMeta'),
   progressChartRange:document.getElementById('progressChartRange'),
+
   progressChartConfidence:document.getElementById('progressChartConfidence'),
+
   tabTraining:document.getElementById('tabTraining'),
   tabGuide:document.getElementById('tabGuide'),
   trainingView:document.getElementById('trainingView'),
@@ -3511,6 +3935,65 @@ function logAutoAdjustments(adjustments=[]){
     if(metrics) lastAutoMetrics=metrics;
     lastAutoSummaryEpisode=episodeNumber;
   });
+}
+function logPresetEvent({title='Plan',detail='',reason=''}={}){
+  const infoParts=[];
+  if(detail) infoParts.push(detail);
+  if(reason) infoParts.push(`via ${reason}`);
+  const message=infoParts.join(' — ');
+  logAutoEvent({title:`Preset: ${title}`,detail:message||'Aktiv',tone:'info'});
+  console.log(`[Preset] ${title}${message?`: ${message}`:''}`);
+}
+function updatePresetStatusBadge(){
+  const badge=ui.presetStatusBadge;
+  if(!badge) return;
+  const runtime=window.RUNTIME||{};
+  const active=runtime.activePreset==='ppo_7day_extreme';
+  if(ui.activatePresetBtn){
+    ui.activatePresetBtn.classList.toggle('preset-active',active);
+  }
+  if(active){
+    const label=runtime.label||'PPO 7-dagars';
+    badge.textContent=`${label} aktiverad`;
+    badge.removeAttribute('hidden');
+  }else{
+    badge.textContent='';
+    badge.setAttribute('hidden','');
+  }
+}
+function activateSelectedPreset(){
+  if(!ui.presetSelect) return;
+  const id=ui.presetSelect.value;
+  if(!id){
+    flash('Välj preset',true);
+    return;
+  }
+  const runtime=window.RUNTIME||{};
+  const value=Math.max(1,Math.floor(Number(ui.planValue?.value)||7));
+  if(ui.planValue) ui.planValue.value=`${value}`;
+  const unit=ui.planUnit?.value||'days';
+  const applied=window.applySnakePreset?window.applySnakePreset(runtime,id):runtime;
+  applied.plan=applied.plan||{};
+  applied.plan.duration={value,unit};
+  applied.plan.durationMs=planDurationToMs(value,unit);
+  applied.plan.startTimestamp=Date.now();
+  applied.plan.startUpdateIndex=policyUpdateCount;
+  applied.progress=applied.progress||{};
+  applied.progress.updatesCompleted=policyUpdateCount;
+  window.RUNTIME=applied;
+  logPresetEvent({title:'Aktiverad',detail:applied.label||id});
+  updatePresetStatusBadge();
+  console.log('[Preset] Aktiverad.');
+  if(ui.activatePresetBtn){
+    ui.activatePresetBtn.classList.add('preset-active');
+  }
+  if(window.trainer?.applyRuntimeConfig){
+    try{
+      window.trainer.applyRuntimeConfig({...applied});
+    }catch(err){
+      console.warn('applyRuntimeConfig failed',err);
+    }
+  }
 }
 function logAutoSummary(metrics,episodeNumber){
   if(trainingMode!=='auto') return;
@@ -3881,6 +4364,18 @@ function bindUI(){
     if(wasTraining) stopTraining();
     instantiateAgent(ui.algoSelect.value);
   });
+  if(ui.presetSelect){
+    ui.presetSelect.addEventListener('change',()=>{
+      if(ui.activatePresetBtn) ui.activatePresetBtn.disabled=!ui.presetSelect.value;
+      updatePresetStatusBadge();
+    });
+    if(ui.activatePresetBtn) ui.activatePresetBtn.disabled=!ui.presetSelect.value;
+  }
+  ui.activatePresetBtn?.addEventListener('click',activateSelectedPreset);
+  ui.planValue?.addEventListener('input',()=>{
+    const value=Math.max(1,Math.floor(Number(ui.planValue.value)||1));
+    ui.planValue.value=`${value}`;
+  });
   const updateAndApply=()=>{ updateReadouts(); applyConfigToAgent(); };
   ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync','nStep','priorityAlpha','priorityBeta','pgEntropy','acEntropy','acValueCoef','ppoEntropy','ppoClip','ppoLambda','ppoBatch','ppoEpochs','ppoValueCoef']
     .forEach(id=>ui[id]?.addEventListener('input',updateAndApply));
@@ -3900,9 +4395,11 @@ function bindUI(){
   setTrainingMode(trainingMode);
   updateAutoLogVisibility();
   updateAiIntervalReadout();
+  initTrainingChart();
   if(ui.aiAutoTuneToggle) ui.aiAutoTuneToggle.checked=aiAutoTuneEnabled;
   updateCheckpointToggleUI();
   updateProgressChart();
+  updatePresetStatusBadge();
 }
 function setActiveTab(tab){
   const showGuide=tab==='guide';
@@ -4613,7 +5110,9 @@ function updateProgressChart(){
     if(ui.progressChartGrid) ui.progressChartGrid.innerHTML='';
     if(ui.progressChartConfidenceGrid) ui.progressChartConfidenceGrid.innerHTML='';
     if(ui.progressChartRange) ui.progressChartRange.textContent='—';
+
     if(ui.progressChartConfidence) ui.progressChartConfidence.textContent='—';
+
     return;
   }
   const width=PROGRESS_CHART_WIDTH;
@@ -4696,9 +5195,11 @@ function updateProgressChart(){
   if(ui.progressChartRange){
     ui.progressChartRange.textContent=`${first.startEpisode}–${last.episode}`;
   }
+
   if(ui.progressChartConfidence){
     const latestConfidence=Number.isFinite(last.confidence)?Math.round(last.confidence):Number.isFinite(lastAIConfidence)?Math.round(lastAIConfidence):null;
     ui.progressChartConfidence.textContent=latestConfidence!==null?`${latestConfidence}%`:'—';
+
   }
 }
 function recordProgressPoint(){
@@ -4782,6 +5283,13 @@ async function finalizeContextEpisode(ctx,envIndex){
   const timeToFruitTotal=envRef?.timeToFruitAccum??0;
   const timeToFruitCount=envRef?.timeToFruitCount??0;
   const avgTimeToFruit=timeToFruitCount>0?timeToFruitTotal/timeToFruitCount:null;
+  recordPolicyEpisode({
+    fruits:ctx.fruits,
+    reward:ctx.totalReward,
+    loopHits,
+    steps:ctx.steps,
+    crashType,
+  });
   updateStatsUI();
   rewardTelemetry.record(breakdown);
   updateRewardTelemetryUI();
@@ -4876,6 +5384,39 @@ async function applyAutoAdjustments(adjustments){
   updateReadouts();
   logAutoAdjustments(adjustments);
 }
+window.onPolicyUpdate=function(updateIndex,telemetry={}){
+  const runtime=window.RUNTIME;
+  if(runtime){
+    runtime.progress=runtime.progress||{};
+    runtime.progress.updatesCompleted=updateIndex;
+  }
+  const events=[];
+  if(typeof window.applyPlanMilestones==='function'){
+    events.push(...window.applyPlanMilestones(runtime,updateIndex));
+  }
+  if(typeof window.applyPlanByTime==='function'){
+    events.push(...window.applyPlanByTime(runtime,telemetry));
+  }
+  events.forEach(evt=>{
+    const fraction=Math.round((evt.fraction??0)*100);
+    const detail=evt.label?`${evt.label} (${fraction}%)`:`Milestone ${fraction}%`;
+    logPresetEvent({title:'Milestone',detail,reason:evt.reason||''});
+  });
+  if(typeof window.maybeBumpExtremeOnStagnation==='function'){
+    const bump=window.maybeBumpExtremeOnStagnation(runtime,{...telemetry,episodesCompleted:telemetry.episodesCompleted??episode});
+    if(bump?.changed){
+      logPresetEvent({title:'Extreme factor',detail:`→ ${formatMetric(bump.extremeFactor,2)}`,reason:'stagnation'});
+    }
+  }
+  updateChart(updateIndex,telemetry);
+  if(window.trainer?.applyRuntimeConfig){
+    try{
+      window.trainer.applyRuntimeConfig({...runtime});
+    }catch(err){
+      console.warn('applyRuntimeConfig failed',err);
+    }
+  }
+};
 async function performVectorStep(mode){
   ensureContextPool();
   if(!contexts.length) return false;
@@ -4931,12 +5472,14 @@ async function performVectorStep(mode){
     }
   }
   const repeats=agent.learnRepeats??1;
+  let updatesThisStep=0;
   for(let i=0;i<repeats;i++){
     const loss=await agent.learn();
     if(loss!==null && loss!==undefined){
       lossHist.push(loss);
       if(lossHist.length>1000) lossHist.shift();
     }
+    updatesThisStep++;
   }
   if(agent.kind==='dqn' && targetSyncSteps>0 && totalSteps%targetSyncSteps===0){
     agent.syncTarget();
@@ -4950,6 +5493,17 @@ async function performVectorStep(mode){
   if(totalSteps%32===0) await tf.nextFrame();
   if(pendingAdjustments.length){
     await applyAutoAdjustments(pendingAdjustments);
+  }
+  if(updatesThisStep>0){
+    policyUpdateCount+=updatesThisStep;
+    const runtime=window.RUNTIME;
+    if(runtime){
+      runtime.progress=runtime.progress||{};
+      runtime.progress.updatesCompleted=policyUpdateCount;
+    }
+    if(typeof window.onPolicyUpdate==='function'){
+      window.onPolicyUpdate(policyUpdateCount,buildPolicyTelemetry());
+    }
   }
   return true;
 }
