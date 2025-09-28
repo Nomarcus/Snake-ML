@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Snake — RL studio with smooth rendering</title>
 <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script defer src="./presets.js"></script>
 <style>
 body.minimal-ui .tabs,
@@ -132,6 +133,8 @@ main.layout{
   padding:0 24px 40px;
   display:grid;
   gap:32px;
+  grid-template-columns:minmax(0,560px) minmax(360px,1fr);
+  align-items:start;
 }
 .card{
   background:linear-gradient(155deg,rgba(34,41,82,0.88) 0%,rgba(18,21,46,0.92) 100%);
@@ -240,32 +243,33 @@ canvas#board{
   border:1px solid rgba(128,138,206,0.2);
   box-shadow:0 16px 34px rgba(6,10,30,0.38);
 }
-.preset-panel{
-  display:flex;
-  flex-direction:column;
-  gap:12px;
-  background:rgba(19,24,54,0.6);
-  border-radius:16px;
-  padding:14px 16px;
-  border:1px solid rgba(128,138,206,0.2);
-  box-shadow:0 16px 34px rgba(6,10,30,0.38);
+.preset-field{
+  gap:10px;
 }
-.preset-panel__header{
-  display:flex;
-  flex-direction:column;
-  gap:4px;
+.preset-field .plan-hint{
+  margin:-6px 0 2px;
 }
-.preset-panel__row{
+.preset-field__row{
   display:flex;
   gap:10px;
-  flex-wrap:wrap;
   align-items:center;
+  flex-wrap:wrap;
 }
-.preset-panel__row label{
+.preset-field__row--period{
+  align-items:flex-end;
+}
+.preset-field__row--period label{
   font-size:12px;
   color:var(--muted);
+  font-weight:600;
 }
-.preset-panel__row--period input[type="number"]{
+.preset-field__inputs{
+  display:flex;
+  gap:10px;
+  align-items:center;
+  flex-wrap:wrap;
+}
+.preset-field input[type="number"]{
   padding:10px 12px;
   border-radius:12px;
   border:1px solid rgba(128,138,206,0.35);
@@ -273,7 +277,7 @@ canvas#board{
   color:#d4dcff;
   font-size:14px;
 }
-#planValue{width:60px;}
+#planValue{width:72px;}
 .chart-card{
   background:linear-gradient(160deg,rgba(30,36,78,0.9) 0%,rgba(17,20,44,0.92) 100%);
   border:1px solid var(--stroke);
@@ -355,6 +359,12 @@ button.secondary{
 button.secondary:hover{
   background:rgba(40,48,102,0.9);
   border-color:rgba(155,168,235,0.45);
+}
+#activatePresetBtn.preset-active{
+  background:linear-gradient(135deg,#22c55e,#16a34a);
+  color:#ecfdf5;
+  border:none;
+  box-shadow:0 18px 36px rgba(34,197,94,0.35);
 }
 button.danger{
   background:linear-gradient(135deg,#fb7185,#ef4444);
@@ -913,8 +923,9 @@ footer{
   padding:18px;
   font-size:12px;
 }
+@media(min-width:1050px){
   main.layout{
-    grid-template-columns:minmax(0,560px) minmax(0,1fr);
+    grid-template-columns:minmax(0,560px) minmax(360px,1fr);
   }
   .control-card{
     grid-column:2;
@@ -1086,27 +1097,26 @@ footer{
       <div id="autoLogStream" class="auto-log__stream" role="log" aria-live="polite"></div>
     </div>
 
-      <div class="preset-panel" id="presetPanel">
-        <div class="preset-panel__header">
-          <h3>PPO-planer</h3>
-          <span class="hint plan-hint">Aktivera en tidsstyrd preset med extrema belöningsjusteringar.</span>
-        </div>
-      <div class="preset-panel__row">
-        <label class="visually-hidden" for="presetSelect">Preset</label>
+    <div class="field block preset-field" id="presetPanel">
+      <label for="presetSelect">PPO-planer</label>
+      <span class="hint plan-hint">Aktivera en tidsstyrd preset med extrema belöningsjusteringar.</span>
+      <div class="preset-field__row">
         <select id="presetSelect">
           <option value="">— Välj —</option>
           <option value="ppo_7day_extreme">PPO 7-dagars Extreme (Snake)</option>
         </select>
         <button id="activatePresetBtn" type="button" class="secondary">Aktivera</button>
       </div>
-      <div class="preset-panel__row preset-panel__row--period">
+      <div class="preset-field__row preset-field__row--period">
         <label for="planValue">Period</label>
-        <input id="planValue" type="number" value="7" min="1">
-        <select id="planUnit">
-          <option value="days">dagar</option>
-          <option value="hours">timmar</option>
-          <option value="minutes">minuter</option>
-        </select>
+        <div class="preset-field__inputs">
+          <input id="planValue" type="number" value="7" min="1">
+          <select id="planUnit">
+            <option value="days">dagar</option>
+            <option value="hours">timmar</option>
+            <option value="minutes">minuter</option>
+          </select>
+        </div>
       </div>
     </div>
 
@@ -1144,6 +1154,11 @@ footer{
         </div>
         <div class="progress-chart__summary" id="progressSummary">Ingen data ännu.</div>
       </div>
+    </div>
+
+    <div class="chart-card">
+      <h3>Policytelemetri</h3>
+      <canvas id="trainingChart"></canvas>
     </div>
 
   <section class="card tuning-card">
@@ -3899,7 +3914,11 @@ function updatePresetStatusBadge(){
   const badge=ui.presetStatusBadge;
   if(!badge) return;
   const runtime=window.RUNTIME||{};
-  if(runtime.activePreset==='ppo_7day_extreme'){
+  const active=runtime.activePreset==='ppo_7day_extreme';
+  if(ui.activatePresetBtn){
+    ui.activatePresetBtn.classList.toggle('preset-active',active);
+  }
+  if(active){
     const label=runtime.label||'PPO 7-dagars';
     badge.textContent=`${label} aktiverad`;
     badge.removeAttribute('hidden');
@@ -3931,6 +3950,9 @@ function activateSelectedPreset(){
   logPresetEvent({title:'Aktiverad',detail:applied.label||id});
   updatePresetStatusBadge();
   console.log('[Preset] Aktiverad.');
+  if(ui.activatePresetBtn){
+    ui.activatePresetBtn.classList.add('preset-active');
+  }
   if(window.trainer?.applyRuntimeConfig){
     try{
       window.trainer.applyRuntimeConfig({...applied});
@@ -4308,6 +4330,7 @@ function bindUI(){
   if(ui.presetSelect){
     ui.presetSelect.addEventListener('change',()=>{
       if(ui.activatePresetBtn) ui.activatePresetBtn.disabled=!ui.presetSelect.value;
+      updatePresetStatusBadge();
     });
     if(ui.activatePresetBtn) ui.activatePresetBtn.disabled=!ui.presetSelect.value;
   }

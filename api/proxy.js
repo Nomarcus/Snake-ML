@@ -49,8 +49,9 @@ Du får telemetri och aktuell runtime-konfiguration. Svara alltid med giltig JSO
 }
 
 Råd:
-- Höj extremeFactor endast om frukttakten stagnerar.
+- Höj extremeFactor när frukttakten stagnerar – annars håll den oförändrad.
 - Justera klippradie, entropyCoeff och temperatur försiktigt så att utforskningen fasas ut senare i planen.
+- Håll utforskningen hög i början via entropyCoeff/temperature och trappa ned först när planen avancerar.
 - Föreslå curriculum-hopp först när givna kriterier uppfyllts.
 - Håll rekommenderade belöningar inom [-2.5, +2.5] efter skalning.`;
 
