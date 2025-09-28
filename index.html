@@ -6,9 +6,40 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
 <title>Snake — RL studio with smooth rendering</title>
 <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
 <script defer src="./presets.js"></script>
 <style>
+body.minimal-ui .tabs,
+body.minimal-ui #simulationCard .subtitle,
+body.minimal-ui #simulationCard .card-actions,
+body.minimal-ui #simulationCard canvas,
+body.minimal-ui #simulationCard .controls.secondary,
+body.minimal-ui #simulationCard #playbackGroup,
+body.minimal-ui #simulationCard #btnToggleLiveView,
+body.minimal-ui #simulationCard #btnWatch,
+body.minimal-ui #simulationCard #btnStep
+{display:none!important;}
+body.minimal-ui #simulationCard .controls.primary{gap:12px;justify-content:flex-start;}
+body.minimal-ui #simulationCard .controls.primary button.secondary{display:none!important;}
+body.minimal-ui #simulationCard #btnTrain,
+body.minimal-ui #simulationCard #btnPause,
+body.minimal-ui #simulationCard #btnReset{display:inline-flex!important;}
+body.minimal-ui #simulationCard{padding-bottom:16px;}
+body.minimal-ui #controlCard .card-actions,
+body.minimal-ui #controlCard .controls.tertiary,
+body.minimal-ui #controlCard .field.block,
+body.minimal-ui #controlCard .hint:not(.progress-hint):not(.plan-hint),
+body.minimal-ui #aiAutoTunePanel,
+body.minimal-ui #autoLogPanel,
+body.minimal-ui .kpi,
+body.minimal-ui .chart-card,
+body.minimal-ui .split,
+body.minimal-ui .tuning-card,
+body.minimal-ui #guideView,
+body.minimal-ui footer,
+body.minimal-ui .telemetry-panel
+{display:none!important;}
+body.minimal-ui #progressChartPanel{margin-top:0;}
+body.minimal-ui main.layout{max-width:720px;}
 :root {
   --bg:#090d1f;
   --panel:#141936;
@@ -547,6 +578,16 @@ select{
   font-size:11px;
   color:var(--muted);
 }
+.progress-chart__summary{
+  margin-top:12px;
+  padding:12px;
+  border-radius:14px;
+  background:rgba(20,25,54,0.65);
+  border:1px solid rgba(134,144,214,0.18);
+  color:#dbe1ff;
+  font-size:13px;
+  line-height:1.4;
+}
 .progress-chart__meta .mono{
   color:#c7d2fe;
 }
@@ -934,13 +975,14 @@ footer{
 }
 </style>
 </head>
-<body>
+<body class="minimal-ui">
 <header>
   <div class="header-inner">
     <div class="logo"><span class="logo-text">Snake Simulation</span></div>
     <div class="status-group">
       <span class="badge" id="trainState">idle</span>
       <span class="badge" id="algoBadge">Dueling DQN</span>
+      <span class="badge soft" id="presetStatusBadge" hidden></span>
       <span class="badge">ε <span id="epsReadout">1.00</span></span>
       <span class="badge">γ <span id="gammaBadge">0.98</span></span>
       <span class="badge">LR <span id="lrBadge">0.0005</span></span>
@@ -986,7 +1028,7 @@ footer{
     </div>
   </section>
 
-  <section class="card control-card">
+  <section class="card control-card" id="controlCard">
     <div class="card-head">
       <h2>Learning</h2>
       <div class="card-actions">
@@ -1044,11 +1086,11 @@ footer{
       <div id="autoLogStream" class="auto-log__stream" role="log" aria-live="polite"></div>
     </div>
 
-    <div class="preset-panel" id="presetPanel">
-      <div class="preset-panel__header">
-        <h3>PPO-planer</h3>
-        <span class="hint">Aktivera en tidsstyrd preset med extrema belöningsjusteringar.</span>
-      </div>
+      <div class="preset-panel" id="presetPanel">
+        <div class="preset-panel__header">
+          <h3>PPO-planer</h3>
+          <span class="hint plan-hint">Aktivera en tidsstyrd preset med extrema belöningsjusteringar.</span>
+        </div>
       <div class="preset-panel__row">
         <label class="visually-hidden" for="presetSelect">Preset</label>
         <select id="presetSelect">
@@ -1079,7 +1121,7 @@ footer{
       <div class="progress-chart__header">
         <div>
           <h3>Träningsprogress</h3>
-          <span class="hint">Medel per 100 episoder</span>
+          <span class="hint progress-hint">Medel per 100 episoder</span>
         </div>
         <button type="button" class="secondary micro" id="progressChartToggle" aria-expanded="true" aria-controls="progressChartBody">Dölj diagram</button>
       </div>
@@ -1100,6 +1142,7 @@ footer{
           <span class="hint">Episoder</span>
           <span class="mono" id="progressChartRange">—</span>
         </div>
+        <div class="progress-chart__summary" id="progressSummary">Ingen data ännu.</div>
       </div>
     </div>
 
@@ -3522,6 +3565,7 @@ const AGENT_PRESETS={
 const ui={
   trainState:document.getElementById('trainState'),
   algoBadge:document.getElementById('algoBadge'),
+  presetStatusBadge:document.getElementById('presetStatusBadge'),
   epsReadout:document.getElementById('epsReadout'),
   gammaBadge:document.getElementById('gammaBadge'),
   lrBadge:document.getElementById('lrBadge'),
@@ -3636,6 +3680,7 @@ const ui={
   progressChartLegend:document.getElementById('progressChartLegend'),
   progressChartMeta:document.getElementById('progressChartMeta'),
   progressChartRange:document.getElementById('progressChartRange'),
+  progressSummary:document.getElementById('progressSummary'),
   trainingChart:document.getElementById('trainingChart'),
   tabTraining:document.getElementById('tabTraining'),
   tabGuide:document.getElementById('tabGuide'),
@@ -3882,6 +3927,19 @@ function logPresetEvent({title='Plan',detail='',reason=''}={}){
   logAutoEvent({title:`Preset: ${title}`,detail:message||'Aktiv',tone:'info'});
   console.log(`[Preset] ${title}${message?`: ${message}`:''}`);
 }
+function updatePresetStatusBadge(){
+  const badge=ui.presetStatusBadge;
+  if(!badge) return;
+  const runtime=window.RUNTIME||{};
+  if(runtime.activePreset==='ppo_7day_extreme'){
+    const label=runtime.label||'PPO 7-dagars';
+    badge.textContent=`${label} aktiverad`;
+    badge.removeAttribute('hidden');
+  }else{
+    badge.textContent='';
+    badge.setAttribute('hidden','');
+  }
+}
 function activateSelectedPreset(){
   if(!ui.presetSelect) return;
   const id=ui.presetSelect.value;
@@ -3903,6 +3961,7 @@ function activateSelectedPreset(){
   applied.progress.updatesCompleted=policyUpdateCount;
   window.RUNTIME=applied;
   logPresetEvent({title:'Aktiverad',detail:applied.label||id});
+  updatePresetStatusBadge();
   console.log('[Preset] Aktiverad.');
   if(window.trainer?.applyRuntimeConfig){
     try{
@@ -4312,6 +4371,7 @@ function bindUI(){
   if(ui.aiAutoTuneToggle) ui.aiAutoTuneToggle.checked=aiAutoTuneEnabled;
   updateCheckpointToggleUI();
   updateProgressChart();
+  updatePresetStatusBadge();
 }
 function setActiveTab(tab){
   const showGuide=tab==='guide';
@@ -4992,6 +5052,7 @@ function updateProgressChart(){
     ui.progressFruitPath?.setAttribute('d','');
     if(ui.progressChartGrid) ui.progressChartGrid.innerHTML='';
     if(ui.progressChartRange) ui.progressChartRange.textContent='—';
+    if(ui.progressSummary) ui.progressSummary.textContent='Ingen data ännu.';
     return;
   }
   const width=PROGRESS_CHART_WIDTH;
@@ -5035,6 +5096,11 @@ function updateProgressChart(){
   const last=data[data.length-1];
   if(ui.progressChartRange){
     ui.progressChartRange.textContent=`${first.startEpisode}–${last.episode}`;
+  }
+  if(ui.progressSummary){
+    const rewardText=formatMetric(last.reward,2);
+    const fruitText=formatMetric(last.fruit,2);
+    ui.progressSummary.textContent=`Senaste 100 episoder (${last.startEpisode}–${last.episode}): belöning ${rewardText}, frukt ${fruitText}.`;
   }
 }
 function recordProgressPoint(){
