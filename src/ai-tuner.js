@@ -1,23 +1,31 @@
 const API_URL='https://api.openai.com/v1/chat/completions';
 const SYSTEM_PROMPT=`You are an expert reinforcement-learning coach for the classic game Snake.
 The agent plays Snake on a 2-D grid where it collects fruit and grows longer.
-The telemetry you receive describes recent episodes, current reward parameters, and performance trends.
-Your job is to:
+You will receive telemetry about recent episodes, reward parameters, and performance trends.
 
-Evaluate the agent’s long-term progress and stability.
+Your goals:
+1. Evaluate whether the agent is improving or stagnating (look at reward and fruit-per-episode trends).
+2. If trends are flat or negative, propose concrete numeric adjustments to:
+   - rewardConfig (fruit reward, step penalty, death penalty, loop penalty, etc.)
+   - hyperparameters (gamma, learningRate, epsilonDecay, batchSize, etc.)
+3. If the agent shows stable improvement, optionally suggest increasing grid size to test generalization.
+4. Avoid overfitting: balance exploration vs exploitation, and encourage strategies that prevent looping.
+5. Always explain reasoning in 1–2 clear paragraphs.
 
-Suggest specific numeric adjustments to reward settings and key hyperparameters that will increase the chance of consistently reaching the maximum score without overfitting.
-
-Explain your reasoning in 1–2 short paragraphs so a developer can follow your thought process.
-Always respond with valid JSON containing:
+Output must always be valid JSON:
 
 {
-  "rewardConfig": {...},
-  "hyper": {...},
-  "analysisText": "clear explanation of trends and adjustments"
+  "rewardConfig": { ... numeric values ... },
+  "hyper": { ... numeric values ... },
+  "analysisText": "Clear explanation of the observed trend and why adjustments are suggested"
 }
 
-Do not remove all rewards or penalties unless you clearly explain why that is optimal.`;
+Guidelines:
+- If rewards and fruit/ep remain flat (no upward trend), recommend stronger fruit rewards or harsher loop/step penalties.
+- If learning rate seems too low (slow progress), suggest raising it slightly.
+- If agent gets stuck in loops, add explicit penalties for repeated states or circling.
+- Only suggest grid-size increase when performance is stable and improving.
+- Do not remove all rewards/penalties unless clearly justified.`;
 
 function resolveApiKey(preferred){
   if(typeof preferred==='string' && preferred.trim()) return preferred.trim();
@@ -52,7 +60,67 @@ function formatChanges(changes=[]){
   }).join(', ');
 }
 
+function clamp(value,min,max){
+  if(!Number.isFinite(value)) return min;
+  if(value<min) return min;
+  if(value>max) return max;
+  return value;
+}
+
+function toNumber(value){
+  const num=Number(value);
+  return Number.isFinite(num)?num:null;
+}
+
+function normaliseTrend(value,scale=1){
+  const num=toNumber(value);
+  const normaliser=toNumber(scale);
+  if(num===null||normaliser===null||normaliser<=0) return 0;
+  return Math.tanh(num/normaliser);
+}
+
+function computeConfidencePercent({telemetry,response,rewardChanges=[],hyperChanges=[]}={}){
+  if(!telemetry||typeof telemetry!=='object') return null;
+  const stats=telemetry.stats||{};
+  const rollupStats=telemetry.rollup?.stats||{};
+  const rewardTrend=toNumber(stats.rewardTrend??rollupStats.rewardTrend)??0;
+  const fruitTrend=toNumber(stats.fruitTrend??rollupStats.fruitTrend)??0;
+  const rewardAvg=toNumber(stats.rewardAvg??rollupStats.rewardAvg);
+  const rewardStd=toNumber(stats.rewardStd??rollupStats.rewardStd);
+  const manual=toNumber(response?.assessment?.confidence);
+  let score;
+  if(manual!==null){
+    score=manual<=1?manual*100:manual;
+  }else{
+    const statusKey=String(response?.assessment?.status||'').toLowerCase();
+    const statusBase={good:70,stable:55,bad:35,uncertain:45}[statusKey];
+    score=statusBase!==undefined?statusBase:50;
+    const rewardScale=Math.max(1,Math.abs(rewardAvg??0)||5);
+    score+=normaliseTrend(rewardTrend,rewardScale)*28;
+    score+=normaliseTrend(fruitTrend,2)*20;
+    if(rewardAvg!==null&&rewardStd!==null&&Math.abs(rewardAvg)>1e-3){
+      const stability=clamp(1-(rewardStd/Math.max(1,Math.abs(rewardAvg))),-1,1);
+      score+=stability*10;
+    }
+    const adjustmentsCount=(Array.isArray(rewardChanges)?rewardChanges.length:0)+(Array.isArray(hyperChanges)?hyperChanges.length:0);
+    if(adjustmentsCount>0){
+      score-=Math.min(20,adjustmentsCount*4);
+    }else if(rewardTrend>0||fruitTrend>0){
+      score+=4;
+    }
+  }
+  return Math.round(clamp(score??50,1,100));
+}
+
 export function createAITuner(options={}){
+  const {
+    getVecEnv=()=>null,
+    fetchTelemetry,
+    applyRewardConfig,
+    applyHyperparameters,
+    log,
+    apiKey=null,
+  }=options;
   if(typeof fetchTelemetry!=='function'){
     throw new Error('createAITuner requires a fetchTelemetry() function');
   }
@@ -63,6 +131,7 @@ export function createAITuner(options={}){
   let busy=false;
   let warnedNoKey=false;
   let warnedNoFetch=false;
+  let lastConfidencePercent=null;
 
   function logEvent(payload){
     try{
@@ -134,8 +203,26 @@ export function createAITuner(options={}){
         console.warn('[ai-tuner] setRewardConfig failed',err);
       }
     }
-    const rewardSummary=formatChanges(rewardResult?.changes);
-    const hyperSummary=formatChanges(hyperResult?.changes);
+    const rewardChanges=rewardResult?.changes||[];
+    const hyperChanges=hyperResult?.changes||[];
+    const rewardSummary=formatChanges(rewardChanges);
+    const hyperSummary=formatChanges(hyperChanges);
+    const confidencePercent=computeConfidencePercent({
+      telemetry,
+      response:parsed,
+      rewardChanges,
+      hyperChanges,
+    });
+    if(confidencePercent!==null){
+      lastConfidencePercent=confidencePercent;
+      logEvent({
+        title:'AI-förtroende',
+        detail:`${confidencePercent}% säker på förbättring`,
+        tone:'confidence',
+        episodeNumber:episode,
+        confidence:confidencePercent,
+      });
+    }
     if(rewardSummary){
       logEvent({title:'AI belöningar',detail:rewardSummary,tone:'reward',episodeNumber:episode});
     }
@@ -179,5 +266,6 @@ export function createAITuner(options={}){
     maybeTune,
     isEnabled(){ return enabled; },
     getInterval(){ return interval; },
+    getLastConfidence(){ return lastConfidencePercent; },
   };
 }

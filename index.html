@@ -443,6 +443,10 @@ select{
 .progress-chart path.line.fruit{
   stroke:#5ad1a7;
 }
+.progress-chart path.line.confidence{
+  stroke:#facc15;
+  stroke-dasharray:4 3;
+}
 .progress-chart__grid line{
   stroke:rgba(139,92,246,0.18);
   stroke-width:1;
@@ -450,6 +454,16 @@ select{
 .progress-chart__grid text{
   font-size:10px;
   fill:var(--muted);
+}
+.progress-chart__grid--confidence line{
+  stroke:rgba(250,204,21,0.15);
+  stroke-width:1;
+  stroke-dasharray:4 3;
+}
+.progress-chart__grid--confidence text{
+  font-size:10px;
+  fill:#facc15;
+  text-anchor:end;
 }
 .progress-chart__legend{
   display:flex;
@@ -475,15 +489,23 @@ select{
 .progress-chart__legend .legend-swatch.fruit{
   background:#5ad1a7;
 }
+.progress-chart__legend .legend-swatch.confidence{
+  background:#facc15;
+}
 .progress-chart__meta{
   display:flex;
   justify-content:space-between;
   align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
   font-size:11px;
   color:var(--muted);
 }
 .progress-chart__meta .mono{
   color:#c7d2fe;
+}
+.progress-chart__meta .mono.confidence{
+  color:#facc15;
 }
 .progress-chart__empty{
   font-size:12px;
@@ -703,6 +725,7 @@ select{
 .auto-log__entry--summary{border-left-color:#8d99ff;}
 .auto-log__entry--info{border-left-color:var(--accent-a);}
 .auto-log__entry--ai{border-left-color:#22d3ee;}
+.auto-log__entry--confidence{border-left-color:#facc15;}
 .auto-log__entry--error{border-left-color:var(--danger);}
 .auto-log__title{
   font-weight:600;
@@ -996,20 +1019,25 @@ footer{
       </div>
       <div class="progress-chart__body" id="progressChartBody">
         <div class="progress-chart__canvas" id="progressChartCanvas">
-          <svg id="progressChartSvg" viewBox="0 0 360 160" role="img" aria-label="Linje-diagram över medelbelöning och frukt per 100 episoder">
+          <svg id="progressChartSvg" viewBox="0 0 360 160" role="img" aria-label="Linje-diagram över medelbelöning, frukt och AI-förtroende per 100 episoder">
             <g id="progressChartGrid" class="progress-chart__grid"></g>
+            <g id="progressChartConfidenceGrid" class="progress-chart__grid progress-chart__grid--confidence"></g>
             <path id="progressRewardPath" class="line reward" d=""></path>
             <path id="progressFruitPath" class="line fruit" d=""></path>
+            <path id="progressConfidencePath" class="line confidence" d=""></path>
           </svg>
         </div>
         <div class="progress-chart__empty" id="progressChartEmpty">Kör minst 100 episoder för att se trenderna.</div>
         <div class="progress-chart__legend" id="progressChartLegend">
           <span class="legend-item"><span class="legend-swatch reward"></span>Medelbelöning</span>
           <span class="legend-item"><span class="legend-swatch fruit"></span>Medel frukt</span>
+          <span class="legend-item"><span class="legend-swatch confidence"></span>AI-förtroende</span>
         </div>
         <div class="progress-chart__meta" id="progressChartMeta">
           <span class="hint">Episoder</span>
           <span class="mono" id="progressChartRange">—</span>
+          <span class="hint">AI-förtroende</span>
+          <span class="mono confidence" id="progressChartConfidence">—</span>
         </div>
       </div>
     </div>
@@ -3235,12 +3263,15 @@ const ui={
   progressChartCanvas:document.getElementById('progressChartCanvas'),
   progressChartSvg:document.getElementById('progressChartSvg'),
   progressChartGrid:document.getElementById('progressChartGrid'),
+  progressChartConfidenceGrid:document.getElementById('progressChartConfidenceGrid'),
   progressRewardPath:document.getElementById('progressRewardPath'),
   progressFruitPath:document.getElementById('progressFruitPath'),
+  progressConfidencePath:document.getElementById('progressConfidencePath'),
   progressChartEmpty:document.getElementById('progressChartEmpty'),
   progressChartLegend:document.getElementById('progressChartLegend'),
   progressChartMeta:document.getElementById('progressChartMeta'),
   progressChartRange:document.getElementById('progressChartRange'),
+  progressChartConfidence:document.getElementById('progressChartConfidence'),
   tabTraining:document.getElementById('tabTraining'),
   tabGuide:document.getElementById('tabGuide'),
   trainingView:document.getElementById('trainingView'),
@@ -3275,6 +3306,8 @@ let targetSyncSteps=2000;
 let episode=0,totalSteps=0,bestLen=0;
 const rwHist=[],fruitHist=[],lossHist=[];
 const progressPoints=[];
+let lastAIConfidence=null;
+let lastAIConfidenceEpisode=0;
 const PROGRESS_POINTS_MAX=120;
 const PROGRESS_CHART_WIDTH=360;
 const PROGRESS_CHART_HEIGHT=160;
@@ -3371,13 +3404,14 @@ function humanizeAutoReason(reason){
   const text=AUTO_REASON_LABELS[reason]||reason;
   return text.charAt(0).toUpperCase()+text.slice(1);
 }
-function buildMetricsLine(metrics){
-  if(!metrics) return '';
+function buildMetricsLine(metrics,confidence=null){
+  if(!metrics && !Number.isFinite(confidence)) return '';
   const parts=[];
   if(metrics.maFruit100!==undefined) parts.push(`ma100 ${formatMetric(metrics.maFruit100,1)}`);
   if(metrics.maFruit500!==undefined) parts.push(`ma500 ${formatMetric(metrics.maFruit500,1)}`);
   if(metrics.fruitSlope!==undefined) parts.push(`trend ${formatSigned(metrics.fruitSlope,2)}`);
   if(metrics.lossRatio!==undefined) parts.push(`lossσ/μ ${formatMetric(metrics.lossRatio,2)}`);
+  if(Number.isFinite(confidence)) parts.push(`AI conf ${Math.round(confidence)}%`);
   return parts.join(' • ');
 }
 function resetAutoLog(){
@@ -3391,7 +3425,7 @@ function updateAutoLogVisibility(){
   const shouldShow=trainingMode==='auto'||aiAutoTuneEnabled;
   ui.autoLogPanel.classList.toggle('hidden',!shouldShow);
 }
-function logAutoEvent({title='',detail='',metrics=null,tone='info',episode=null}={}){
+function logAutoEvent({title='',detail='',metrics=null,tone='info',confidence=null,episode=null}={}){
   if(!ui.autoLogStream) return;
   const entry=document.createElement('div');
   entry.className=`auto-log__entry auto-log__entry--${tone}`;
@@ -3413,7 +3447,7 @@ function logAutoEvent({title='',detail='',metrics=null,tone='info',episode=null}
     detailEl.textContent=detail;
     entry.appendChild(detailEl);
   }
-  const metricsLine=buildMetricsLine(metrics);
+  const metricsLine=buildMetricsLine(metrics,confidence);
   if(metricsLine){
     const metricsEl=document.createElement('div');
     metricsEl.className='auto-log__metrics';
@@ -3765,8 +3799,11 @@ function applyAITunerHyperparameters(updates={}){
   return result;
 }
 
-function logAITunerEvent({title='',detail='',tone='ai',metrics=null,episodeNumber=null}={}){
-  logAutoEvent({title,detail,metrics,tone,episode:episodeNumber??episode});
+function logAITunerEvent({title='',detail='',tone='ai',metrics=null,episodeNumber=null,confidence=null}={}){
+  if(Number.isFinite(confidence)){
+    applyAIConfidenceUpdate(confidence,episodeNumber??episode);
+  }
+  logAutoEvent({title,detail,metrics,tone,confidence,episode:episodeNumber??episode});
 }
 
 function bindUI(){
@@ -4495,6 +4532,8 @@ function resetTrainingStats(){
   fruitHist.length=0;
   lossHist.length=0;
   progressPoints.length=0;
+  lastAIConfidence=null;
+  lastAIConfidenceEpisode=0;
   rewardTelemetry.reset();
   updateStatsUI();
   updateRewardTelemetryUI();
@@ -4530,6 +4569,32 @@ function setProgressChartCollapsed(collapsed){
   ui.progressChartToggle.setAttribute('aria-expanded',String(!collapsed));
   ui.progressChartToggle.textContent=collapsed?'Visa diagram':'Dölj diagram';
 }
+function clampConfidenceValue(value){
+  if(!Number.isFinite(value)) return null;
+  const rounded=Math.round(value);
+  return Math.max(1,Math.min(100,rounded));
+}
+function applyAIConfidenceUpdate(value,episodeNumber){
+  const clamped=clampConfidenceValue(value);
+  if(clamped===null) return;
+  lastAIConfidence=clamped;
+  if(Number.isFinite(episodeNumber)){
+    lastAIConfidenceEpisode=episodeNumber;
+  }
+  const latest=progressPoints[progressPoints.length-1];
+  if(latest&&Number.isFinite(latest.episode)){
+    const episodeMatch=!Number.isFinite(episodeNumber)||episodeNumber===latest.episode||episodeNumber>=latest.startEpisode;
+    if(episodeMatch){
+      latest.confidence=clamped;
+    }
+  }
+  if(ui.progressChartConfidence){
+    ui.progressChartConfidence.textContent=`${clamped}%`;
+  }
+  if(progressPoints.length){
+    updateProgressChart();
+  }
+}
 function updateProgressChart(){
   if(!ui.progressChartSvg) return;
   const data=progressPoints.slice(-PROGRESS_POINTS_MAX);
@@ -4544,14 +4609,18 @@ function updateProgressChart(){
   if(!hasData){
     ui.progressRewardPath?.setAttribute('d','');
     ui.progressFruitPath?.setAttribute('d','');
+    ui.progressConfidencePath?.setAttribute('d','');
     if(ui.progressChartGrid) ui.progressChartGrid.innerHTML='';
+    if(ui.progressChartConfidenceGrid) ui.progressChartConfidenceGrid.innerHTML='';
     if(ui.progressChartRange) ui.progressChartRange.textContent='—';
+    if(ui.progressChartConfidence) ui.progressChartConfidence.textContent='—';
     return;
   }
   const width=PROGRESS_CHART_WIDTH;
   const height=PROGRESS_CHART_HEIGHT;
   const rewardVals=data.map(p=>p.reward).filter(v=>Number.isFinite(v));
   const fruitVals=data.map(p=>p.fruit).filter(v=>Number.isFinite(v));
+  const confidenceVals=data.map(p=>p.confidence).filter(v=>Number.isFinite(v)).map(v=>Math.max(0,Math.min(100,v)));
   const values=[...rewardVals,...fruitVals];
   let min=Math.min(...values);
   let max=Math.max(...values);
@@ -4577,6 +4646,43 @@ function updateProgressChart(){
   const fruitPath=data.map((point,i)=>`${i===0?'M':'L'}${toX(i).toFixed(1)},${toY(point.fruit).toFixed(1)}`).join(' ');
   ui.progressRewardPath?.setAttribute('d',rewardPath);
   ui.progressFruitPath?.setAttribute('d',fruitPath);
+  if(confidenceVals.length){
+    let confMin=Math.min(...confidenceVals);
+    let confMax=Math.max(...confidenceVals);
+    if(confMin===confMax){
+      const pad=Math.max(2,confMax*0.05||5);
+      confMin=Math.max(0,confMin-pad);
+      confMax=Math.min(100,confMax+pad);
+    }
+    const confPad=(confMax-confMin)*0.08||3;
+    confMin=Math.max(0,confMin-confPad);
+    confMax=Math.min(100,confMax+confPad);
+    const toYConfidence=value=>{
+      const clamped=Math.max(0,Math.min(100,value));
+      const norm=(clamped-confMin)/(confMax-confMin||1);
+      const y=height-(norm*height);
+      return Math.min(height,Math.max(0,y));
+    };
+    let path='';
+    data.forEach((point,i)=>{
+      if(!Number.isFinite(point.confidence)) return;
+      const val=Math.max(0,Math.min(100,point.confidence));
+      const cmd=path?'L':'M';
+      path+=`${cmd}${toX(i).toFixed(1)},${toYConfidence(val).toFixed(1)}`;
+    });
+    ui.progressConfidencePath?.setAttribute('d',path);
+    if(ui.progressChartConfidenceGrid){
+      const ticks=[confMax,(confMax+confMin)/2,confMin];
+      ui.progressChartConfidenceGrid.innerHTML=ticks.map(value=>{
+        const y=toYConfidence(value);
+        return `<line x1="${(width-14).toFixed(1)}" y1="${y.toFixed(1)}" x2="${width}" y2="${y.toFixed(1)}"></line>`+
+          `<text x="${(width-4).toFixed(1)}" y="${y.toFixed(1)}" dominant-baseline="middle">${Math.round(Math.max(0,Math.min(100,value)))}%</text>`;
+      }).join('');
+    }
+  }else{
+    ui.progressConfidencePath?.setAttribute('d','');
+    if(ui.progressChartConfidenceGrid) ui.progressChartConfidenceGrid.innerHTML='';
+  }
   if(ui.progressChartGrid){
     const ticks=[max,(max+min)/2,min];
     ui.progressChartGrid.innerHTML=ticks.map(value=>{
@@ -4590,6 +4696,10 @@ function updateProgressChart(){
   if(ui.progressChartRange){
     ui.progressChartRange.textContent=`${first.startEpisode}–${last.episode}`;
   }
+  if(ui.progressChartConfidence){
+    const latestConfidence=Number.isFinite(last.confidence)?Math.round(last.confidence):Number.isFinite(lastAIConfidence)?Math.round(lastAIConfidence):null;
+    ui.progressChartConfidence.textContent=latestConfidence!==null?`${latestConfidence}%`:'—';
+  }
 }
 function recordProgressPoint(){
   if(rwHist.length<100||fruitHist.length<100) return;
@@ -4600,6 +4710,7 @@ function recordProgressPoint(){
     startEpisode:Math.max(1,episode-99),
     reward:rewardAvg,
     fruit:fruitAvg,
+    confidence:Number.isFinite(lastAIConfidence)?lastAIConfidence:null,
   });
   if(progressPoints.length>PROGRESS_POINTS_MAX) progressPoints.shift();
   updateProgressChart();
