@@ -1,0 +1,8 @@
+# Dependencies
+node_modules/
+
+# Logs and history files
+api/logs/*.jsonl*
+
+# Environment keys
+__key.js
