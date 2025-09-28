@@ -60,7 +60,67 @@ function formatChanges(changes=[]){
   }).join(', ');
 }
 
+function clamp(value,min,max){
+  if(!Number.isFinite(value)) return min;
+  if(value<min) return min;
+  if(value>max) return max;
+  return value;
+}
+
+function toNumber(value){
+  const num=Number(value);
+  return Number.isFinite(num)?num:null;
+}
+
+function normaliseTrend(value,scale=1){
+  const num=toNumber(value);
+  const normaliser=toNumber(scale);
+  if(num===null||normaliser===null||normaliser<=0) return 0;
+  return Math.tanh(num/normaliser);
+}
+
+function computeConfidencePercent({telemetry,response,rewardChanges=[],hyperChanges=[]}={}){
+  if(!telemetry||typeof telemetry!=='object') return null;
+  const stats=telemetry.stats||{};
+  const rollupStats=telemetry.rollup?.stats||{};
+  const rewardTrend=toNumber(stats.rewardTrend??rollupStats.rewardTrend)??0;
+  const fruitTrend=toNumber(stats.fruitTrend??rollupStats.fruitTrend)??0;
+  const rewardAvg=toNumber(stats.rewardAvg??rollupStats.rewardAvg);
+  const rewardStd=toNumber(stats.rewardStd??rollupStats.rewardStd);
+  const manual=toNumber(response?.assessment?.confidence);
+  let score;
+  if(manual!==null){
+    score=manual<=1?manual*100:manual;
+  }else{
+    const statusKey=String(response?.assessment?.status||'').toLowerCase();
+    const statusBase={good:70,stable:55,bad:35,uncertain:45}[statusKey];
+    score=statusBase!==undefined?statusBase:50;
+    const rewardScale=Math.max(1,Math.abs(rewardAvg??0)||5);
+    score+=normaliseTrend(rewardTrend,rewardScale)*28;
+    score+=normaliseTrend(fruitTrend,2)*20;
+    if(rewardAvg!==null&&rewardStd!==null&&Math.abs(rewardAvg)>1e-3){
+      const stability=clamp(1-(rewardStd/Math.max(1,Math.abs(rewardAvg))),-1,1);
+      score+=stability*10;
+    }
+    const adjustmentsCount=(Array.isArray(rewardChanges)?rewardChanges.length:0)+(Array.isArray(hyperChanges)?hyperChanges.length:0);
+    if(adjustmentsCount>0){
+      score-=Math.min(20,adjustmentsCount*4);
+    }else if(rewardTrend>0||fruitTrend>0){
+      score+=4;
+    }
+  }
+  return Math.round(clamp(score??50,1,100));
+}
+
 export function createAITuner(options={}){
+  const {
+    getVecEnv=()=>null,
+    fetchTelemetry,
+    applyRewardConfig,
+    applyHyperparameters,
+    log,
+    apiKey=null,
+  }=options;
   if(typeof fetchTelemetry!=='function'){
     throw new Error('createAITuner requires a fetchTelemetry() function');
   }
@@ -71,6 +131,7 @@ export function createAITuner(options={}){
   let busy=false;
   let warnedNoKey=false;
   let warnedNoFetch=false;
+  let lastConfidencePercent=null;
 
   function logEvent(payload){
     try{
@@ -142,8 +203,26 @@ export function createAITuner(options={}){
         console.warn('[ai-tuner] setRewardConfig failed',err);
       }
     }
-    const rewardSummary=formatChanges(rewardResult?.changes);
-    const hyperSummary=formatChanges(hyperResult?.changes);
+    const rewardChanges=rewardResult?.changes||[];
+    const hyperChanges=hyperResult?.changes||[];
+    const rewardSummary=formatChanges(rewardChanges);
+    const hyperSummary=formatChanges(hyperChanges);
+    const confidencePercent=computeConfidencePercent({
+      telemetry,
+      response:parsed,
+      rewardChanges,
+      hyperChanges,
+    });
+    if(confidencePercent!==null){
+      lastConfidencePercent=confidencePercent;
+      logEvent({
+        title:'AI-förtroende',
+        detail:`${confidencePercent}% säker på förbättring`,
+        tone:'confidence',
+        episodeNumber:episode,
+        confidence:confidencePercent,
+      });
+    }
     if(rewardSummary){
       logEvent({title:'AI belöningar',detail:rewardSummary,tone:'reward',episodeNumber:episode});
     }
@@ -187,5 +266,6 @@ export function createAITuner(options={}){
     maybeTune,
     isEnabled(){ return enabled; },
     getInterval(){ return interval; },
+    getLastConfidence(){ return lastConfidencePercent; },
   };
 }

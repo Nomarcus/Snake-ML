@@ -24,6 +24,8 @@ Your goals:
 
 Output must always be valid JSON:
 
+
+Du får telemetri och aktuell runtime-konfiguration. Svara alltid med giltig JSON på formen:
 {
   "rewardConfig": { ... numeric values ... },
   "hyper": { ... numeric values ... },
@@ -36,24 +38,7 @@ Guidelines:
 - If agent gets stuck in loops, add explicit penalties for repeated states or circling.
 - Only suggest grid-size increase when performance is stable and improving.
 - Do not remove all rewards/penalties unless clearly justified.`;
-const SYSTEM_PROMPT_PPO_7DAY = `Du är coach för PPO-träning av Snake och ska ge exakta numeriska råd.
-Målet är en sju dagar lång "Extreme"-plan där utforskning hålls hög i början, belöningar hålls inom [-2.5, +2.5], och stagnation leder till högre extremeFactor.
 
-Du får telemetri och aktuell runtime-konfiguration. Svara alltid med giltig JSON på formen:
-{
-  "rewardConfig": { ... },
-  "ppoHyper": { ... },
-  "schedules": [ ... ],
-  "curriculum": { ... },
-  "notes": "kort analys"
-}
-
-Råd:
-- Höj extremeFactor när frukttakten stagnerar – annars håll den oförändrad.
-- Justera klippradie, entropyCoeff och temperatur försiktigt så att utforskningen fasas ut senare i planen.
-- Håll utforskningen hög i början via entropyCoeff/temperature och trappa ned först när planen avancerar.
-- Föreslå curriculum-hopp först när givna kriterier uppfyllts.
-- Håll rekommenderade belöningar inom [-2.5, +2.5] efter skalning.`;
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://nomarcus.github.io',
