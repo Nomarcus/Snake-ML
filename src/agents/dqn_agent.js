@@ -247,6 +247,8 @@ export class DQNAgent {
     const isWeights = tf.tensor1d(weights.length ? weights : new Array(batch.length).fill(1));
 
     let tdTensor;
+    const trainableWeights = this.online.trainableWeights;
+    const trainableVars = trainableWeights.map((weight) => weight.val);
     const { value: lossTensor, grads } = tf.variableGrads(() => {
       const qPredAll = this.online.apply(states);
       const actionMask = tf.oneHot(actions, this.actionDim);
@@ -263,15 +265,24 @@ export class DQNAgent {
         nextQ = nextQTargetAll.max(1);
       }
       const targets = rewards.add(nextQ.mul(tf.scalar(1).sub(dones)).mul(this.gamma));
-      tdTensor = targets.sub(qPred);
-      const loss = tdTensor.square().mul(isWeights).mean();
+      const td = targets.sub(qPred);
+      tdTensor = tf.keep(td.clone());
+      const loss = td.square().mul(isWeights).mean();
+      td.dispose();
       return loss;
-    }, this.online.trainableWeights);
+    }, trainableVars);
 
-    const gradList = this.online.trainableWeights.map((weight) => grads[weight.name]);
-    const [clipped, globalNorm] = tf.clipByGlobalNorm(gradList, this.gradientClip);
+    const gradArray = trainableWeights.map((weight, idx) => {
+      const variable = trainableVars[idx];
+      const grad = grads[weight.name];
+      return grad ?? tf.zeros(variable.shape, variable.dtype);
+    });
+    const clipped = Number.isFinite(this.gradientClip) && this.gradientClip > 0
+      ? gradArray.map((grad) => tf.clipByValue(grad, -this.gradientClip, this.gradientClip))
+      : gradArray.map((grad) => grad.clone());
+
     const gradMap = {};
-    this.online.trainableWeights.forEach((weight, idx) => {
+    trainableWeights.forEach((weight, idx) => {
       gradMap[weight.name] = clipped[idx];
     });
     this.optimizer.applyGradients(gradMap);
@@ -297,9 +308,8 @@ export class DQNAgent {
     rewards.dispose();
     dones.dispose();
     isWeights.dispose();
-    gradList.forEach((grad) => grad.dispose());
+    gradArray.forEach((grad) => grad.dispose());
     clipped.forEach((grad) => grad.dispose());
-    globalNorm.dispose();
 
     return { loss: lossValue, tdErrors };
   }
