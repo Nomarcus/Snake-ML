@@ -979,6 +979,12 @@ footer{
         <option value="ppo">Proximal Policy Optimization</option>
       </select>
     </div>
+    <div class="field block">
+      <label for="presetSelect">Agent preset</label>
+      <select id="presetSelect"></select>
+      <label for="stagePresetSelect">Stage preset:</label>
+      <select id="stagePresetSelect"></select>
+    </div>
     <p class="hint" id="algoDescription">Prioritized replay, n-step returns, and dueling heads make DQN stable and sample efficient.</p>
 
     <div class="ai-auto-tune" id="aiAutoTunePanel">
@@ -3199,6 +3205,245 @@ const AGENT_PRESETS={
   },
 };
 
+const STAGE_AGENT_ALIASES={ddqn:'dueling',rainbow:'dueling',sac:'ppo'};
+const STAGE_PRESETS={
+  dqn_stage1:{
+    label:'DQN Stage 1 – Warmup',
+    agent:'vanilla',
+    gamma:0.97,lr:0.00025,
+    epsStart:1.0,epsEnd:0.2,epsDecay:60000,
+    batchSize:64,bufferSize:40000,targetSync:1500,
+    nStep:1,hiddenSizes:[128,128],
+    rewardConfig:{fruitReward:12,stepPenalty:0.01,timeoutPenalty:5},
+  },
+  dqn_stage2:{
+    label:'DQN Stage 2 – Exploration Shaping',
+    agent:'vanilla',
+    gamma:0.975,lr:0.00022,
+    epsStart:1.0,epsEnd:0.18,epsDecay:80000,
+    batchSize:96,bufferSize:60000,targetSync:1800,
+    nStep:2,hiddenSizes:[160,160],
+    rewardConfig:{fruitReward:14,stepPenalty:0.0095,timeoutPenalty:4.5},
+  },
+  dqn_stage3:{
+    label:'DQN Stage 3 – Midgame Stabilisation',
+    agent:'vanilla',
+    gamma:0.98,lr:0.00018,
+    epsStart:0.95,epsEnd:0.14,epsDecay:95000,
+    batchSize:128,bufferSize:90000,targetSync:2000,
+    nStep:3,hiddenSizes:[192,192],
+    rewardConfig:{fruitReward:18,stepPenalty:0.008,timeoutPenalty:4},
+  },
+  dqn_stage4:{
+    label:'DQN Stage 4 – Ramp Up',
+    agent:'vanilla',
+    gamma:0.988,lr:0.00013,
+    epsStart:0.9,epsEnd:0.1,epsDecay:115000,
+    batchSize:160,bufferSize:140000,targetSync:2400,
+    nStep:4,hiddenSizes:[224,224,128],
+    rewardConfig:{fruitReward:22,stepPenalty:0.007,timeoutPenalty:3.5},
+  },
+  dqn_stage5:{
+    label:'DQN Stage 5 – Endgame',
+    agent:'vanilla',
+    gamma:0.993,lr:0.0001,
+    epsStart:0.85,epsEnd:0.08,epsDecay:140000,
+    batchSize:192,bufferSize:180000,targetSync:2800,
+    nStep:5,hiddenSizes:[256,256,128],
+    rewardConfig:{fruitReward:24,stepPenalty:0.006,timeoutPenalty:3},
+  },
+  ddqn_stage1:{
+    label:'DDQN Stage 1 – Warmup',
+    agent:'ddqn',
+    gamma:0.975,lr:0.00028,
+    epsStart:1.0,epsEnd:0.22,epsDecay:70000,
+    batchSize:96,bufferSize:50000,targetSync:1600,
+    nStep:2,hiddenSizes:[160,160,96],
+    priorityAlpha:0.5,priorityBeta:0.4,
+    rewardConfig:{fruitReward:13,stepPenalty:0.009,timeoutPenalty:4.8},
+  },
+  ddqn_stage2:{
+    label:'DDQN Stage 2 – Momentum',
+    agent:'ddqn',
+    gamma:0.982,lr:0.00022,
+    epsStart:0.95,epsEnd:0.17,epsDecay:90000,
+    batchSize:128,bufferSize:80000,targetSync:1900,
+    nStep:3,hiddenSizes:[192,192,128],
+    priorityAlpha:0.55,priorityBeta:0.48,
+    rewardConfig:{fruitReward:16,stepPenalty:0.0085,timeoutPenalty:4.2},
+  },
+  ddqn_stage3:{
+    label:'DDQN Stage 3 – Midgame Control',
+    agent:'ddqn',
+    gamma:0.988,lr:0.00018,
+    epsStart:0.9,epsEnd:0.14,epsDecay:105000,
+    batchSize:160,bufferSize:110000,targetSync:2200,
+    nStep:4,hiddenSizes:[224,224,128],
+    priorityAlpha:0.6,priorityBeta:0.55,
+    rewardConfig:{fruitReward:19,stepPenalty:0.0075,timeoutPenalty:3.8},
+  },
+  ddqn_stage4:{
+    label:'DDQN Stage 4 – Refinement',
+    agent:'ddqn',
+    gamma:0.992,lr:0.00012,
+    epsStart:0.85,epsEnd:0.1,epsDecay:125000,
+    batchSize:192,bufferSize:150000,targetSync:2600,
+    nStep:4,hiddenSizes:[256,256,160],
+    priorityAlpha:0.65,priorityBeta:0.6,
+    rewardConfig:{fruitReward:22,stepPenalty:0.0068,timeoutPenalty:3.4},
+  },
+  ddqn_stage5:{
+    label:'DDQN Stage 5 – Endgame',
+    agent:'ddqn',
+    gamma:0.995,lr:0.0001,
+    epsStart:0.8,epsEnd:0.08,epsDecay:150000,
+    batchSize:224,bufferSize:200000,targetSync:3000,
+    nStep:5,hiddenSizes:[256,256,192],
+    priorityAlpha:0.7,priorityBeta:0.65,
+    rewardConfig:{fruitReward:24,stepPenalty:0.006,timeoutPenalty:3},
+  },
+  rainbow_stage1:{
+    label:'Rainbow Stage 1 – Warmup',
+    agent:'rainbow',
+    gamma:0.975,lr:0.00025,
+    epsStart:1.0,epsEnd:0.18,epsDecay:80000,
+    batchSize:128,bufferSize:70000,targetSync:1700,
+    nStep:3,hiddenSizes:[192,192,128],
+    priorityAlpha:0.6,priorityBeta:0.45,learnRepeats:2,
+    rewardConfig:{fruitReward:15,stepPenalty:0.009,timeoutPenalty:4.5},
+  },
+  rainbow_stage2:{
+    label:'Rainbow Stage 2 – Expansion',
+    agent:'rainbow',
+    gamma:0.982,lr:0.0002,
+    epsStart:0.95,epsEnd:0.15,epsDecay:95000,
+    batchSize:160,bufferSize:100000,targetSync:2100,
+    nStep:4,hiddenSizes:[224,224,128],
+    priorityAlpha:0.65,priorityBeta:0.5,learnRepeats:2,
+    rewardConfig:{fruitReward:18,stepPenalty:0.008,timeoutPenalty:4},
+  },
+  rainbow_stage3:{
+    label:'Rainbow Stage 3 – Midgame Pressure',
+    agent:'rainbow',
+    gamma:0.988,lr:0.00016,
+    epsStart:0.9,epsEnd:0.12,epsDecay:115000,
+    batchSize:192,bufferSize:130000,targetSync:2500,
+    nStep:4,hiddenSizes:[256,256,128],
+    priorityAlpha:0.7,priorityBeta:0.55,learnRepeats:3,
+    rewardConfig:{fruitReward:20,stepPenalty:0.007,timeoutPenalty:3.6},
+  },
+  rainbow_stage4:{
+    label:'Rainbow Stage 4 – Advanced Planning',
+    agent:'rainbow',
+    gamma:0.992,lr:0.00012,
+    epsStart:0.85,epsEnd:0.1,epsDecay:135000,
+    batchSize:224,bufferSize:160000,targetSync:2900,
+    nStep:5,hiddenSizes:[288,288,160],
+    priorityAlpha:0.75,priorityBeta:0.6,learnRepeats:3,
+    rewardConfig:{fruitReward:22,stepPenalty:0.0065,timeoutPenalty:3.3},
+  },
+  rainbow_stage5:{
+    label:'Rainbow Stage 5 – Endgame',
+    agent:'rainbow',
+    gamma:0.995,lr:0.0001,
+    epsStart:0.8,epsEnd:0.08,epsDecay:160000,
+    batchSize:256,bufferSize:200000,targetSync:3300,
+    nStep:5,hiddenSizes:[320,320,192],
+    priorityAlpha:0.8,priorityBeta:0.65,learnRepeats:4,
+    rewardConfig:{fruitReward:24,stepPenalty:0.006,timeoutPenalty:3},
+  },
+  ppo_stage1:{
+    label:'PPO Stage 1 – Warmup',
+    agent:'ppo',
+    gamma:0.965,lr:0.0003,
+    lam:0.92,clipRatio:0.3,stepsPerEpoch:2048,
+    trainIters:3,minibatchSize:128,
+    entropy:0.01,valueCoef:0.45,
+    rewardConfig:{fruitReward:14,stepPenalty:0.01,timeoutPenalty:5},
+  },
+  ppo_stage2:{
+    label:'PPO Stage 2 – Stabilise',
+    agent:'ppo',
+    gamma:0.975,lr:0.00022,
+    lam:0.94,clipRatio:0.24,stepsPerEpoch:3072,
+    trainIters:4,minibatchSize:192,
+    entropy:0.008,valueCoef:0.5,
+    rewardConfig:{fruitReward:16,stepPenalty:0.009,timeoutPenalty:4.5},
+  },
+  ppo_stage3:{
+    label:'PPO Stage 3 – Midgame',
+    agent:'ppo',
+    gamma:0.985,lr:0.00018,
+    lam:0.96,clipRatio:0.2,stepsPerEpoch:4096,
+    trainIters:5,minibatchSize:256,
+    entropy:0.006,valueCoef:0.55,
+    rewardConfig:{fruitReward:18,stepPenalty:0.008,timeoutPenalty:4},
+  },
+  ppo_stage4:{
+    label:'PPO Stage 4 – Ramp Up',
+    agent:'ppo',
+    gamma:0.992,lr:0.00014,
+    lam:0.97,clipRatio:0.18,stepsPerEpoch:5120,
+    trainIters:6,minibatchSize:320,
+    entropy:0.005,valueCoef:0.6,
+    rewardConfig:{fruitReward:21,stepPenalty:0.007,timeoutPenalty:3.5},
+  },
+  ppo_stage5:{
+    label:'PPO Stage 5 – Endgame',
+    agent:'ppo',
+    gamma:0.995,lr:0.0001,
+    lam:0.98,clipRatio:0.15,stepsPerEpoch:6144,
+    trainIters:6,minibatchSize:384,
+    entropy:0.004,valueCoef:0.65,
+    rewardConfig:{fruitReward:24,stepPenalty:0.006,timeoutPenalty:3},
+  },
+  sac_stage1:{
+    label:'SAC Stage 1 – Warmup',
+    agent:'sac',
+    gamma:0.965,lr:0.0003,
+    lam:0.9,clipRatio:0.28,stepsPerEpoch:2048,
+    trainIters:3,minibatchSize:128,
+    entropy:0.02,valueCoef:0.35,
+    rewardConfig:{fruitReward:15,stepPenalty:0.0095,timeoutPenalty:4.8},
+  },
+  sac_stage2:{
+    label:'SAC Stage 2 – Exploration Balance',
+    agent:'sac',
+    gamma:0.975,lr:0.00022,
+    lam:0.93,clipRatio:0.22,stepsPerEpoch:3072,
+    trainIters:4,minibatchSize:192,
+    entropy:0.016,valueCoef:0.4,
+    rewardConfig:{fruitReward:17,stepPenalty:0.0085,timeoutPenalty:4.2},
+  },
+  sac_stage3:{
+    label:'SAC Stage 3 – Midgame Control',
+    agent:'sac',
+    gamma:0.985,lr:0.00016,
+    lam:0.95,clipRatio:0.18,stepsPerEpoch:4096,
+    trainIters:5,minibatchSize:256,
+    entropy:0.013,valueCoef:0.45,
+    rewardConfig:{fruitReward:19,stepPenalty:0.0075,timeoutPenalty:3.8},
+  },
+  sac_stage4:{
+    label:'SAC Stage 4 – Precision',
+    agent:'sac',
+    gamma:0.992,lr:0.00012,
+    lam:0.97,clipRatio:0.16,stepsPerEpoch:5120,
+    trainIters:6,minibatchSize:320,
+    entropy:0.01,valueCoef:0.5,
+    rewardConfig:{fruitReward:22,stepPenalty:0.0068,timeoutPenalty:3.4},
+  },
+  sac_stage5:{
+    label:'SAC Stage 5 – Endgame',
+    agent:'sac',
+    gamma:0.995,lr:0.0001,
+    lam:0.98,clipRatio:0.14,stepsPerEpoch:6144,
+    trainIters:6,minibatchSize:384,
+    entropy:0.008,valueCoef:0.55,
+    rewardConfig:{fruitReward:24,stepPenalty:0.006,timeoutPenalty:3},
+  },
+};
+
 const ui={
   trainState:document.getElementById('trainState'),
   algoBadge:document.getElementById('algoBadge'),
@@ -3333,6 +3578,8 @@ const ui={
     ppo:document.querySelector('[data-config="ppo"]'),
   },
 };
+
+let presetSelectEl=null;
 
 let agent=null;
 let stateDim=env?.getState()?.length||0;
@@ -4602,11 +4849,19 @@ function updateAdvancedVisibility(){
   });
 }
 function instantiateAgent(key,opts={}){
+  const {useCurrentUI=false,overrideDefaults=null}=opts;
   currentAlgoKey=AGENT_PRESETS[key]?key:'dueling';
   ui.algoSelect.value=currentAlgoKey;
   const preset=AGENT_PRESETS[currentAlgoKey];
-  if(!opts.useCurrentUI){
-    applyPresetToUI(preset.defaults);
+  const appliedDefaults={...preset.defaults};
+  if(overrideDefaults){
+    if(Array.isArray(overrideDefaults.layers)) appliedDefaults.layers=overrideDefaults.layers.slice();
+    if(overrideDefaults.learnRepeats!==undefined) appliedDefaults.learnRepeats=overrideDefaults.learnRepeats;
+    if(overrideDefaults.dueling!==undefined) appliedDefaults.dueling=overrideDefaults.dueling;
+    if(overrideDefaults.double!==undefined) appliedDefaults.double=overrideDefaults.double;
+  }
+  if(!useCurrentUI){
+    applyPresetToUI(appliedDefaults);
   }
   agent=preset.create(stateDim,actionDim,{
     gamma:+ui.gamma.value,
@@ -4626,16 +4881,19 @@ function instantiateAgent(key,opts={}){
     lambda:+ui.ppoLambda.value,
     batch:+ui.ppoBatch.value,
     epochs:+ui.ppoEpochs.value,
-    learnRepeats:preset.defaults.learnRepeats,
-    layers:preset.defaults.layers,
-    dueling:preset.defaults.dueling,
-    double:preset.defaults.double,
+    learnRepeats:appliedDefaults.learnRepeats,
+    layers:appliedDefaults.layers,
+    dueling:appliedDefaults.dueling,
+    double:appliedDefaults.double,
   });
-  agent.learnRepeats=preset.defaults.learnRepeats??agent.learnRepeats??1;
+  agent.learnRepeats=(appliedDefaults.learnRepeats??preset.defaults.learnRepeats)??agent.learnRepeats??1;
   targetSyncSteps=agent.kind==='dqn'? (+ui.targetSync.value||2000):Infinity;
   updateAdvancedVisibility();
   ui.algoBadge.textContent=preset.badge||preset.label;
   ui.algoDescription.textContent=preset.description;
+  if(typeof presetSelectEl!=='undefined'&&presetSelectEl&&presetSelectEl.value!==currentAlgoKey){
+    presetSelectEl.value=currentAlgoKey;
+  }
   updateBadgeMetrics();
   resetTrainingStats();
   if(agent.kind!=='dqn' && trainingMode==='auto'){
@@ -4679,6 +4937,55 @@ function applyPresetToUI(config){
   if(config.lambda!==undefined) ui.ppoLambda.value=config.lambda;
   if(config.batch!==undefined) ui.ppoBatch.value=config.batch;
   if(config.epochs!==undefined) ui.ppoEpochs.value=config.epochs;
+  updateReadouts();
+}
+function applyPreset(preset){
+  if(!preset) return;
+  const rawAgent=preset.agent||currentAlgoKey;
+  const resolvedAgent=AGENT_PRESETS[rawAgent]?rawAgent:(STAGE_AGENT_ALIASES[rawAgent]||rawAgent);
+  const agentKey=AGENT_PRESETS[resolvedAgent]?resolvedAgent:'dueling';
+  const overrides={};
+  if(Array.isArray(preset.hiddenSizes)) overrides.layers=preset.hiddenSizes.slice();
+  if(preset.learnRepeats!==undefined) overrides.learnRepeats=preset.learnRepeats;
+  if(preset.dueling!==undefined) overrides.dueling=preset.dueling;
+  if(preset.double!==undefined) overrides.double=preset.double;
+  const {
+    label,
+    agent,
+    rewardConfig,
+    hiddenSizes,
+    learnRepeats,
+    lam,
+    clipRatio,
+    stepsPerEpoch,
+    trainIters,
+    minibatchSize,
+    batchSize,
+    ...rest
+  }=preset;
+  const config={...rest};
+  if(batchSize!==undefined) config.batch=batchSize;
+  if(minibatchSize!==undefined) config.batch=minibatchSize;
+  if(lam!==undefined) config.lambda=lam;
+  if(clipRatio!==undefined) config.clip=clipRatio;
+  if(trainIters!==undefined) config.epochs=trainIters;
+  // remove properties not handled by UI
+  delete config.agent;
+  delete config.label;
+  delete config.rewardConfig;
+  delete config.hiddenSizes;
+  delete config.learnRepeats;
+  delete config.lam;
+  delete config.clipRatio;
+  delete config.stepsPerEpoch;
+  delete config.trainIters;
+  delete config.minibatchSize;
+  delete config.batchSize;
+  applyPresetToUI(config);
+  if(rewardConfig) applyRewardConfigToUI({...rewardConfig});
+  const overrideArg=Object.keys(overrides).length?overrides:null;
+  instantiateAgent(agentKey,{useCurrentUI:true,overrideDefaults:overrideArg});
+  applyConfigToAgent();
   updateReadouts();
 }
 function resetTrainingStats(){
@@ -5426,6 +5733,49 @@ async function loadTrainingFromFile(file){
 }
 
 /* ---------------- Init ---------------- */
+const presetSelect=document.getElementById('presetSelect');
+if(presetSelect){
+  presetSelectEl=presetSelect;
+  for(const [key,preset] of Object.entries(AGENT_PRESETS)){
+    const option=document.createElement('option');
+    option.value=key;
+    option.textContent=preset.label;
+    if(key===currentAlgoKey) option.selected=true;
+    presetSelect.appendChild(option);
+  }
+  presetSelect.addEventListener('change',e=>{
+    const key=e.target.value;
+    if(AGENT_PRESETS[key]){
+      instantiateAgent(key);
+    }
+    if(typeof stageSelect!=='undefined'&&stageSelect){
+      stageSelect.selectedIndex=0;
+    }
+  });
+}
+
+const stageSelect=document.getElementById('stagePresetSelect');
+if(stageSelect){
+  const placeholder=document.createElement('option');
+  placeholder.value='';
+  placeholder.textContent='Select stage preset';
+  placeholder.selected=true;
+  stageSelect.appendChild(placeholder);
+  for(const [key,preset] of Object.entries(STAGE_PRESETS)){
+    const option=document.createElement('option');
+    option.value=key;
+    option.textContent=preset.label;
+    stageSelect.appendChild(option);
+  }
+
+  stageSelect.addEventListener('change',e=>{
+    const presetKey=e.target.value;
+    if(STAGE_PRESETS[presetKey]){
+      applyPreset(STAGE_PRESETS[presetKey]);
+    }
+  });
+}
+
 aiTuner=createAITuner({
   getVecEnv:()=>vecEnv,
   fetchTelemetry:({interval})=>buildAITelemetrySnapshot(interval),
