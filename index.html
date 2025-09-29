@@ -979,10 +979,13 @@ footer{
         <option value="ppo">Proximal Policy Optimization</option>
       </select>
     </div>
-    <div class="field block">
+
+    <div class="field block hidden" id="agentPresetField">
       <label for="presetSelect">Agent preset</label>
       <select id="presetSelect"></select>
-      <label for="stagePresetSelect">Stage preset:</label>
+    </div>
+    <div class="field block">
+      <label for="stagePresetSelect">Stage preset</label>
       <select id="stagePresetSelect"></select>
     </div>
     <p class="hint" id="algoDescription">Prioritized replay, n-step returns, and dueling heads make DQN stable and sample efficient.</p>
@@ -3444,6 +3447,21 @@ const STAGE_PRESETS={
   },
 };
 
+
+const STAGE_PRESET_PLACEHOLDER='Select stage preset';
+
+function resolveAgentKey(rawAgent,fallback='dueling'){
+  if(rawAgent&&AGENT_PRESETS[rawAgent]) return rawAgent;
+  if(rawAgent&&STAGE_AGENT_ALIASES[rawAgent]) return STAGE_AGENT_ALIASES[rawAgent];
+  return fallback;
+}
+
+function getStageAgentKey(preset,fallback='dueling'){
+  if(!preset||typeof preset!=='object') return fallback;
+  return resolveAgentKey(preset.agent,fallback);
+}
+
+
 const ui={
   trainState:document.getElementById('trainState'),
   algoBadge:document.getElementById('algoBadge'),
@@ -3580,6 +3598,11 @@ const ui={
 };
 
 let presetSelectEl=null;
+
+let stageSelectEl=null;
+let currentStagePresetKey='';
+let stagePresetField=null;
+
 
 let agent=null;
 let stateDim=env?.getState()?.length||0;
@@ -4895,6 +4918,8 @@ function instantiateAgent(key,opts={}){
     presetSelectEl.value=currentAlgoKey;
   }
   updateBadgeMetrics();
+  currentStagePresetKey='';
+  refreshStagePresetOptions(currentAlgoKey,{preserveSelection:false});
   resetTrainingStats();
   if(agent.kind!=='dqn' && trainingMode==='auto'){
     setTrainingMode('manual');
@@ -4939,11 +4964,12 @@ function applyPresetToUI(config){
   if(config.epochs!==undefined) ui.ppoEpochs.value=config.epochs;
   updateReadouts();
 }
-function applyPreset(preset){
+
+function applyPreset(preset,options={}){
   if(!preset) return;
-  const rawAgent=preset.agent||currentAlgoKey;
-  const resolvedAgent=AGENT_PRESETS[rawAgent]?rawAgent:(STAGE_AGENT_ALIASES[rawAgent]||rawAgent);
-  const agentKey=AGENT_PRESETS[resolvedAgent]?resolvedAgent:'dueling';
+  const {preserveProgress=false}=options;
+  const agentKey=getStageAgentKey(preset,currentAlgoKey);
+
   const overrides={};
   if(Array.isArray(preset.hiddenSizes)) overrides.layers=preset.hiddenSizes.slice();
   if(preset.learnRepeats!==undefined) overrides.learnRepeats=preset.learnRepeats;
@@ -4951,13 +4977,15 @@ function applyPreset(preset){
   if(preset.double!==undefined) overrides.double=preset.double;
   const {
     label,
-    agent,
+
+    agent:_stageAgent,
     rewardConfig,
-    hiddenSizes,
-    learnRepeats,
+    hiddenSizes:_hiddenSizes,
+    learnRepeats:_learnRepeats,
     lam,
     clipRatio,
-    stepsPerEpoch,
+    stepsPerEpoch:_stepsPerEpoch,
+
     trainIters,
     minibatchSize,
     batchSize,
@@ -4983,11 +5011,77 @@ function applyPreset(preset){
   delete config.batchSize;
   applyPresetToUI(config);
   if(rewardConfig) applyRewardConfigToUI({...rewardConfig});
+
+  applyRewardsToEnv();
   const overrideArg=Object.keys(overrides).length?overrides:null;
+  const targetPreset=AGENT_PRESETS[agentKey];
+  currentAlgoKey=agentKey;
+  ui.algoSelect.value=agentKey;
+  if(presetSelectEl) presetSelectEl.value=agentKey;
+  const hasProgress=episode>0||totalSteps>0;
+  const canPreserve=preserveProgress&&agent&&targetPreset&&currentAlgoKey===agentKey&&hasProgress;
+  if(canPreserve){
+    if(overrideArg&&overrideArg.learnRepeats!==undefined) agent.learnRepeats=overrideArg.learnRepeats;
+    ui.algoBadge.textContent=label||targetPreset.badge||targetPreset.label;
+    applyConfigToAgent();
+    updateReadouts();
+    return;
+  }
   instantiateAgent(agentKey,{useCurrentUI:true,overrideDefaults:overrideArg});
+  if(label) ui.algoBadge.textContent=label;
   applyConfigToAgent();
   updateReadouts();
 }
+
+function refreshStagePresetOptions(agentKey,{preserveSelection=true}={}){
+  if(!stageSelectEl) return;
+  const fallback=agentKey&&AGENT_PRESETS[agentKey]?agentKey:'dueling';
+  const targetAgent=resolveAgentKey(agentKey,fallback);
+  const previousValue=preserveSelection?(stageSelectEl.value||currentStagePresetKey):'';
+  stageSelectEl.innerHTML='';
+  const placeholder=document.createElement('option');
+  placeholder.value='';
+  placeholder.textContent=STAGE_PRESET_PLACEHOLDER;
+  stageSelectEl.appendChild(placeholder);
+  const entries=[];
+  for(const [key,preset] of Object.entries(STAGE_PRESETS)){
+    if(resolveAgentKey(preset.agent,targetAgent)===targetAgent){
+      entries.push({key,label:preset.label});
+    }
+  }
+  const hasEntries=entries.length>0;
+  if(stagePresetField){
+    stagePresetField.classList.toggle('hidden',!hasEntries);
+  }
+  if(!hasEntries){
+    placeholder.textContent='No stage presets available';
+    stageSelectEl.disabled=true;
+    currentStagePresetKey='';
+    stageSelectEl.value='';
+    return;
+  }
+  stageSelectEl.disabled=false;
+  const availableKeys=new Set();
+  entries.forEach(({key,label})=>{
+    const option=document.createElement('option');
+    option.value=key;
+    option.textContent=label;
+    stageSelectEl.appendChild(option);
+    availableKeys.add(key);
+  });
+  if(preserveSelection&&previousValue&&availableKeys.has(previousValue)){
+    stageSelectEl.value=previousValue;
+    currentStagePresetKey=previousValue;
+    return;
+  }
+  if(currentStagePresetKey&&availableKeys.has(currentStagePresetKey)){
+    stageSelectEl.value=currentStagePresetKey;
+    return;
+  }
+  currentStagePresetKey='';
+  stageSelectEl.value='';
+}
+
 function resetTrainingStats(){
   episode=0;
   totalSteps=0;
@@ -5748,30 +5842,34 @@ if(presetSelect){
     if(AGENT_PRESETS[key]){
       instantiateAgent(key);
     }
-    if(typeof stageSelect!=='undefined'&&stageSelect){
-      stageSelect.selectedIndex=0;
-    }
+
   });
 }
 
 const stageSelect=document.getElementById('stagePresetSelect');
 if(stageSelect){
-  const placeholder=document.createElement('option');
-  placeholder.value='';
-  placeholder.textContent='Select stage preset';
-  placeholder.selected=true;
-  stageSelect.appendChild(placeholder);
-  for(const [key,preset] of Object.entries(STAGE_PRESETS)){
-    const option=document.createElement('option');
-    option.value=key;
-    option.textContent=preset.label;
-    stageSelect.appendChild(option);
-  }
 
+  stageSelectEl=stageSelect;
+  stagePresetField=stageSelect.closest('.field');
+  refreshStagePresetOptions(currentAlgoKey);
   stageSelect.addEventListener('change',e=>{
     const presetKey=e.target.value;
-    if(STAGE_PRESETS[presetKey]){
-      applyPreset(STAGE_PRESETS[presetKey]);
+    if(!presetKey){
+      currentStagePresetKey='';
+      if(AGENT_PRESETS[currentAlgoKey]){
+        const basePreset=AGENT_PRESETS[currentAlgoKey];
+        ui.algoBadge.textContent=basePreset.badge||basePreset.label;
+      }
+      refreshStagePresetOptions(currentAlgoKey);
+      return;
+    }
+    const preset=STAGE_PRESETS[presetKey];
+    if(preset){
+      applyPreset(preset,{preserveProgress:true});
+      currentStagePresetKey=presetKey;
+      refreshStagePresetOptions(currentAlgoKey);
+      stageSelect.value=presetKey;
+
     }
   });
 }
