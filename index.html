@@ -217,10 +217,32 @@ canvas#board{
 }
 .ai-auto-tune__controls{
   display:flex;
-  align-items:center;
+  align-items:stretch;
   justify-content:space-between;
   gap:18px;
   flex-wrap:wrap;
+}
+.ai-auto-tune__column{
+  flex:1 1 240px;
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  padding:14px 16px;
+  border-radius:14px;
+  background:rgba(17,22,48,0.55);
+  border:1px solid rgba(128,138,206,0.2);
+  box-shadow:inset 0 0 0 1px rgba(84,98,176,0.08);
+}
+.ai-auto-tune__column h4{
+  margin:0;
+  font-size:12px;
+  font-weight:700;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  color:#9fa9ff;
+}
+.ai-auto-tune__column .field{
+  margin:0;
 }
 .toggle{
   display:flex;
@@ -961,25 +983,32 @@ footer{
           <span>Aktivera</span>
         </label>
       </div>
-      <div class="ai-auto-tune__controls">
-        <div class="field compact">
-          <label for="aiIntervalSlider">Analysintervall</label>
-          <input type="range" id="aiIntervalSlider" min="100" max="5000" step="100" value="500">
-          <span class="mono" id="aiIntervalReadout">500 ep</span>
-        </div>
-        <div class="field compact">
-          <label for="aiRunLimit">Rundor att köra</label>
-          <input type="number" id="aiRunLimit" min="0" step="100" inputmode="numeric" placeholder="0">
-          <span class="hint" id="aiRunLimitHint">0 = obegränsat</span>
-        </div>
-        <div class="field">
-          <span class="hint">Justeringstempo</span>
-          <div class="pill-group" id="aiStyleGroup" role="group" aria-label="Justeringstempo">
-            <button type="button" class="pill" data-style="calm">Lugn</button>
-            <button type="button" class="pill active" data-style="balanced">Medel</button>
-            <button type="button" class="pill" data-style="aggressive">Aggressiv</button>
+
+      <div class="ai-auto-tune__controls" role="group" aria-label="AI Auto-Tune inställningar">
+        <section class="ai-auto-tune__column" aria-labelledby="aiAutoTuneAiHeading">
+          <h4 id="aiAutoTuneAiHeading">AI-analys</h4>
+          <div class="field compact">
+            <label for="aiIntervalSlider">Analysintervall</label>
+            <input type="range" id="aiIntervalSlider" min="100" max="5000" step="100" value="500">
+            <span class="mono" id="aiIntervalReadout">500 ep</span>
           </div>
-        </div>
+          <div class="field">
+            <span class="hint">Justeringstempo</span>
+            <div class="pill-group" id="aiStyleGroup" role="group" aria-label="Justeringstempo">
+              <button type="button" class="pill" data-style="calm">Lugn</button>
+              <button type="button" class="pill active" data-style="balanced">Medel</button>
+              <button type="button" class="pill" data-style="aggressive">Aggressiv</button>
+            </div>
+          </div>
+        </section>
+        <section class="ai-auto-tune__column" aria-labelledby="aiAutoTuneAutoHeading">
+          <h4 id="aiAutoTuneAutoHeading">Auto-körning</h4>
+          <div class="field compact">
+            <label for="aiRunLimit">Rundor att köra</label>
+            <input type="number" id="aiRunLimit" min="0" step="100" inputmode="numeric" placeholder="0">
+            <span class="hint" id="aiRunLimitHint">0 = obegränsat</span>
+          </div>
+        </section>
       </div>
     </div>
 
