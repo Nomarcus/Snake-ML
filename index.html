@@ -962,11 +962,23 @@ footer{
         </label>
       </div>
       <div class="ai-auto-tune__controls">
-        <span class="hint">Analysera var</span>
         <div class="field compact">
-          <label for="aiIntervalSlider">Avslutade episoder</label>
+          <label for="aiIntervalSlider">Analysintervall</label>
           <input type="range" id="aiIntervalSlider" min="100" max="5000" step="100" value="500">
           <span class="mono" id="aiIntervalReadout">500 ep</span>
+        </div>
+        <div class="field compact">
+          <label for="aiRunLimit">Rundor att köra</label>
+          <input type="number" id="aiRunLimit" min="0" step="100" inputmode="numeric" placeholder="0">
+          <span class="hint" id="aiRunLimitHint">0 = obegränsat</span>
+        </div>
+        <div class="field">
+          <span class="hint">Justeringstempo</span>
+          <div class="pill-group" id="aiStyleGroup" role="group" aria-label="Justeringstempo">
+            <button type="button" class="pill" data-style="calm">Lugn</button>
+            <button type="button" class="pill active" data-style="balanced">Medel</button>
+            <button type="button" class="pill" data-style="aggressive">Aggressiv</button>
+          </div>
         </div>
       </div>
     </div>
@@ -1118,6 +1130,10 @@ footer{
           <label>Fruit reward
             <input type="range" id="rewardFruit" min="0" max="30" step="0.5" value="10">
             <span class="mono" id="rewardFruitReadout">10.0</span>
+          </label>
+          <label>Tillväxtbonus
+            <input type="range" id="rewardGrowth" min="0" max="5" step="0.1" value="1.0">
+            <span class="mono" id="rewardGrowthReadout">1.0</span>
           </label>
           <label>Compactness bonus
             <input type="range" id="rewardCompact" min="0" max="0.1" step="0.001" value="0.000">
@@ -1458,12 +1474,14 @@ const REWARD_DEFAULTS={
   selfPenalty:25.5,
   timeoutPenalty:5,
   fruitReward:10,
+  growthBonus:1,
   compactWeight:0,
   trapPenalty:0.5,
   spaceGainBonus:0.05,
 };
 const REWARD_COMPONENTS=[
   {key:'fruitReward',label:'Fruit bonus',sign:'positive'},
+  {key:'growthBonus',label:'Growth bonus',sign:'positive'},
   {key:'approachBonus',label:'Toward fruit bonus',sign:'positive'},
   {key:'spaceGainBonus',label:'Open space bonus',sign:'positive'},
   {key:'compactness',label:'Compactness bonus',sign:'neutral'},
@@ -1491,6 +1509,7 @@ const REWARD_LABELS={
   selfPenalty:'Self crash penalty',
   timeoutPenalty:'Timeout penalty',
   fruitReward:'Fruit reward',
+  growthBonus:'Growth bonus',
   compactWeight:'Compactness weight',
   compactness:'Compactness bonus',
 };
@@ -1507,6 +1526,7 @@ const REWARD_INPUT_IDS={
   selfPenalty:'rewardSelf',
   timeoutPenalty:'rewardTimeout',
   fruitReward:'rewardFruit',
+  growthBonus:'rewardGrowth',
   compactWeight:'rewardCompact',
 };
 const RECENT_EPISODES_MAX=32;
@@ -1614,6 +1634,7 @@ class SnakeEnv{
     this.stepsSinceFruit=0;
     this.alive=true;
     this.prevSlack=this.computeSlack();
+    this.maxLength=this.snake.length;
     this.loopHits=0;
     this.revisitAccum=0;
     this.timeToFruitAccum=0;
@@ -1726,6 +1747,15 @@ class SnakeEnv{
       }else if(nd>pd){
         r-=R.retreatPenalty;
         breakdown.retreatPenalty-=R.retreatPenalty;
+      }
+    }
+    if(this.snake.length>this.maxLength){
+      const gain=this.snake.length-this.maxLength;
+      this.maxLength=this.snake.length;
+      if(R.growthBonus){
+        const bonus=R.growthBonus*gain;
+        r+=bonus;
+        breakdown.growthBonus+=bonus;
       }
     }
     const slack=this.computeSlack();
@@ -3154,6 +3184,9 @@ const ui={
   aiAutoTuneToggle:document.getElementById('aiAutoTuneToggle'),
   aiIntervalSlider:document.getElementById('aiIntervalSlider'),
   aiIntervalReadout:document.getElementById('aiIntervalReadout'),
+  aiRunLimit:document.getElementById('aiRunLimit'),
+  aiRunLimitHint:document.getElementById('aiRunLimitHint'),
+  aiStyleButtons:Array.from(document.querySelectorAll('#aiStyleGroup .pill')),
   gamma:document.getElementById('gamma'),
   gammaReadout:document.getElementById('gammaReadout'),
   lr:document.getElementById('lr'),
@@ -3220,6 +3253,8 @@ const ui={
   rewardSpaceReadout:document.getElementById('rewardSpaceReadout'),
   rewardFruit:document.getElementById('rewardFruit'),
   rewardFruitReadout:document.getElementById('rewardFruitReadout'),
+  rewardGrowth:document.getElementById('rewardGrowth'),
+  rewardGrowthReadout:document.getElementById('rewardGrowthReadout'),
   rewardCompact:document.getElementById('rewardCompact'),
   rewardCompactReadout:document.getElementById('rewardCompactReadout'),
   kEpisodes:document.getElementById('kEpisodes'),
@@ -3287,9 +3322,18 @@ const autoLogEntries=[];
 const MAX_AUTO_LOG_ENTRIES=24;
 let lastAutoMetrics=null;
 let lastAutoSummaryEpisode=0;
+const AUTO_TUNING_STYLES={
+  calm:{key:'calm',label:'Lugn',magnitude:0.65,cooldown:1.6,eval:1.3,start:1.3},
+  balanced:{key:'balanced',label:'Medel',magnitude:1,cooldown:1,eval:1,start:1},
+  aggressive:{key:'aggressive',label:'Aggressiv',magnitude:1.45,cooldown:0.6,eval:0.75,start:0.8},
+};
+const DEFAULT_AUTO_STYLE='balanced';
 const aiEpisodeHistory=[];
 let aiAnalysisInterval=500;
 let aiAutoTuneEnabled=false;
+let aiAutoTuneStyle=DEFAULT_AUTO_STYLE;
+let autoRunLimit=0;
+let autoRunStopEpisode=null;
 let aiTuner=null;
 function avg(arr,n){
   if(!arr.length) return 0;
@@ -3354,6 +3398,7 @@ const REWARD_DECIMALS={
   stepPenalty:3,
   turnPenalty:3,
   fruitReward:1,
+  growthBonus:1,
   trapPenalty:3,
   spaceGainBonus:3,
   timeoutPenalty:1,
@@ -3498,6 +3543,69 @@ function updateAiIntervalReadout(){
   checkpointEpisodeInterval=aiAnalysisInterval;
   ui.aiIntervalReadout.textContent=`${aiAnalysisInterval} ep`;
   if(aiTuner) aiTuner.setInterval(aiAnalysisInterval);
+}
+
+function setAiAutoStyle(style,{announce=true}={}){
+  const preset=AUTO_TUNING_STYLES[style]||AUTO_TUNING_STYLES[DEFAULT_AUTO_STYLE];
+  aiAutoTuneStyle=preset.key;
+  ui.aiStyleButtons?.forEach(btn=>{
+    btn.classList.toggle('active',btn.dataset.style===aiAutoTuneStyle);
+  });
+  autoPilot?.setTuningStyle?.(aiAutoTuneStyle);
+  if(announce){
+    logAutoEvent({
+      title:'Auto-läge uppdaterat',
+      detail:`${preset.label} justeringar`,
+      tone:'ai',
+      episode:autoPilot?.episode||episode||0,
+    });
+  }
+  updateAiRunLimitHint();
+}
+
+function updateAiRunLimitHint(reachedTarget=false){
+  if(!ui.aiRunLimitHint) return;
+  if(autoRunLimit<=0){
+    ui.aiRunLimitHint.textContent='0 = obegränsat';
+    return;
+  }
+  const preset=AUTO_TUNING_STYLES[aiAutoTuneStyle]||AUTO_TUNING_STYLES[DEFAULT_AUTO_STYLE];
+  if(reachedTarget){
+    ui.aiRunLimitHint.textContent=`Mål nått – ${preset.label} läge pausade efter ${autoRunLimit} episoder`;
+    return;
+  }
+  if(trainingMode==='auto' && training && autoRunStopEpisode){
+    const remaining=Math.max(0,autoRunStopEpisode-episode);
+    ui.aiRunLimitHint.textContent=`Pausar efter ${autoRunLimit} episoder (${remaining} återstår)`;
+  }else{
+    ui.aiRunLimitHint.textContent=`Pausar efter ${autoRunLimit} episoder`;
+  }
+}
+
+function scheduleAutoRunTarget(){
+  if(trainingMode==='auto' && training && autoRunLimit>0){
+    autoRunStopEpisode=episode+autoRunLimit;
+  }else{
+    autoRunStopEpisode=null;
+  }
+  updateAiRunLimitHint();
+}
+
+function applyAiRunLimitFromUI(){
+  if(!ui.aiRunLimit) return;
+  const parsed=Math.max(0,Math.floor(+ui.aiRunLimit.value||0));
+  autoRunLimit=parsed;
+  if(parsed>0){
+    ui.aiRunLimit.value=`${parsed}`;
+  }else{
+    ui.aiRunLimit.value='';
+  }
+  if(training && trainingMode==='auto' && autoRunLimit>0){
+    scheduleAutoRunTarget();
+  }else{
+    autoRunStopEpisode=null;
+    updateAiRunLimitHint();
+  }
 }
 
 function getHyperparameterSnapshot(){
@@ -3817,6 +3925,14 @@ function bindUI(){
   ui.aiIntervalSlider?.addEventListener('input',()=>{
     updateAiIntervalReadout();
   });
+  ui.aiRunLimit?.addEventListener('change',()=>{
+    applyAiRunLimitFromUI();
+  });
+  ui.aiStyleButtons?.forEach(btn=>{
+    btn.addEventListener('click',()=>{
+      setAiAutoStyle(btn.dataset.style||DEFAULT_AUTO_STYLE);
+    });
+  });
   ui.aiAutoTuneToggle?.addEventListener('change',()=>{
     if(ui.aiAutoTuneToggle.checked){
       const code=prompt('Ange säkerhetskod för att aktivera AI Auto-Tune:');
@@ -3851,7 +3967,7 @@ function bindUI(){
     updateReadouts();
     applyEnvCountFromUI();
   });
-  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardFruit','rewardCompact'];
+  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardFruit','rewardGrowth','rewardCompact'];
   const updateRewards=()=>{ updateRewardReadouts(); applyRewardsToEnv(); };
   rewardIds.forEach(id=>ui[id]?.addEventListener('input',updateRewards));
   ui.tabTraining.addEventListener('click',()=>setActiveTab('training'));
@@ -3863,6 +3979,8 @@ function bindUI(){
   setTrainingMode(trainingMode);
   updateAutoLogVisibility();
   updateAiIntervalReadout();
+  setAiAutoStyle(aiAutoTuneStyle,{announce:false});
+  updateAiRunLimitHint();
   if(ui.aiAutoTuneToggle) ui.aiAutoTuneToggle.checked=aiAutoTuneEnabled;
   updateCheckpointToggleUI();
   updateProgressChart();
@@ -3967,6 +4085,7 @@ function setTrainingMode(mode){
     const firstActivation=prevMode!=='auto';
     autoPilot=new BrowserAutoPilot({rewardConfig:{...rewardConfig}});
     autoPilot.setAgent(agent);
+    autoPilot.setTuningStyle(aiAutoTuneStyle);
     const desiredCount=Math.max(12,envCount);
     ui.envCount.value=`${desiredCount}`;
     if(firstActivation){
@@ -4001,10 +4120,12 @@ function setTrainingMode(mode){
     lastAutoMetrics=null;
     lastAutoSummaryEpisode=0;
     updateAutoLogVisibility();
+    autoRunStopEpisode=null;
   }
   if(trainingMode==='auto') ui.envCount.disabled=true;
   updateControlAvailability();
   updateReadouts();
+  updateAiRunLimitHint();
   if(wasTraining&&!watching) startTraining();
 }
 function setPlaybackMode(mode){
@@ -4130,6 +4251,7 @@ function updateRewardReadouts(){
   ui.rewardTrapReadout.textContent=(+ui.rewardTrap.value).toFixed(2);
   ui.rewardSpaceReadout.textContent=(+ui.rewardSpace.value).toFixed(2);
   ui.rewardFruitReadout.textContent=(+ui.rewardFruit.value).toFixed(1);
+  ui.rewardGrowthReadout.textContent=(+ui.rewardGrowth.value).toFixed(1);
   ui.rewardCompactReadout.textContent=(+ui.rewardCompact.value).toFixed(3);
 }
 function getRewardConfigFromUI(){
@@ -4146,6 +4268,7 @@ function getRewardConfigFromUI(){
     trapPenalty:+ui.rewardTrap.value,
     spaceGainBonus:+ui.rewardSpace.value,
     fruitReward:+ui.rewardFruit.value,
+    growthBonus:+ui.rewardGrowth.value,
     compactWeight:+ui.rewardCompact.value,
   };
 }
@@ -4168,6 +4291,7 @@ function applyRewardConfigToUI(config={}){
   if(config.trapPenalty!==undefined) ui.rewardTrap.value=config.trapPenalty;
   if(config.spaceGainBonus!==undefined) ui.rewardSpace.value=config.spaceGainBonus;
   if(config.fruitReward!==undefined) ui.rewardFruit.value=config.fruitReward;
+  if(config.growthBonus!==undefined) ui.rewardGrowth.value=config.growthBonus;
   if(config.compactWeight!==undefined) ui.rewardCompact.value=config.compactWeight;
   updateRewardReadouts();
   applyRewardsToEnv();
@@ -4188,9 +4312,26 @@ class BrowserAutoPilot{
     this.lastAdjust={};
     this.bestFruit=0;
     this.agent=null;
-    this.evaluationInterval=50;
-    this.minEpisodesForAdjust=200;
+    this.evaluationIntervalBase=50;
+    this.evaluationInterval=this.evaluationIntervalBase;
+    this.minEpisodesForAdjustBase=200;
+    this.minEpisodesForAdjust=this.minEpisodesForAdjustBase;
     this.lastEvaluationEpisode=0;
+    this.tuningStyle=DEFAULT_AUTO_STYLE;
+    this.magnitudeFactor=1;
+    this.cooldownFactor=1;
+    this.setTuningStyle(DEFAULT_AUTO_STYLE);
+  }
+  setTuningStyle(style=DEFAULT_AUTO_STYLE){
+    const preset=AUTO_TUNING_STYLES[style]||AUTO_TUNING_STYLES[DEFAULT_AUTO_STYLE];
+    this.tuningStyle=preset.key;
+    this.magnitudeFactor=preset.magnitude;
+    this.cooldownFactor=preset.cooldown;
+    this.evaluationInterval=Math.max(20,Math.round(this.evaluationIntervalBase*preset.eval));
+    this.minEpisodesForAdjust=Math.max(100,Math.round(this.minEpisodesForAdjustBase*preset.start));
+  }
+  getTuningStyle(){
+    return this.tuningStyle;
   }
   setAgent(agent){
     this.agent=agent;
@@ -4200,6 +4341,17 @@ class BrowserAutoPilot{
   }
   getRewardConfig(){
     return {...this.rewardConfig};
+  }
+  _scaledCooldown(base){
+    return Math.max(1,Math.round(base*this.cooldownFactor));
+  }
+  _scaleAdd(delta){
+    return delta*this.magnitudeFactor;
+  }
+  _scaleMultiplier(base){
+    if(base===1) return 1;
+    if(base>1) return 1+(base-1)*this.magnitudeFactor;
+    return 1-(1-base)*this.magnitudeFactor;
   }
   recordEpisode({
     fruits=0,
@@ -4232,8 +4384,9 @@ class BrowserAutoPilot{
     this.episode++;
   }
   _canAdjust(key,cooldown=500){
+    const window=this._scaledCooldown(cooldown);
     const last=this.lastAdjust[key]??-Infinity;
-    if(this.episode-last<cooldown) return false;
+    if(this.episode-last<window) return false;
     this.lastAdjust[key]=this.episode;
     return true;
   }
@@ -4316,29 +4469,29 @@ class BrowserAutoPilot{
     this.lastEvaluationEpisode=this.episode;
     const breakdownAvg=this._averageBreakdown(240);
     if(metrics.fruitSlope<=0 && metrics.improvement2000<2 && this._canAdjust('epsilon-up',500)){
-      const newEnd=clamp(actor.epsEnd+0.03,0.01,0.3);
-      const newDecay=clamp(actor.epsDecay*1.2,5000,200000);
+      const newEnd=clamp(actor.epsEnd+this._scaleAdd(0.03),0.01,0.3);
+      const newDecay=clamp(actor.epsDecay*this._scaleMultiplier(1.2),5000,200000);
       actor.setEpsilonSchedule?.({end:newEnd,decay:newDecay});
       adjustments.push({type:'epsilon',end:newEnd,decay:newDecay,reason:'stagnation'});
     }
     if(metrics.regression && this._canAdjust('regression',800)){
-      const newEnd=clamp(actor.epsEnd+0.02,0.01,0.3);
+      const newEnd=clamp(actor.epsEnd+this._scaleAdd(0.02),0.01,0.3);
       actor.setEpsilonSchedule?.({end:newEnd});
-      const newLr=Math.max(0.0002,actor.lr*0.8);
+      const newLr=Math.max(0.0002,actor.lr*this._scaleMultiplier(0.8));
       actor.setLearningRate(newLr);
       adjustments.push({type:'lr',value:newLr,reason:'regression'});
     }else if(metrics.fruitSlope>0 && actor.epsEnd>0.12 && this._canAdjust('epsilon-down',800)){
-      const newEnd=clamp(actor.epsEnd-0.02,0.01,0.3);
-      const newDecay=clamp(actor.epsDecay*0.9,5000,200000);
+      const newEnd=clamp(actor.epsEnd-this._scaleAdd(0.02),0.01,0.3);
+      const newDecay=clamp(actor.epsDecay*this._scaleMultiplier(0.9),5000,200000);
       actor.setEpsilonSchedule?.({end:newEnd,decay:newDecay});
       adjustments.push({type:'epsilon',end:newEnd,decay:newDecay,reason:'recovery'});
     }
     if(metrics.lossRatio>0.85 && this._canAdjust('lr-down',1000)){
-      const newLr=Math.max(0.0002,actor.lr*0.85);
+      const newLr=Math.max(0.0002,actor.lr*this._scaleMultiplier(0.85));
       actor.setLearningRate(newLr);
       adjustments.push({type:'lr',value:newLr,reason:'loss_ratio'});
     }else if(metrics.lossRatio<0.3 && this._canAdjust('lr-up',1200)){
-      const newLr=Math.min(0.0005,actor.lr*1.05);
+      const newLr=Math.min(0.0005,actor.lr*this._scaleMultiplier(1.05));
       actor.setLearningRate(newLr);
       adjustments.push({type:'lr',value:newLr,reason:'recover'});
     }
@@ -4349,27 +4502,27 @@ class BrowserAutoPilot{
     if(!metrics) return;
     const rewardConfig=this.rewardConfig||{};
     if(metrics.loopHitRate>0.01 && metrics.fruitSlope<=0 && this._canAdjust('reward-loop',500)){
-      rewardConfig.loopPenalty=clamp((rewardConfig.loopPenalty??0.5)+0.05,0,1);
+      rewardConfig.loopPenalty=clamp((rewardConfig.loopPenalty??0.5)+this._scaleAdd(0.05),0,1);
       rewardConfig.compactWeight=0;
       adjustments.push({type:'reward',key:'loopPenalty',value:rewardConfig.loopPenalty,reason:'loop_penalty'});
     }
     if(metrics.revisitRate>0.01 && this._canAdjust('reward-revisit',500)){
-      rewardConfig.revisitPenalty=clamp((rewardConfig.revisitPenalty??0.05)+0.005,0,0.1);
-      const newEnd=clamp((actor?.epsEnd??0.12)+0.02,0.01,0.3);
+      rewardConfig.revisitPenalty=clamp((rewardConfig.revisitPenalty??0.05)+this._scaleAdd(0.005),0,0.1);
+      const newEnd=clamp((actor?.epsEnd??0.12)+this._scaleAdd(0.02),0.01,0.3);
       actor?.setEpsilonSchedule?.({end:newEnd});
       adjustments.push({type:'reward',key:'revisitPenalty',value:rewardConfig.revisitPenalty,reason:'revisit_penalty'});
       adjustments.push({type:'epsilon',end:newEnd,reason:'revisit_penalty'});
     }
     if(metrics.crashRateSelf>0.4 && this._canAdjust('reward-self',500)){
-      rewardConfig.selfPenalty=clamp((rewardConfig.selfPenalty??25.5)+1,0,30);
-      rewardConfig.turnPenalty=clamp((rewardConfig.turnPenalty??0.001)-0.0002,0,0.02);
+      rewardConfig.selfPenalty=clamp((rewardConfig.selfPenalty??25.5)+this._scaleAdd(1),0,30);
+      rewardConfig.turnPenalty=clamp((rewardConfig.turnPenalty??0.001)-this._scaleAdd(0.0002),0,0.02);
       adjustments.push({type:'reward',key:'selfPenalty',value:rewardConfig.selfPenalty,reason:'self_penalty'});
     }
     let approachAdjusted=false;
     let retreatAdjusted=false;
     if(metrics.timeToFruitAvg>200 && metrics.loopHitRate<0.005 && metrics.revisitRate<0.005 && this._canAdjust('reward-fruit',500)){
-      rewardConfig.approachBonus=clamp((rewardConfig.approachBonus??0.03)+0.005,0,0.1);
-      rewardConfig.retreatPenalty=clamp((rewardConfig.retreatPenalty??0.03)+0.005,0,0.1);
+      rewardConfig.approachBonus=clamp((rewardConfig.approachBonus??0.03)+this._scaleAdd(0.005),0,0.1);
+      rewardConfig.retreatPenalty=clamp((rewardConfig.retreatPenalty??0.03)+this._scaleAdd(0.005),0,0.1);
       adjustments.push({type:'reward',key:'approachBonus',value:rewardConfig.approachBonus,reason:'slow_fruit'});
       adjustments.push({type:'reward',key:'retreatPenalty',value:rewardConfig.retreatPenalty,reason:'slow_fruit'});
       approachAdjusted=true;
@@ -4381,19 +4534,19 @@ class BrowserAutoPilot{
       const avgRetreat=breakdownAvg.retreatPenalty??0;
       const avgApproach=breakdownAvg.approachBonus??0;
       if(avgStep<0 && Math.abs(avgStep)>Math.max(0.5,Math.abs(avgFruit))*1.3 && this._canAdjust('reward-step-down',900)){
-        rewardConfig.stepPenalty=clamp((rewardConfig.stepPenalty??0.01)*0.9,0.001,0.05);
+        rewardConfig.stepPenalty=clamp((rewardConfig.stepPenalty??0.01)*this._scaleMultiplier(0.9),0.001,0.05);
         adjustments.push({type:'reward',key:'stepPenalty',value:rewardConfig.stepPenalty,reason:'step_drag'});
       }
       if(!retreatAdjusted && Math.abs(avgRetreat)>(Math.abs(avgApproach)+0.5) && this._canAdjust('reward-retreat-down',900)){
-        rewardConfig.retreatPenalty=Math.max(0,(rewardConfig.retreatPenalty??0.03)-0.005);
+        rewardConfig.retreatPenalty=Math.max(0,(rewardConfig.retreatPenalty??0.03)-this._scaleAdd(0.005));
         adjustments.push({type:'reward',key:'retreatPenalty',value:rewardConfig.retreatPenalty,reason:'retreat_load'});
       }
       if(avgFruit<3 && metrics.timeToFruitAvg>160 && this._canAdjust('reward-fruit-extra',1200)){
-        rewardConfig.fruitReward=clamp((rewardConfig.fruitReward??10)+1,0,30);
+        rewardConfig.fruitReward=clamp((rewardConfig.fruitReward??10)+this._scaleAdd(1),0,30);
         adjustments.push({type:'reward',key:'fruitReward',value:rewardConfig.fruitReward,reason:'fruit_support'});
       }
       if(!approachAdjusted && avgApproach<1 && metrics.timeToFruitAvg>150 && this._canAdjust('reward-approach-boost',1200)){
-        rewardConfig.approachBonus=clamp((rewardConfig.approachBonus??0.03)+0.005,0,0.1);
+        rewardConfig.approachBonus=clamp((rewardConfig.approachBonus??0.03)+this._scaleAdd(0.005),0,0.1);
         adjustments.push({type:'reward',key:'approachBonus',value:rewardConfig.approachBonus,reason:'fruit_support'});
       }
     }
@@ -4509,6 +4662,7 @@ function resetTrainingStats(){
     autoPilot.lastAdjust={};
     autoPilot.lastEvaluationEpisode=0;
     autoPilot.rewardConfig={...rewardConfig};
+    autoPilot.setTuningStyle(aiAutoTuneStyle);
   }
   lastAutoMetrics=null;
   lastAutoSummaryEpisode=0;
@@ -4715,6 +4869,22 @@ async function finalizeContextEpisode(ctx,envIndex){
       lastAutoSummaryEpisode=autoEpisode;
     }
   }
+  if(trainingMode==='auto' && autoRunLimit>0){
+    if(autoRunStopEpisode && episode>=autoRunStopEpisode){
+      const preset=AUTO_TUNING_STYLES[aiAutoTuneStyle]||AUTO_TUNING_STYLES[DEFAULT_AUTO_STYLE];
+      logAutoEvent({
+        title:'Auto-run pausad',
+        detail:`${autoRunLimit} episoder i ${preset.label.toLowerCase()} läge`,
+        tone:'summary',
+        episode:autoPilot?.episode||episode,
+      });
+      flash('Mål nått – AI Auto-Tune pausad.');
+      stopTraining({reachedTarget:true});
+      autoRunStopEpisode=null;
+    }else if(autoRunStopEpisode){
+      updateAiRunLimitHint();
+    }
+  }
   aiEpisodeHistory.push({
     episode,
     reward:ctx.totalReward,
@@ -4869,10 +5039,12 @@ function startTraining(){
   autoPilot?.setAgent?.(agent);
   training=true;
   ui.trainState.textContent='training';
+  scheduleAutoRunTarget();
   lastFrame=0;
   if(!trainingToken) trainingToken=requestAnimationFrame(trainingLoop);
 }
-function stopTraining(){
+function stopTraining(opts={}){
+  const {reachedTarget=false}=opts||{};
   if(!training) return;
   training=false;
   if(trainingToken){
@@ -4880,6 +5052,8 @@ function stopTraining(){
     trainingToken=0;
   }
   ui.trainState.textContent='idle';
+  autoRunStopEpisode=null;
+  updateAiRunLimitHint(reachedTarget);
 }
 async function playSingleEpisode(){
   if(training||watching) return;
