@@ -979,6 +979,7 @@ footer{
         <option value="ppo">Proximal Policy Optimization</option>
       </select>
     </div>
+
     <div class="field block hidden" id="agentPresetField">
       <label for="presetSelect">Agent preset</label>
       <select id="presetSelect"></select>
@@ -3446,6 +3447,7 @@ const STAGE_PRESETS={
   },
 };
 
+
 const STAGE_PRESET_PLACEHOLDER='Select stage preset';
 
 function resolveAgentKey(rawAgent,fallback='dueling'){
@@ -3458,6 +3460,7 @@ function getStageAgentKey(preset,fallback='dueling'){
   if(!preset||typeof preset!=='object') return fallback;
   return resolveAgentKey(preset.agent,fallback);
 }
+
 
 const ui={
   trainState:document.getElementById('trainState'),
@@ -3595,9 +3598,11 @@ const ui={
 };
 
 let presetSelectEl=null;
+
 let stageSelectEl=null;
 let currentStagePresetKey='';
 let stagePresetField=null;
+
 
 let agent=null;
 let stateDim=env?.getState()?.length||0;
@@ -4959,10 +4964,12 @@ function applyPresetToUI(config){
   if(config.epochs!==undefined) ui.ppoEpochs.value=config.epochs;
   updateReadouts();
 }
+
 function applyPreset(preset,options={}){
   if(!preset) return;
   const {preserveProgress=false}=options;
   const agentKey=getStageAgentKey(preset,currentAlgoKey);
+
   const overrides={};
   if(Array.isArray(preset.hiddenSizes)) overrides.layers=preset.hiddenSizes.slice();
   if(preset.learnRepeats!==undefined) overrides.learnRepeats=preset.learnRepeats;
@@ -4970,6 +4977,7 @@ function applyPreset(preset,options={}){
   if(preset.double!==undefined) overrides.double=preset.double;
   const {
     label,
+
     agent:_stageAgent,
     rewardConfig,
     hiddenSizes:_hiddenSizes,
@@ -4977,6 +4985,7 @@ function applyPreset(preset,options={}){
     lam,
     clipRatio,
     stepsPerEpoch:_stepsPerEpoch,
+
     trainIters,
     minibatchSize,
     batchSize,
@@ -5002,6 +5011,7 @@ function applyPreset(preset,options={}){
   delete config.batchSize;
   applyPresetToUI(config);
   if(rewardConfig) applyRewardConfigToUI({...rewardConfig});
+
   applyRewardsToEnv();
   const overrideArg=Object.keys(overrides).length?overrides:null;
   const targetPreset=AGENT_PRESETS[agentKey];
@@ -5071,6 +5081,7 @@ function refreshStagePresetOptions(agentKey,{preserveSelection=true}={}){
   currentStagePresetKey='';
   stageSelectEl.value='';
 }
+
 function resetTrainingStats(){
   episode=0;
   totalSteps=0;
@@ -5831,11 +5842,13 @@ if(presetSelect){
     if(AGENT_PRESETS[key]){
       instantiateAgent(key);
     }
+
   });
 }
 
 const stageSelect=document.getElementById('stagePresetSelect');
 if(stageSelect){
+
   stageSelectEl=stageSelect;
   stagePresetField=stageSelect.closest('.field');
   refreshStagePresetOptions(currentAlgoKey);
@@ -5856,6 +5869,7 @@ if(stageSelect){
       currentStagePresetKey=presetKey;
       refreshStagePresetOptions(currentAlgoKey);
       stageSelect.value=presetKey;
+
     }
   });
 }
