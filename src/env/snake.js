@@ -11,6 +11,7 @@ export const REWARD_DEFAULTS = {
   selfPenalty: 25.5,
   timeoutPenalty: 5,
   fruitReward: 10,
+  growthBonus: 1,
   compactWeight: 0,
   trapPenalty: 0.5,
   spaceGainBonus: 0.05,
@@ -105,6 +106,7 @@ export class SnakeEnv {
     this.stepsSinceFruit = 0;
     this.alive = true;
     this.prevSlack = this.computeSlack();
+    this.maxLength = this.snake.length;
     this.episodeFruit = 0;
     this.loopHits = 0;
     this.revisitAccum = 0;
@@ -225,6 +227,14 @@ export class SnakeEnv {
       }
     }
 
+    if (this.snake.length > this.maxLength) {
+      const gain = this.snake.length - this.maxLength;
+      this.maxLength = this.snake.length;
+      if (R.growthBonus) {
+        reward += R.growthBonus * gain;
+      }
+    }
+
     const slack = this.computeSlack();
     const slackDelta = this.prevSlack - slack;
     if (R.compactWeight !== 0) {
@@ -328,5 +338,6 @@ export function clampRewardConfig(config = {}) {
     turnPenalty: clamp(config.turnPenalty ?? REWARD_DEFAULTS.turnPenalty, 0, 0.02),
     approachBonus: clamp(config.approachBonus ?? REWARD_DEFAULTS.approachBonus, 0, 0.1),
     retreatPenalty: clamp(config.retreatPenalty ?? REWARD_DEFAULTS.retreatPenalty, 0, 0.1),
+    growthBonus: clamp(config.growthBonus ?? REWARD_DEFAULTS.growthBonus, 0, 5),
   };
 }
