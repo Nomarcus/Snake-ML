@@ -1571,7 +1571,6 @@ const REWARD_COMPONENTS=[
   {key:'growthBonus',label:'Growth bonus',sign:'positive'},
   {key:'approachBonus',label:'Toward fruit bonus',sign:'positive'},
   {key:'spaceGainBonus',label:'Open space bonus',sign:'positive'},
-  {key:'survivalBonus',label:'Survival bonus',sign:'positive'},
   {key:'compactness',label:'Compactness bonus',sign:'neutral'},
   {key:'stepPenalty',label:'Step penalty',sign:'negative'},
   {key:'turnPenalty',label:'Turn penalty',sign:'negative'},
@@ -1592,7 +1591,6 @@ const REWARD_LABELS={
   loopPenalty:'Loop penalty',
   revisitPenalty:'Revisit penalty',
   trapPenalty:'Trap penalty',
-  survivalBonus:'Survival bonus',
   spaceGainBonus:'Space bonus',
   wallPenalty:'Wall crash penalty',
   selfPenalty:'Self crash penalty',
@@ -1761,47 +1759,38 @@ class SnakeEnv{
     const key=`${nx},${ny}`;
     const tail=this.snake[this.snake.length-1];
     const willGrow=(nx===this.fruit.x && ny===this.fruit.y);
-    const survivalBonus=0.001*this.snake.length;
-    const futureSpace=this.freeSpaceFrom(nx,ny,!willGrow);
     const hitsWall=nx<0||ny<0||nx>=this.cols||ny>=this.rows;
     const hitsBody=this.snakeSet.has(key) && !(tail && tail.x===nx && tail.y===ny && !willGrow);
     if(hitsWall||hitsBody){
       this.alive=false;
-      const crashPenalty=hitsWall?-R.wallPenalty:-R.selfPenalty;
-      const crashReward=crashPenalty+survivalBonus;
-      if(hitsWall) breakdown.wallPenalty+=crashPenalty;
-      else breakdown.selfPenalty+=crashPenalty;
-      if(survivalBonus) breakdown.survivalBonus+=survivalBonus;
+      const crashReward=hitsWall?-R.wallPenalty:-R.selfPenalty;
+      if(hitsWall) breakdown.wallPenalty+=crashReward;
+      else breakdown.selfPenalty+=crashReward;
       breakdown.total+=crashReward;
       this.lastCrash=hitsWall?'wall':'self';
       return {state:this.getState(),reward:crashReward,done:true,ateFruit:false};
     }
     let spaceReward=0;
-    let trapPenaltyValue=0;
-    let spaceGainValue=0;
-    if(R.spaceGainBonus){
-      const curSpace=this.freeSpaceFrom(this.snake[0].x,this.snake[0].y,true);
-      const growthNeed=this.snake.length+2;
-      const denom=Math.max(1,growthNeed);
-      if(futureSpace>curSpace){
-        spaceGainValue=R.spaceGainBonus*Math.min(1,(futureSpace-curSpace)/denom);
+    if((R.trapPenalty??0)!==0 || (R.spaceGainBonus??0)!==0){
+      const space=this.freeSpaceFrom(nx,ny,!willGrow);
+      const need=this.snake.length+2;
+      const denom=Math.max(1,need);
+      if(space<need){
+        spaceReward-=R.trapPenalty*(1+(need-space)/denom);
+      }else if(R.spaceGainBonus){
+        const curSpace=this.freeSpaceFrom(this.snake[0].x,this.snake[0].y,true);
+        if(space>curSpace){
+          spaceReward+=R.spaceGainBonus*Math.min(1,(space-curSpace)/denom);
+        }
       }
     }
-    if(R.trapPenalty){
-      const safeNeed=this.snake.length+5;
-      if(futureSpace<safeNeed){
-        const deficit=safeNeed-futureSpace;
-        trapPenaltyValue=-R.trapPenalty*(deficit/Math.max(1,safeNeed));
-      }
-    }
-    spaceReward=spaceGainValue+trapPenaltyValue;
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
     this.snake.unshift({x:nx,y:ny});
     let r=-R.stepPenalty;
     breakdown.stepPenalty-=R.stepPenalty;
     r+=spaceReward;
-    if(spaceGainValue) breakdown.spaceGainBonus+=spaceGainValue;
-    if(trapPenaltyValue) breakdown.trapPenalty+=trapPenaltyValue;
+    if(spaceReward>0) breakdown.spaceGainBonus+=spaceReward;
+    else if(spaceReward<0) breakdown.trapPenalty+=spaceReward;
     if(a!==0){
       r-=R.turnPenalty;
       breakdown.turnPenalty-=R.turnPenalty;
@@ -1824,10 +1813,8 @@ class SnakeEnv{
     let ateFruit=false;
     if(nx===this.fruit.x && ny===this.fruit.y){
       ateFruit=true;
-      const fruitScale=1+this.snake.length*0.05;
-      const fruitGain=R.fruitReward*fruitScale;
-      r+=fruitGain;
-      breakdown.fruitReward+=fruitGain;
+      r+=R.fruitReward;
+      breakdown.fruitReward+=R.fruitReward;
       this.snakeSet.add(`${nx},${ny}`);
       this.spawnFruit();
       this.timeToFruitAccum+=this.stepsSinceFruit;
@@ -1873,15 +1860,9 @@ class SnakeEnv{
       r-=R.timeoutPenalty;
       this.lastCrash='timeout';
       this.rewardBreakdown.timeoutPenalty-=R.timeoutPenalty;
-      if(survivalBonus){
-        r+=survivalBonus;
-        this.rewardBreakdown.survivalBonus+=survivalBonus;
-      }
       this.rewardBreakdown.total+=r;
       return {state:this.getState(),reward:r,done:true,ateFruit:false};
     }
-    r+=survivalBonus;
-    if(survivalBonus) breakdown.survivalBonus+=survivalBonus;
     this.rewardBreakdown.total+=r;
     return {state:this.getState(),reward:r,done:false,ateFruit};
   }
@@ -1903,17 +1884,6 @@ class SnakeEnv{
       return (x<0||y<0||x>=this.cols||y>=this.rows||this.snakeSet.has(`${x},${y}`))?1:0;
     };
     const danger=[block(this.dir.x,this.dir.y),block(L.x,L.y),block(R.x,R.y)];
-    const maxRange=Math.max(this.cols,this.rows)||1;
-    const bodyProximity=[this.dir,L,R].map(vec=>{
-      let x=h.x,y=h.y,dist=0;
-      while(true){
-        x+=vec.x; y+=vec.y; dist++;
-        if(x<0||y<0||x>=this.cols||y>=this.rows) return 0;
-        if(this.snakeSet.has(`${x},${y}`)){
-          return 1-Math.min(1,Math.max(0,dist-1)/maxRange);
-        }
-      }
-    });
     const dir=[this.dir.y===-1?1:0,this.dir.y===1?1:0,this.dir.x===-1?1:0,this.dir.x===1?1:0];
     const fruit=[this.fruit.y<h.y?1:0,this.fruit.y>h.y?1:0,this.fruit.x<h.x?1:0,this.fruit.x>h.x?1:0];
     const dists=[h.y/(this.rows-1),(this.rows-1-h.y)/(this.rows-1),h.x/(this.cols-1),(this.cols-1-h.x)/(this.cols-1)];
@@ -1924,35 +1894,7 @@ class SnakeEnv{
       this.getVisit(h.x-1, h.y),
       this.getVisit(h.x+1, h.y),
     ];
-    const normSpace=vec=>{
-      const tx=h.x+vec.x, ty=h.y+vec.y;
-      if(tx<0||ty<0||tx>=this.cols||ty>=this.rows) return 0;
-      if(this.snakeSet.has(`${tx},${ty}`)) return 0;
-      const willGrow=tx===this.fruit.x&&ty===this.fruit.y;
-      const space=this.freeSpaceFrom(tx,ty,!willGrow);
-      return space/Math.max(1,this.cols*this.rows);
-    };
-    const tail=this.snake[this.snake.length-1];
-    const tailPrev=this.snake[this.snake.length-2]??tail;
-    const tailVec={x:tail.x-tailPrev.x,y:tail.y-tailPrev.y};
-    const tailLen=Math.hypot(tailVec.x,tailVec.y)||1;
-    const tailDir=[tailVec.x/tailLen,tailVec.y/tailLen];
-    const normLength=this.snake.length/Math.max(1,this.cols*this.rows);
-    return Float32Array.from([
-      ...danger,
-      ...bodyProximity,
-      ...dir,
-      ...fruit,
-      ...dists,
-      dy/len,
-      dx/len,
-      ...crowd,
-      normSpace(this.dir),
-      normSpace(L),
-      normSpace(R),
-      ...tailDir,
-      normLength,
-    ]);
+    return Float32Array.from([...danger,...dir,...fruit,...dists,dy/len,dx/len,...crowd]);
   }
 }
 
@@ -2020,11 +1962,10 @@ class VecSnakeEnv{
 
 /* ---------------- Replay buffer helpers ---------------- */
 class NStepAccumulator{
-  constructor(n=1,gamma=0.99,lambdaValue=1){ this.setConfig(n,gamma,lambdaValue); }
-  setConfig(n,gamma,lambdaValue=this.lambda??1){
+  constructor(n=1,gamma=0.99){ this.setConfig(n,gamma); }
+  setConfig(n,gamma){
     this.n=Math.max(1,n|0);
     this.gamma=gamma;
-    this.lambda=Math.max(0,Math.min(1,lambdaValue??1));
     this.queue=[];
   }
   push(step){
@@ -2051,30 +1992,23 @@ class NStepAccumulator{
     return ready;
   }
   build(){
-    const first=this.queue[0];
-    const limit=Math.min(this.n,this.queue.length);
-    const partials=[];
     let reward=0;
     let discount=1;
+    let done=false;
+    let nextState=this.queue[0].ns;
+    const limit=Math.min(this.n,this.queue.length);
     for(let i=0;i<limit;i++){
       const step=this.queue[i];
       reward+=discount*step.r;
       discount*=this.gamma;
-      partials.push({reward,nextState:step.ns,done:step.d});
-      if(step.d) break;
-    }
-    const last=partials.length?partials[partials.length-1]:{reward:0,nextState:first.ns,done:false};
-    const lambda=this.lambda;
-    let lambdaReturn=0;
-    if(lambda>=0.999||!partials.length){
-      lambdaReturn=last.reward;
-    }else{
-      for(let i=0;i<partials.length;i++){
-        const weight=i===partials.length-1?Math.pow(lambda,i):(1-lambda)*Math.pow(lambda,i);
-        lambdaReturn+=weight*partials[i].reward;
+      nextState=step.ns;
+      if(step.d){
+        done=true;
+        break;
       }
     }
-    return {s:first.s,a:first.a,r:lambdaReturn,ns:last.nextState,d:last.done};
+    const first=this.queue[0];
+    return {s:first.s,a:first.a,r:reward,ns:nextState,d:done};
   }
   flush(){
     const out=[];
@@ -2205,8 +2139,6 @@ class ReplayBuffer{
 }
 
 /* ---------------- Agents ---------------- */
-const DQN_DEFAULT_LAYERS=[256,256,128];
-const DQN_LARGE_LAYERS=[512,384,256,128];
 class DQNAgent{
   constructor(sDim,aDim,cfg={}){
     this.kind='dqn';
@@ -2217,11 +2149,7 @@ class DQNAgent{
     this.lr=cfg.lr??0.0005;
     this.batch=cfg.batch??128;
     this.priorityEps=cfg.priorityEps??0.001;
-    this.boardCols=cfg.boardCols??cfg.boardSize??COLS??0;
-    this.boardRows=cfg.boardRows??cfg.boardSize??ROWS??this.boardCols;
-    const providedLayers=Array.isArray(cfg.layers)?cfg.layers.slice():null;
-    const inferredDim=Math.max(this.boardCols??0,this.boardRows??0);
-    this.layers=(providedLayers&&providedLayers.length)?providedLayers.slice():(inferredDim>=20?DQN_LARGE_LAYERS.slice():DQN_DEFAULT_LAYERS.slice());
+    this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():[256,256,128];
     this.dueling=cfg.dueling!==undefined?!!cfg.dueling:true;
     this.double=cfg.double!==undefined?!!cfg.double:true;
     this.learnRepeats=cfg.learnRepeats??2;
@@ -2236,67 +2164,35 @@ class DQNAgent{
     this.epsEnd=cfg.epsEnd??0.12;
     this.epsDecay=cfg.epsDecay??80000;
     this.nStep=cfg.nStep??3;
-    this.lambda=cfg.lambdaReturn??cfg.lambda??0.95;
-    this.tau=cfg.tau??0.005;
-    this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma,this.lambda));
+    this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma));
     this.trainStep=cfg.trainStep??0;
     this.optimizer=tf.train.adam(this.lr);
     this.online=this.build();
     this.target=this.build();
-    this.syncTarget(true);
+    this.syncTarget();
     this.updateEpsilon(this.trainStep);
   }
   build(){
     const input=tf.input({shape:[this.sDim]});
     let x=input;
     this.layers.forEach(units=>{
-      x=tf.layers.dense({
-        units,
-        activation:'relu',
-        kernelInitializer:'heNormal',
-        kernelRegularizer:tf.regularizers.l2({l2:0.0001}),
-      }).apply(x);
-      x=tf.layers.batchNormalization().apply(x);
+      x=tf.layers.dense({units,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
     });
     let q;
     if(this.dueling){
-      const advHidden=tf.layers.dense({
-        units:128,
-        activation:'relu',
-        kernelInitializer:'heNormal',
-        kernelRegularizer:tf.regularizers.l2({l2:0.0001}),
-      }).apply(x);
-      const adv=tf.layers.batchNormalization().apply(advHidden);
-      const advOut=tf.layers.dense({
-        units:this.aDim,
-        activation:'linear',
-        kernelRegularizer:tf.regularizers.l2({l2:0.0001}),
-      }).apply(adv);
-      const valHidden=tf.layers.dense({
-        units:128,
-        activation:'relu',
-        kernelInitializer:'heNormal',
-        kernelRegularizer:tf.regularizers.l2({l2:0.0001}),
-      }).apply(x);
-      const val=tf.layers.batchNormalization().apply(valHidden);
-      const valOut=tf.layers.dense({
-        units:1,
-        activation:'linear',
-        kernelRegularizer:tf.regularizers.l2({l2:0.0001}),
-      }).apply(val);
+      const adv=tf.layers.dense({units:128,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
+      const advOut=tf.layers.dense({units:this.aDim,activation:'linear'}).apply(adv);
+      const val=tf.layers.dense({units:128,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
+      const valOut=tf.layers.dense({units:1,activation:'linear'}).apply(val);
       q=tf.layers.add().apply([advOut,valOut]);
     }else{
-      q=tf.layers.dense({
-        units:this.aDim,
-        activation:'linear',
-        kernelRegularizer:tf.regularizers.l2({l2:0.0001}),
-      }).apply(x);
+      q=tf.layers.dense({units:this.aDim,activation:'linear'}).apply(x);
     }
     return tf.model({inputs:input,outputs:q});
   }
   setGamma(val){
     this.gamma=val;
-    this.nStepBuffers.forEach(buf=>buf.setConfig(this.nStep,this.gamma,this.lambda));
+    this.nStepBuffers.forEach(buf=>buf.setConfig(this.nStep,this.gamma));
   }
   setLearningRate(val){
     this.lr=val;
@@ -2312,7 +2208,7 @@ class DQNAgent{
     const n=Math.max(1,val|0);
     if(n===this.nStep)return;
     this.nStep=n;
-    this.nStepBuffers.forEach(buf=>buf.setConfig(this.nStep,this.gamma,this.lambda));
+    this.nStepBuffers.forEach(buf=>buf.setConfig(this.nStep,this.gamma));
   }
   recordTransition(...args){
     if(typeof args[0]==='number' && args.length>=6){
@@ -2338,7 +2234,7 @@ class DQNAgent{
     const next=Math.max(1,count|0);
     if(next===this.envCount) return;
     this.envCount=next;
-    this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma,this.lambda));
+    this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma));
   }
   drainPending(envIndex){
     if(envIndex===undefined){
@@ -2354,25 +2250,8 @@ class DQNAgent{
     const tail=buf.flush();
     if(tail.length) tail.forEach(t=>this.buffer.push(t));
   }
-  syncTarget(hard=false){
-
-    const sourceWeights=this.online.weights;
-    const targetWeights=this.target.weights;
-    if(sourceWeights.length!==targetWeights.length){
-      throw new Error('Target network shape mismatch');
-    }
-    const tau=this.tau;
-    for(let i=0;i<targetWeights.length;i++){
-      const targetVar=targetWeights[i].val;
-      const sourceVar=sourceWeights[i].val;
-      tf.tidy(()=>{
-        const updated=hard
-          ? sourceVar.read()
-          : sourceVar.read().mul(tau).add(targetVar.read().mul(1-tau));
-        targetVar.assign(updated);
-      });
-    }
-
+  syncTarget(){
+    this.target.setWeights(this.online.getWeights());
   }
   updateEpsilon(step){
     const t=Math.min(1,step/this.epsDecay);
@@ -2400,55 +2279,39 @@ class DQNAgent{
     const A=tf.tensor1d(batch.map(x=>x.a),'int32');
     const R=tf.tensor1d(batch.map(x=>x.r));
     const D=tf.tensor1d(batch.map(x=>x.d?1:0));
-    const weightValues=weights&&weights.length?weights:new Array(batch.length).fill(1);
-    const W=tf.tensor1d(weightValues);
-    let tdTensor;
-    const {value:lossTensor,grads}=tf.variableGrads(()=>{
+    const W=tf.tensor1d(weights);
+    let tdErrors;
+    const lossTensor=await this.optimizer.minimize(()=>{
       const q=this.online.apply(S);
       const oneHot=tf.oneHot(A,this.aDim);
-      const qPred=q.mul(oneHot).sum(1);
+      const qPred=tf.sum(q.mul(oneHot),1);
       const qNextTarget=this.target.apply(NS);
       let qNext;
       if(this.double){
         const qNextOnline=this.online.apply(NS);
         const aPrime=tf.argMax(qNextOnline,1);
         const mask=tf.oneHot(aPrime,this.aDim);
-        qNext=qNextTarget.mul(mask).sum(1);
+        qNext=tf.sum(qNextTarget.mul(mask),1);
       }else{
-        qNext=qNextTarget.max(1);
+        qNext=tf.max(qNextTarget,1);
       }
       const target=R.add(qNext.mul(tf.scalar(this.gamma)).mul(tf.scalar(1).sub(D)));
-      tdTensor=target.sub(qPred);
-      return tdTensor.square().mul(W).mean();
-    },this.online.trainableWeights);
-    const gradList=this.online.trainableWeights.map(w=>grads[w.name]);
-    const clipped=gradList.map(g=>{const clippedGrad=tf.clipByValue(g,-10,10); g.dispose(); return clippedGrad;});
-    const gradMap={};
-    this.online.trainableWeights.forEach((w,i)=>{gradMap[w.name]=clipped[i];});
-    this.optimizer.applyGradients(gradMap);
-    const loss=(await lossTensor.data())[0];
-    const tdArray=Array.from(await tdTensor.abs().data());
-    this.buffer.updatePriorities(idxs,tdArray);
-    const qTensor=this.online.predict(S);
-    const qData=Array.from(await qTensor.data());
-    qTensor.dispose();
-    let qSum=0,qMax=-Infinity;
-    for(const val of qData){ qSum+=val; if(val>qMax) qMax=val; }
-    const qMean=qData.length?qSum/qData.length:0;
-    let tdSum=0,tdMax=-Infinity;
-    for(const val of tdArray){ tdSum+=val; if(val>tdMax) tdMax=val; }
-    const tdMean=tdArray.length?tdSum/tdArray.length:0;
-    this.trainStep++;
-    if(this.trainStep%50===0){
-      console.log(
-        `[DQN] step ${this.trainStep}: Q mean=${qMean.toFixed(4)} max=${qMax.toFixed(4)} `+
-          `TD mean=${tdMean.toFixed(4)} max=${tdMax.toFixed(4)}`,
-      );
-    }
+      tdErrors=tf.keep(target.sub(qPred));
+      const absErr=tdErrors.abs();
+      const quadratic=tf.minimum(absErr,tf.scalar(1));
+      const linear=absErr.sub(quadratic);
+      const losses=quadratic.square().mul(0.5).add(linear);
+      return losses.mul(W).mean();
+    },true);
+    const loss=lossTensor.dataSync()[0];
     lossTensor.dispose();
-    tdTensor.dispose();
+    const absTd=tdErrors.abs();
+    const tdArray=absTd.dataSync();
+    absTd.dispose();
+    tdErrors.dispose();
     S.dispose(); NS.dispose(); A.dispose(); R.dispose(); D.dispose(); W.dispose();
-    clipped.forEach(g=>g.dispose());
+    this.buffer.updatePriorities(idxs,tdArray);
+    this.trainStep++;
     return loss;
   }
   async finishEpisode(){
@@ -2461,7 +2324,7 @@ class DQNAgent{
       data:typedArrayToBase64(await w.data()),
     })));
     return {
-      version:5,
+      version:4,
       kind:'dqn',
       sDim:this.sDim,
       aDim:this.aDim,
@@ -2483,8 +2346,6 @@ class DQNAgent{
         layers:this.layers,
         envCount:this.envCount,
         learnRepeats:this.learnRepeats,
-        lambda:this.lambda,
-        tau:this.tau,
       },
       trainStep:this.trainStep,
       epsilon:this.epsilon,
@@ -2494,55 +2355,40 @@ class DQNAgent{
   }
   async importState(state){
     if(!state) throw new Error('Invalid state');
-    const stateDimMismatch=state.sDim && state.sDim!==this.sDim;
+    if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
     if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
     const cfg=state.config??{};
     this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():this.layers;
     this.dueling=cfg.dueling!==undefined?!!cfg.dueling:this.dueling;
     this.double=cfg.double!==undefined?!!cfg.double:this.double;
     this.learnRepeats=cfg.learnRepeats??this.learnRepeats;
-    this.tau=cfg.tau??this.tau??0.005;
-    const lambdaValue=cfg.lambdaReturn??cfg.lambda;
-    this.lambda=lambdaValue??this.lambda??0.95;
     this.setGamma(cfg.gamma??this.gamma);
     this.setLearningRate(cfg.lr??this.lr);
     this.batch=cfg.batch??this.batch;
-    const bufferCap=cfg.bufferSize??this.buffer.cap;
-    const bufferOpts={
-      alpha:cfg.priorityAlpha??this.buffer.alpha,
-      beta:cfg.priorityBeta??this.buffer.beta,
-      betaIncrement:cfg.priorityBetaIncrement??this.buffer.betaIncrement,
-      priorityEps:cfg.priorityEps??this.buffer.priorityEps,
-    };
-    if(stateDimMismatch){
-      this.buffer=new ReplayBuffer(bufferCap,bufferOpts);
-    }else{
-      this.buffer=ReplayBuffer.fromJSON(state.buffer,bufferCap,bufferOpts);
-    }
+    this.buffer=ReplayBuffer.fromJSON(state.buffer,cfg.bufferSize,{
+      alpha:cfg.priorityAlpha,
+      beta:cfg.priorityBeta,
+      betaIncrement:cfg.priorityBetaIncrement,
+      priorityEps:cfg.priorityEps,
+    });
     this.priorityEps=this.buffer.priorityEps;
     this.setEnvCount(cfg.envCount??this.envCount);
     this.epsStart=cfg.epsStart??this.epsStart;
     this.epsEnd=cfg.epsEnd??this.epsEnd;
     this.epsDecay=cfg.epsDecay??this.epsDecay;
     this.nStep=cfg.nStep??this.nStep;
-    this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma,this.lambda));
+    this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma));
     this.trainStep=state.trainStep??0;
     this.online.dispose();
     this.target.dispose();
     this.online=this.build();
- 
-    this.optimizer?.dispose?.();
-    this.optimizer=tf.train.adam(this.lr);
-    if(stateDimMismatch){
-      console.warn('[DQN] Imported state uses outdated observation size; skipping weight load and reinitializing.');
-    }else if(Array.isArray(state.weights)){
-
+    this.target=this.build();
+    if(Array.isArray(state.weights)){
       const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
       this.online.setWeights(tensors);
-      this.target.setWeights(tensors);
       tensors.forEach(t=>t.dispose());
     }
-    this.syncTarget(true);
+    this.syncTarget();
     this.updateEpsilon(this.trainStep);
   }
   setEntropy(){}
@@ -3333,9 +3179,9 @@ const AGENT_PRESETS={
     type:'dqn',
     defaults:{
       gamma:0.98,lr:0.0005,
-      epsStart:1.0,epsEnd:0.08,epsDecay:120000,
-      batch:128,bufferSize:100000,targetSync:2000,
-      nStep:4,priorityAlpha:0.7,priorityBeta:0.5,
+      epsStart:1.0,epsEnd:0.12,epsDecay:80000,
+      batch:128,bufferSize:50000,targetSync:2000,
+      nStep:3,priorityAlpha:0.6,priorityBeta:0.4,
       layers:[256,256,128],dueling:true,double:true,learnRepeats:2,
     },
     description:'Prioritized replay, n-step returns, and dueling heads provide stable, sample-efficient DQN training.',
@@ -4551,10 +4397,6 @@ function reconfigureEnvironment({count=envCount,size=COLS,force=false}={}){
   stateDim=env?.getState()?.length||stateDim;
   seedContexts(true);
   agent?.setEnvCount?.(envCount);
-  if(agent?.kind==='dqn'){
-    agent.boardCols=COLS;
-    agent.boardRows=ROWS;
-  }
   renderTick=0;
   updateControlAvailability();
   if(ui.envCount && ui.envCount.value!==`${envCount}`){
@@ -5078,14 +4920,6 @@ function instantiateAgent(key,opts={}){
     if(overrideDefaults.dueling!==undefined) appliedDefaults.dueling=overrideDefaults.dueling;
     if(overrideDefaults.double!==undefined) appliedDefaults.double=overrideDefaults.double;
   }
-  if(preset.type==='dqn'){
-    const size=Math.max(COLS||0,ROWS||0);
-    const layers=appliedDefaults.layers;
-    const matchesDefault=Array.isArray(layers)&&layers.length===DQN_DEFAULT_LAYERS.length&&layers.every((v,i)=>v===DQN_DEFAULT_LAYERS[i]);
-    if(size>=20&&matchesDefault){
-      appliedDefaults.layers=DQN_LARGE_LAYERS.slice();
-    }
-  }
   if(!useCurrentUI){
     applyPresetToUI(appliedDefaults);
   }
@@ -5111,9 +4945,6 @@ function instantiateAgent(key,opts={}){
     layers:appliedDefaults.layers,
     dueling:appliedDefaults.dueling,
     double:appliedDefaults.double,
-    boardCols:COLS,
-    boardRows:ROWS,
-    boardSize:COLS,
   });
   agent.learnRepeats=(appliedDefaults.learnRepeats??preset.defaults.learnRepeats)??agent.learnRepeats??1;
   targetSyncSteps=agent.kind==='dqn'? (+ui.targetSync.value||2000):Infinity;

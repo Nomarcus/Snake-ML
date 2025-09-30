@@ -4,7 +4,6 @@ import { PrioritizedReplayBuffer } from '../replay/prioritized_buffer.js';
 import { RingBuffer, mean, std, percentile } from '../utils/ring_buffer.js';
 
 const DEFAULT_LAYERS = [256, 256, 128];
-const LARGE_BOARD_LAYERS = [512, 384, 256, 128];
 
 export class DQNAgent {
   constructor({
@@ -29,12 +28,6 @@ export class DQNAgent {
     layers = DEFAULT_LAYERS,
     gradientClip = 10,
     warmupSteps = 5000,
-    boardSize,
-    boardCols,
-    boardRows,
-    lambdaReturn,
-    lambda: configLambda,
-    tau = 0.005,
   }) {
     this.kind = 'dqn';
     this.stateDim = stateDim;
@@ -69,28 +62,15 @@ export class DQNAgent {
 
     this.dueling = dueling;
     this.double = double;
-    this.boardCols = boardCols ?? boardSize ?? null;
-    this.boardRows = boardRows ?? boardSize ?? null;
-    const inferredMaxDim = Math.max(this.boardCols ?? 0, this.boardRows ?? 0);
-    const providedLayers = Array.isArray(layers) ? layers.slice() : null;
-    if (providedLayers && providedLayers.length) {
-      this.layers = providedLayers;
-    } else if (inferredMaxDim >= 20) {
-      this.layers = LARGE_BOARD_LAYERS.slice();
-    } else {
-      this.layers = DEFAULT_LAYERS.slice();
-    }
+    this.layers = layers.slice();
 
     this.nStep = nStep;
-    this.lambda = lambdaReturn ?? configLambda;
-    if (this.lambda === undefined || this.lambda === null) this.lambda = 0.95;
-    this.tau = tau ?? 0.005;
-    this.nStepBuffers = Array.from({ length: envCount }, () => new NStepAccumulator(nStep, this.gamma, this.lambda));
+    this.nStepBuffers = Array.from({ length: envCount }, () => new NStepAccumulator(nStep, this.gamma));
 
     this.optimizer = tf.train.adam(this.lr);
     this.online = this.buildModel();
     this.target = this.buildModel();
-    this.syncTarget(true);
+    this.syncTarget();
 
     this.lossHistory = new RingBuffer(2000);
     this.tdHistory = new RingBuffer(4000);
@@ -100,51 +80,21 @@ export class DQNAgent {
     const input = tf.input({ shape: [this.stateDim] });
     let x = input;
     this.layers.forEach((units) => {
-      x = tf.layers
-        .dense({
-          units,
-          activation: 'relu',
-          kernelInitializer: 'heNormal',
-          kernelRegularizer: tf.regularizers.l2({ l2: 0.0001 }),
-        })
-        .apply(x);
-      x = tf.layers.batchNormalization().apply(x);
+      x = tf.layers.dense({ units, activation: 'relu', kernelInitializer: 'heNormal' }).apply(x);
     });
     let output;
     if (this.dueling) {
-      const advantageHidden = tf.layers
-        .dense({
-          units: 128,
-          activation: 'relu',
-          kernelInitializer: 'heNormal',
-          kernelRegularizer: tf.regularizers.l2({ l2: 0.0001 }),
-        })
+      const advantage = tf.layers
+        .dense({ units: 128, activation: 'relu', kernelInitializer: 'heNormal' })
         .apply(x);
-      const advantage = tf.layers.batchNormalization().apply(advantageHidden);
-      const advOut = tf.layers
-        .dense({
-          units: this.actionDim,
-          activation: 'linear',
-          kernelRegularizer: tf.regularizers.l2({ l2: 0.0001 }),
-        })
-        .apply(advantage);
-      const valueHidden = tf.layers
-        .dense({
-          units: 128,
-          activation: 'relu',
-          kernelInitializer: 'heNormal',
-          kernelRegularizer: tf.regularizers.l2({ l2: 0.0001 }),
-        })
+      const advOut = tf.layers.dense({ units: this.actionDim, activation: 'linear' }).apply(advantage);
+      const value = tf.layers
+        .dense({ units: 128, activation: 'relu', kernelInitializer: 'heNormal' })
         .apply(x);
-      const value = tf.layers.batchNormalization().apply(valueHidden);
-      const valOut = tf.layers
-        .dense({ units: 1, activation: 'linear', kernelRegularizer: tf.regularizers.l2({ l2: 0.0001 }) })
-        .apply(value);
+      const valOut = tf.layers.dense({ units: 1, activation: 'linear' }).apply(value);
       output = tf.layers.add().apply([advOut, valOut]);
     } else {
-      output = tf.layers
-        .dense({ units: this.actionDim, activation: 'linear', kernelRegularizer: tf.regularizers.l2({ l2: 0.0001 }) })
-        .apply(x);
+      output = tf.layers.dense({ units: this.actionDim, activation: 'linear' }).apply(x);
     }
     return tf.model({ inputs: input, outputs: output });
   }
@@ -158,12 +108,12 @@ export class DQNAgent {
   setEnvCount(count) {
     if (count === this.envCount) return;
     this.envCount = count;
-    this.nStepBuffers = Array.from({ length: this.envCount }, () => new NStepAccumulator(this.nStep, this.gamma, this.lambda));
+    this.nStepBuffers = Array.from({ length: this.envCount }, () => new NStepAccumulator(this.nStep, this.gamma));
   }
 
   setGamma(value) {
     this.gamma = value;
-    this.nStepBuffers.forEach((buf) => buf.setConfig(this.nStep, this.gamma, this.lambda));
+    this.nStepBuffers.forEach((buf) => buf.setConfig(this.nStep, this.gamma));
   }
 
   setLearningRate(value) {
@@ -177,7 +127,7 @@ export class DQNAgent {
     const n = Math.max(1, value | 0);
     if (n === this.nStep) return;
     this.nStep = n;
-    this.nStepBuffers.forEach((buf) => buf.setConfig(this.nStep, this.gamma, this.lambda));
+    this.nStepBuffers.forEach((buf) => buf.setConfig(this.nStep, this.gamma));
   }
 
   setBatchSize(size) {
@@ -230,25 +180,8 @@ export class DQNAgent {
     return this.epsilon;
   }
 
-  syncTarget(hard = false) {
-
-    const sourceWeights = this.online.weights;
-    const targetWeights = this.target.weights;
-    if (sourceWeights.length !== targetWeights.length) {
-      throw new Error('Target network shape mismatch');
-    }
-    const tau = this.tau;
-    for (let i = 0; i < targetWeights.length; i++) {
-      const targetVar = targetWeights[i].val;
-      const sourceVar = sourceWeights[i].val;
-      tf.tidy(() => {
-        const updated = hard
-          ? sourceVar.read()
-          : sourceVar.read().mul(tau).add(targetVar.read().mul(1 - tau));
-        targetVar.assign(updated);
-      });
-    }
-n
+  syncTarget() {
+    this.target.setWeights(this.online.getWeights());
   }
 
   act(state) {
@@ -314,7 +247,6 @@ n
     const isWeights = tf.tensor1d(weights.length ? weights : new Array(batch.length).fill(1));
 
     let tdTensor;
-    const trainableVars = this.online.trainableWeights.map((weight) => weight.val);
     const { value: lossTensor, grads } = tf.variableGrads(() => {
       const qPredAll = this.online.apply(states);
       const actionMask = tf.oneHot(actions, this.actionDim);
@@ -334,17 +266,10 @@ n
       tdTensor = targets.sub(qPred);
       const loss = tdTensor.square().mul(isWeights).mean();
       return loss;
+    }, this.online.trainableWeights);
 
-    }, trainableVars);
-
-    const gradList = this.online.trainableWeights.map((weight) => grads[weight.val.name]);
-    const clipLimit = this.gradientClip ?? 10;
-    const clipped = gradList.map((grad) => {
-      const clippedGrad = tf.clipByValue(grad, -clipLimit, clipLimit);
-
-      grad.dispose();
-      return clippedGrad;
-    });
+    const gradList = this.online.trainableWeights.map((weight) => grads[weight.name]);
+    const [clipped, globalNorm] = tf.clipByGlobalNorm(gradList, this.gradientClip);
     const gradMap = {};
     this.online.trainableWeights.forEach((weight, idx) => {
       gradMap[weight.name] = clipped[idx];
@@ -356,34 +281,9 @@ n
     this.buffer.updatePriorities(indices, tdErrors);
     tdErrors.forEach((err) => this.tdHistory.push(err));
 
-    const qTensor = this.online.predict(states);
-    const qValues = Array.from(await qTensor.data());
-    qTensor.dispose();
-    let qSum = 0;
-    let qMax = -Infinity;
-    for (const val of qValues) {
-      qSum += val;
-      if (val > qMax) qMax = val;
-    }
-    const qMean = qValues.length ? qSum / qValues.length : 0;
-    let tdSum = 0;
-    let tdMax = -Infinity;
-    for (const val of tdErrors) {
-      tdSum += val;
-      if (val > tdMax) tdMax = val;
-    }
-    const tdMean = tdErrors.length ? tdSum / tdErrors.length : 0;
-
     this.trainStep += 1;
     if (this.targetSync > 0 && this.trainStep % this.targetSync === 0) {
       this.syncTarget();
-    }
-
-    if (this.trainStep % 50 === 0) {
-      console.log(
-        `[DQN] step ${this.trainStep}: Q mean=${qMean.toFixed(4)} max=${qMax.toFixed(4)} ` +
-          `TD mean=${tdMean.toFixed(4)} max=${tdMax.toFixed(4)}`,
-      );
     }
 
     this.lossHistory.push(lossValue);
@@ -397,7 +297,9 @@ n
     rewards.dispose();
     dones.dispose();
     isWeights.dispose();
+    gradList.forEach((grad) => grad.dispose());
     clipped.forEach((grad) => grad.dispose());
+    globalNorm.dispose();
 
     return { loss: lossValue, tdErrors };
   }
@@ -453,8 +355,6 @@ n
         dueling: this.dueling,
         double: this.double,
         layers: this.layers,
-        lambda: this.lambda,
-        tau: this.tau,
       },
       weights,
     };
@@ -462,7 +362,9 @@ n
 
   async importState(state) {
     if (!state) throw new Error('Invalid state');
-    const stateDimMismatch = state.stateDim && state.stateDim !== this.stateDim;
+    if (state.stateDim && state.stateDim !== this.stateDim) {
+      throw new Error('State dimension mismatch');
+    }
     if (state.actionDim && state.actionDim !== this.actionDim) {
       throw new Error('Action dimension mismatch');
     }
@@ -482,11 +384,6 @@ n
     });
     this.setTargetSync(cfg.targetSync ?? this.targetSync);
     this.setNStep(cfg.nStep ?? this.nStep);
-    const lambdaValue = cfg.lambdaReturn ?? cfg.lambda;
-    this.lambda = lambdaValue ?? this.lambda ?? 0.95;
-    this.tau = cfg.tau ?? this.tau ?? 0.005;
-    this.nStepBuffers = Array.from({ length: this.envCount }, () => new NStepAccumulator(this.nStep, this.gamma, this.lambda));
-    this.trainStep = state.trainStep ?? 0;
     this.dueling = cfg.dueling ?? this.dueling;
     this.double = cfg.double ?? this.double;
     this.layers = Array.isArray(cfg.layers) ? cfg.layers.slice() : this.layers;
@@ -494,23 +391,15 @@ n
     this.target.dispose();
     this.online = this.buildModel();
     this.target = this.buildModel();
-
-    this.optimizer.dispose?.();
-    this.optimizer = tf.train.adam(this.lr);
-    if (stateDimMismatch) {
-      console.warn(
-        '[DQN] Imported state uses outdated observation size; skipping weight load and reinitializing.',
-      );
-    } else if (Array.isArray(state.weights)) {
-
+    if (Array.isArray(state.weights)) {
       const tensors = state.weights.map((w) =>
         tf.tensor(Buffer.from(w.data, 'base64'), w.shape, w.dtype),
       );
       this.online.setWeights(tensors);
+      this.target.setWeights(tensors);
       tensors.forEach((t) => t.dispose());
     }
-    this.syncTarget(true);
-    this.updateEpsilon(this.trainStep);
+    this.syncTarget();
   }
 
   getHyperparams() {
@@ -532,8 +421,6 @@ n
       double: this.double,
       layers: this.layers.slice(),
       epsilon: this.epsilon,
-      lambda: this.lambda,
-      tau: this.tau,
     };
   }
 }
