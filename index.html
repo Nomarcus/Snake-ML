@@ -199,6 +199,46 @@ canvas#board{
   border:1px solid rgba(128,138,206,0.2);
   box-shadow:0 16px 34px rgba(6,10,30,0.38);
 }
+.auto-tune-controls{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.auto-tune-controls .toggle{
+  margin-left:auto;
+}
+.tune-status{
+  font-size:12px;
+  font-weight:600;
+  color:#c7cdef;
+  background:rgba(24,29,70,0.75);
+  border:1px solid rgba(128,138,206,0.3);
+  border-radius:12px;
+  padding:8px 12px;
+  box-shadow:0 12px 24px rgba(6,10,32,0.32);
+}
+button.btn{
+  position:relative;
+  padding:11px 20px;
+  font-weight:700;
+  min-width:140px;
+}
+button.btn.blue{
+  background:linear-gradient(135deg,#2563eb,#1d4ed8);
+  box-shadow:0 16px 32px rgba(37,99,235,0.35);
+}
+button.btn.purple{
+  background:linear-gradient(135deg,#8b5cf6,#7c3aed);
+  box-shadow:0 16px 32px rgba(139,92,246,0.4);
+}
+button.btn.green{
+  background:linear-gradient(135deg,#10b981,#059669);
+  box-shadow:0 16px 32px rgba(16,185,129,0.35);
+}
+button.btn[aria-pressed="true"]{
+  transform:translateY(-1px);
+}
 .ai-auto-tune__header{
   display:flex;
   align-items:center;
@@ -998,16 +1038,21 @@ footer{
         </div>
       </div>
 
+      <div class="auto-tune-controls" role="group" aria-label="Auto-tune lägen">
+        <button id="autoButton" type="button" class="btn blue" aria-pressed="false">Auto</button>
+        <label class="toggle" for="aiAutoTuneToggle">
+          <input type="checkbox" id="aiAutoTuneToggle" aria-label="Aktivera AI Auto-Tune">
+          <span>AI Auto-Tune</span>
+        </label>
+      </div>
+      <div id="tuneStatus" class="tune-status">🔵 Analysläge – AI föreslår, inga ändringar</div>
+
       <div class="ai-auto-tune__controls" role="group" aria-label="AI Auto-Tune inställningar">
         <section class="ai-auto-tune__column" aria-labelledby="aiAutoTuneAiHeading">
           <h4 id="aiAutoTuneAiHeading">AI-analys</h4>
           <div class="field compact ai-interval-field">
             <div class="field-header">
               <label for="aiIntervalSlider">Analysintervall</label>
-              <label class="toggle" for="aiAutoTuneToggle">
-                <input type="checkbox" id="aiAutoTuneToggle" aria-label="Aktivera AI Auto-Tune">
-                <span>Aktivera</span>
-              </label>
             </div>
             <input type="range" id="aiIntervalSlider" min="100" max="5000" step="100" value="500">
             <span class="hint">Number of episodes between AI analysis calls.</span>
@@ -3524,6 +3569,8 @@ const ui={
   algoSelect:document.getElementById('algoSelect'),
   algoDescription:document.getElementById('algoDescription'),
   aiAutoTuneToggle:document.getElementById('aiAutoTuneToggle'),
+  autoButton:document.getElementById('autoButton'),
+  tuneStatus:document.getElementById('tuneStatus'),
   aiIntervalSlider:document.getElementById('aiIntervalSlider'),
   aiIntervalReadout:document.getElementById('aiIntervalReadout'),
   aiRunLimit:document.getElementById('aiRunLimit'),
@@ -3666,6 +3713,14 @@ const rewardTelemetry=createRewardTelemetry(1200);
 let contexts=[];
 let renderTick=0;
 let trainingMode='manual';
+const TUNE_MODES={
+  ANALYSIS:'analysis',
+  CLASSIC:'classic',
+  AI:'ai',
+};
+let autoActive=trainingMode==='auto';
+let tuneMode=autoActive?TUNE_MODES.CLASSIC:TUNE_MODES.ANALYSIS;
+let aiAnalysisOnly=tuneMode===TUNE_MODES.ANALYSIS;
 let autoPilot=null;
 const autoLogEntries=[];
 const MAX_AUTO_LOG_ENTRIES=24;
@@ -3782,8 +3837,54 @@ function resetAutoLog(){
 }
 function updateAutoLogVisibility(){
   if(!ui.autoLogPanel) return;
-  const shouldShow=trainingMode==='auto'||aiAutoTuneEnabled;
+  const shouldShow=trainingMode==='auto'||aiAutoTuneEnabled||aiAnalysisOnly;
   ui.autoLogPanel.classList.toggle('hidden',!shouldShow);
+}
+
+function updateTuneModeUI(){
+  if(ui.autoButton){
+    ui.autoButton.setAttribute('aria-pressed',autoActive?'true':'false');
+    ui.autoButton.classList.remove('blue','purple','green');
+    if(tuneMode===TUNE_MODES.ANALYSIS){
+      ui.autoButton.classList.add('blue');
+    }else if(tuneMode===TUNE_MODES.CLASSIC){
+      ui.autoButton.classList.add('purple');
+    }else if(tuneMode===TUNE_MODES.AI){
+      ui.autoButton.classList.add('green');
+    }
+  }
+  if(ui.tuneStatus){
+    if(tuneMode===TUNE_MODES.ANALYSIS){
+      ui.tuneStatus.textContent='🔵 Analysläge – AI föreslår, inga ändringar';
+    }else if(tuneMode===TUNE_MODES.CLASSIC){
+      ui.tuneStatus.textContent='🟣 Auto-Tune utan AI – klassisk reglering';
+    }else if(tuneMode===TUNE_MODES.AI){
+      ui.tuneStatus.textContent='🟢 Auto-Tune med AI – ändringar appliceras automatiskt';
+    }
+  }
+  if(ui.aiAutoTuneToggle){
+    ui.aiAutoTuneToggle.disabled=!autoActive;
+  }
+}
+
+function applyTuneMode(){
+  if(!ui.autoButton) return;
+  let aiChecked=!!ui.aiAutoTuneToggle?.checked;
+  if(!autoActive&&aiChecked&&ui.aiAutoTuneToggle){
+    ui.aiAutoTuneToggle.checked=false;
+    aiChecked=false;
+  }
+  if(!autoActive){
+    tuneMode=TUNE_MODES.ANALYSIS;
+  }else{
+    tuneMode=aiChecked?TUNE_MODES.AI:TUNE_MODES.CLASSIC;
+  }
+  aiAnalysisOnly=tuneMode===TUNE_MODES.ANALYSIS;
+  aiAutoTuneEnabled=tuneMode===TUNE_MODES.AI;
+  const shouldEnableAITuner=tuneMode!==TUNE_MODES.CLASSIC;
+  if(aiTuner) aiTuner.setEnabled(shouldEnableAITuner);
+  updateAutoLogVisibility();
+  updateTuneModeUI();
 }
 function logAutoEvent({title='',detail='',metrics=null,tone='info',episode=null}={}){
   if(!ui.autoLogStream) return;
@@ -4166,9 +4267,11 @@ function applyAITunerRewardConfig(newConfig={}){
     result.changes.push({key,oldValue:current,newValue:clamped});
   });
   if(result.changes.length){
-    applyRewardConfigToUI(merged);
-    rewardConfig={...merged};
-    result.config={...merged};
+    if(aiAutoTuneEnabled){
+      applyRewardConfigToUI(merged);
+      rewardConfig={...merged};
+      result.config={...merged};
+    }
   }
   return result;
 }
@@ -4185,7 +4288,9 @@ function applyAITunerHyperparameters(updates={}){
     if(input.max!==''&&input.max!==undefined) num=Math.min(num,+input.max);
     const current=+input.value;
     if(Math.abs(current-num)<1e-6) return;
-    input.value=`${num}`;
+    if(aiAutoTuneEnabled){
+      input.value=`${num}`;
+    }
     result.changes.push({key:keyLabel,oldValue:current,newValue:num});
   };
   if(updates.gamma!==undefined) setValue('gamma',updates.gamma,'gamma');
@@ -4215,13 +4320,13 @@ function applyAITunerHyperparameters(updates={}){
   if(updates.clip!==undefined&&agent?.kind==='ppo') setValue('ppoClip',updates.clip,'ppoClip');
   if(updates.lambda!==undefined&&agent?.kind==='ppo') setValue('ppoLambda',updates.lambda,'ppoLambda');
   if(updates.epochs!==undefined&&agent?.kind==='ppo') setValue('ppoEpochs',updates.epochs,'ppoEpochs');
-  if(result.changes.length){
+  if(result.changes.length&&aiAutoTuneEnabled){
     updateReadouts();
     applyConfigToAgent();
     result.hyper=getHyperparameterSnapshot();
-  }
-  if(result.hyper){
-    hyperParams={...result.hyper};
+    if(result.hyper){
+      hyperParams={...result.hyper};
+    }
   }
   return result;
 }
@@ -4296,7 +4401,7 @@ async function handleGroqResponse(responseJson){
       const rewardResult=applyAITunerRewardConfig(parsed.rewardConfig);
       if(rewardResult?.config){
         Object.assign(rewardConfig,rewardResult.config);
-      }else{
+      }else if(aiAutoTuneEnabled){
         Object.assign(rewardConfig,parsed.rewardConfig);
         applyRewardsToEnv();
       }
@@ -4308,10 +4413,12 @@ async function handleGroqResponse(responseJson){
       const hyperResult=applyAITunerHyperparameters(parsed.hyper);
       if(hyperResult?.hyper){
         hyperParams={...hyperResult.hyper};
-      }else if(typeof getHyperparameterSnapshot==='function'){
-        hyperParams={...getHyperparameterSnapshot(),...parsed.hyper};
-      }else{
-        hyperParams={...hyperParams,...parsed.hyper};
+      }else if(aiAutoTuneEnabled){
+        if(typeof getHyperparameterSnapshot==='function'){
+          hyperParams={...getHyperparameterSnapshot(),...parsed.hyper};
+        }else{
+          hyperParams={...hyperParams,...parsed.hyper};
+        }
       }
     }
 
@@ -4350,6 +4457,10 @@ function bindUI(){
   ui.btnPause.addEventListener('click',stopTraining);
   ui.btnStep.addEventListener('click',async()=>{ await playSingleEpisode(); });
   ui.btnWatch.addEventListener('click',watchSmoothEpisode);
+  ui.autoButton?.addEventListener('click',()=>{
+    const targetMode=autoActive?'manual':'auto';
+    setTrainingMode(targetMode);
+  });
   ui.btnToggleLiveView?.addEventListener('click',()=>{
     setLiveViewHidden(!liveViewHidden);
   });
@@ -4388,16 +4499,21 @@ function bindUI(){
       const code=prompt('Ange säkerhetskod för att aktivera AI Auto-Tune:');
       if(code!=='1234554321'){
         ui.aiAutoTuneToggle.checked=false;
-        aiAutoTuneEnabled=false;
         flash('Fel kod. AI Auto-Tune förblir avstängd.',true);
+        applyTuneMode();
         return;
       }
     }
-    aiAutoTuneEnabled=ui.aiAutoTuneToggle.checked;
-    if(aiTuner) aiTuner.setEnabled(aiAutoTuneEnabled);
-    const detail=aiAutoTuneEnabled?'Aktiverad':'Avstängd';
+    applyTuneMode();
+    let detail;
+    if(tuneMode===TUNE_MODES.AI){
+      detail='AI Auto-Tune aktiverad – ändringar appliceras automatiskt.';
+    }else if(autoActive){
+      detail='AI Auto-Tune avstängd – kör klassisk auto-reglering.';
+    }else{
+      detail='Analysläge aktivt – AI föreslår utan att applicera.';
+    }
     logAITunerEvent({title:'AI Auto-Tune',detail,tone:'ai',episodeNumber:episode});
-    updateAutoLogVisibility();
   });
   ui.fileLoader?.addEventListener('change',async ev=>{
     const [file]=ev.target.files||[];
@@ -4427,6 +4543,7 @@ function bindUI(){
   applyRewardsToEnv();
   updateControlAvailability();
   setTrainingMode(trainingMode);
+  updateTuneModeUI();
   updateAutoLogVisibility();
   updateAiIntervalReadout();
   setAiAutoStyle(aiAutoTuneStyle,{announce:false});
@@ -4573,6 +4690,8 @@ function setTrainingMode(mode){
     autoRunStopEpisode=null;
   }
   if(trainingMode==='auto') ui.envCount.disabled=true;
+  autoActive=trainingMode==='auto';
+  applyTuneMode();
   updateControlAvailability();
   updateReadouts();
   updateAiRunLimitHint();
@@ -6023,7 +6142,7 @@ aiTuner=createAITuner({
   handleGroqResponse,
 });
 aiTuner.setInterval(aiAnalysisInterval);
-aiTuner.setEnabled(aiAutoTuneEnabled);
+aiTuner.setEnabled(tuneMode!==TUNE_MODES.CLASSIC);
 
 window.addEventListener('load',()=>{
   bindUI();
