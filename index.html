@@ -199,6 +199,46 @@ canvas#board{
   border:1px solid rgba(128,138,206,0.2);
   box-shadow:0 16px 34px rgba(6,10,30,0.38);
 }
+.auto-tune-controls{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+}
+.auto-tune-controls .toggle{
+  margin-left:auto;
+}
+.tune-status{
+  font-size:12px;
+  font-weight:600;
+  color:#c7cdef;
+  background:rgba(24,29,70,0.75);
+  border:1px solid rgba(128,138,206,0.3);
+  border-radius:12px;
+  padding:8px 12px;
+  box-shadow:0 12px 24px rgba(6,10,32,0.32);
+}
+button.btn{
+  position:relative;
+  padding:11px 20px;
+  font-weight:700;
+  min-width:140px;
+}
+button.btn.blue{
+  background:linear-gradient(135deg,#2563eb,#1d4ed8);
+  box-shadow:0 16px 32px rgba(37,99,235,0.35);
+}
+button.btn.purple{
+  background:linear-gradient(135deg,#8b5cf6,#7c3aed);
+  box-shadow:0 16px 32px rgba(139,92,246,0.4);
+}
+button.btn.green{
+  background:linear-gradient(135deg,#10b981,#059669);
+  box-shadow:0 16px 32px rgba(16,185,129,0.35);
+}
+button.btn[aria-pressed="true"]{
+  transform:translateY(-1px);
+}
 .ai-auto-tune__header{
   display:flex;
   align-items:center;
@@ -966,8 +1006,9 @@ footer{
       <div class="pill-group" id="modeGroup" role="group" aria-label="Training mode">
         <button type="button" class="pill active" data-mode="manual">Manual</button>
         <button type="button" class="pill" data-mode="auto">Auto</button>
+        <button type="button" class="pill" data-mode="ai">AI</button>
       </div>
-      <span class="hint">Auto handles the curriculum, save logic, and hyperparameters for you.</span>
+      <span class="hint">Manual = inga ändringar · Auto = klassisk autojustering · AI = analys &amp; justering.</span>
     </div>
     <div class="field block">
       <label for="algoSelect">Algorithm</label>
@@ -998,16 +1039,14 @@ footer{
         </div>
       </div>
 
+      <div id="tuneStatus" class="tune-status" role="status" aria-live="polite">⚪ Manuell – inga automatiska justeringar</div>
+
       <div class="ai-auto-tune__controls" role="group" aria-label="AI Auto-Tune inställningar">
         <section class="ai-auto-tune__column" aria-labelledby="aiAutoTuneAiHeading">
           <h4 id="aiAutoTuneAiHeading">AI-analys</h4>
           <div class="field compact ai-interval-field">
             <div class="field-header">
               <label for="aiIntervalSlider">Analysintervall</label>
-              <label class="toggle" for="aiAutoTuneToggle">
-                <input type="checkbox" id="aiAutoTuneToggle" aria-label="Aktivera AI Auto-Tune">
-                <span>Aktivera</span>
-              </label>
             </div>
             <input type="range" id="aiIntervalSlider" min="100" max="5000" step="100" value="500">
             <span class="hint">Number of episodes between AI analysis calls.</span>
@@ -3523,7 +3562,7 @@ const ui={
   modeButtons:Array.from(document.querySelectorAll('#modeGroup .pill')),
   algoSelect:document.getElementById('algoSelect'),
   algoDescription:document.getElementById('algoDescription'),
-  aiAutoTuneToggle:document.getElementById('aiAutoTuneToggle'),
+  tuneStatus:document.getElementById('tuneStatus'),
   aiIntervalSlider:document.getElementById('aiIntervalSlider'),
   aiIntervalReadout:document.getElementById('aiIntervalReadout'),
   aiRunLimit:document.getElementById('aiRunLimit'),
@@ -3666,6 +3705,13 @@ const rewardTelemetry=createRewardTelemetry(1200);
 let contexts=[];
 let renderTick=0;
 let trainingMode='manual';
+const TUNE_MODES={
+  MANUAL:'manual',
+  CLASSIC:'classic',
+  AI:'ai',
+};
+let tuneMode=TUNE_MODES.MANUAL;
+let autoActive=false;
 let autoPilot=null;
 const autoLogEntries=[];
 const MAX_AUTO_LOG_ENTRIES=24;
@@ -3782,8 +3828,41 @@ function resetAutoLog(){
 }
 function updateAutoLogVisibility(){
   if(!ui.autoLogPanel) return;
-  const shouldShow=trainingMode==='auto'||aiAutoTuneEnabled;
-  ui.autoLogPanel.classList.toggle('hidden',!shouldShow);
+  ui.autoLogPanel.classList.toggle('hidden',!autoActive);
+}
+
+function updateTuneModeUI(){
+  if(!ui.tuneStatus) return;
+  if(tuneMode===TUNE_MODES.MANUAL){
+    ui.tuneStatus.textContent='⚪ Manuell – inga automatiska justeringar';
+  }else if(tuneMode===TUNE_MODES.CLASSIC){
+    ui.tuneStatus.textContent='🟣 Auto – klassisk autojustering';
+  }else if(tuneMode===TUNE_MODES.AI){
+    ui.tuneStatus.textContent='🟢 AI – analys och automatiska justeringar';
+  }
+}
+
+function applyTuneMode(){
+  if(trainingMode==='manual'){
+    tuneMode=TUNE_MODES.MANUAL;
+    autoActive=false;
+    aiAutoTuneEnabled=false;
+  }else if(trainingMode==='auto'){
+    tuneMode=TUNE_MODES.CLASSIC;
+    autoActive=true;
+    aiAutoTuneEnabled=false;
+  }else if(trainingMode==='ai'){
+    tuneMode=TUNE_MODES.AI;
+    autoActive=true;
+    aiAutoTuneEnabled=true;
+  }else{
+    tuneMode=TUNE_MODES.MANUAL;
+    autoActive=false;
+    aiAutoTuneEnabled=false;
+  }
+  if(aiTuner) aiTuner.setEnabled(tuneMode===TUNE_MODES.AI);
+  updateAutoLogVisibility();
+  updateTuneModeUI();
 }
 function logAutoEvent({title='',detail='',metrics=null,tone='info',episode=null}={}){
   if(!ui.autoLogStream) return;
@@ -3861,7 +3940,7 @@ function describeAutoAdjustment(adj={}){
   return res;
 }
 function logAutoAdjustments(adjustments=[]){
-  if(trainingMode!=='auto') return;
+  if(tuneMode===TUNE_MODES.MANUAL) return;
   if(!Array.isArray(adjustments)||!adjustments.length) return;
   adjustments.forEach(adj=>{
     const metrics=adj.metrics||lastAutoMetrics;
@@ -3873,7 +3952,7 @@ function logAutoAdjustments(adjustments=[]){
   });
 }
 function logAutoSummary(metrics,episodeNumber){
-  if(trainingMode!=='auto') return;
+  if(tuneMode===TUNE_MODES.MANUAL) return;
   if(!metrics) return;
   logAutoEvent({title:'Auto check-in',detail:'No new adjustments',metrics,tone:'summary',episode:episodeNumber});
 }
@@ -3923,7 +4002,7 @@ function updateAiRunLimitHint(reachedTarget=false){
     ui.aiRunLimitHint.textContent=`Target reached – ${preset.label} mode paused after ${autoRunLimit} episodes`;
     return;
   }
-  if(trainingMode==='auto' && training && autoRunStopEpisode){
+  if(autoActive && training && autoRunStopEpisode){
     const remaining=Math.max(0,autoRunStopEpisode-episode);
     ui.aiRunLimitHint.textContent=`Pausing after ${autoRunLimit} episodes (${remaining} remaining)`;
   }else{
@@ -3932,7 +4011,7 @@ function updateAiRunLimitHint(reachedTarget=false){
 }
 
 function scheduleAutoRunTarget(){
-  if(trainingMode==='auto' && training && autoRunLimit>0){
+  if(autoActive && training && autoRunLimit>0){
     autoRunStopEpisode=episode+autoRunLimit;
   }else{
     autoRunStopEpisode=null;
@@ -3949,7 +4028,7 @@ function applyAiRunLimitFromUI(){
   }else{
     ui.aiRunLimit.value='';
   }
-  if(training && trainingMode==='auto' && autoRunLimit>0){
+  if(training && autoActive && autoRunLimit>0){
     scheduleAutoRunTarget();
   }else{
     autoRunStopEpisode=null;
@@ -4166,9 +4245,11 @@ function applyAITunerRewardConfig(newConfig={}){
     result.changes.push({key,oldValue:current,newValue:clamped});
   });
   if(result.changes.length){
-    applyRewardConfigToUI(merged);
-    rewardConfig={...merged};
-    result.config={...merged};
+    if(aiAutoTuneEnabled){
+      applyRewardConfigToUI(merged);
+      rewardConfig={...merged};
+      result.config={...merged};
+    }
   }
   return result;
 }
@@ -4185,7 +4266,9 @@ function applyAITunerHyperparameters(updates={}){
     if(input.max!==''&&input.max!==undefined) num=Math.min(num,+input.max);
     const current=+input.value;
     if(Math.abs(current-num)<1e-6) return;
-    input.value=`${num}`;
+    if(aiAutoTuneEnabled){
+      input.value=`${num}`;
+    }
     result.changes.push({key:keyLabel,oldValue:current,newValue:num});
   };
   if(updates.gamma!==undefined) setValue('gamma',updates.gamma,'gamma');
@@ -4215,13 +4298,13 @@ function applyAITunerHyperparameters(updates={}){
   if(updates.clip!==undefined&&agent?.kind==='ppo') setValue('ppoClip',updates.clip,'ppoClip');
   if(updates.lambda!==undefined&&agent?.kind==='ppo') setValue('ppoLambda',updates.lambda,'ppoLambda');
   if(updates.epochs!==undefined&&agent?.kind==='ppo') setValue('ppoEpochs',updates.epochs,'ppoEpochs');
-  if(result.changes.length){
+  if(result.changes.length&&aiAutoTuneEnabled){
     updateReadouts();
     applyConfigToAgent();
     result.hyper=getHyperparameterSnapshot();
-  }
-  if(result.hyper){
-    hyperParams={...result.hyper};
+    if(result.hyper){
+      hyperParams={...result.hyper};
+    }
   }
   return result;
 }
@@ -4296,7 +4379,7 @@ async function handleGroqResponse(responseJson){
       const rewardResult=applyAITunerRewardConfig(parsed.rewardConfig);
       if(rewardResult?.config){
         Object.assign(rewardConfig,rewardResult.config);
-      }else{
+      }else if(aiAutoTuneEnabled){
         Object.assign(rewardConfig,parsed.rewardConfig);
         applyRewardsToEnv();
       }
@@ -4308,10 +4391,12 @@ async function handleGroqResponse(responseJson){
       const hyperResult=applyAITunerHyperparameters(parsed.hyper);
       if(hyperResult?.hyper){
         hyperParams={...hyperResult.hyper};
-      }else if(typeof getHyperparameterSnapshot==='function'){
-        hyperParams={...getHyperparameterSnapshot(),...parsed.hyper};
-      }else{
-        hyperParams={...hyperParams,...parsed.hyper};
+      }else if(aiAutoTuneEnabled){
+        if(typeof getHyperparameterSnapshot==='function'){
+          hyperParams={...getHyperparameterSnapshot(),...parsed.hyper};
+        }else{
+          hyperParams={...hyperParams,...parsed.hyper};
+        }
       }
     }
 
@@ -4383,22 +4468,6 @@ function bindUI(){
       setAiAutoStyle(btn.dataset.style||DEFAULT_AUTO_STYLE);
     });
   });
-  ui.aiAutoTuneToggle?.addEventListener('change',()=>{
-    if(ui.aiAutoTuneToggle.checked){
-      const code=prompt('Ange säkerhetskod för att aktivera AI Auto-Tune:');
-      if(code!=='1234554321'){
-        ui.aiAutoTuneToggle.checked=false;
-        aiAutoTuneEnabled=false;
-        flash('Fel kod. AI Auto-Tune förblir avstängd.',true);
-        return;
-      }
-    }
-    aiAutoTuneEnabled=ui.aiAutoTuneToggle.checked;
-    if(aiTuner) aiTuner.setEnabled(aiAutoTuneEnabled);
-    const detail=aiAutoTuneEnabled?'Aktiverad':'Avstängd';
-    logAITunerEvent({title:'AI Auto-Tune',detail,tone:'ai',episodeNumber:episode});
-    updateAutoLogVisibility();
-  });
   ui.fileLoader?.addEventListener('change',async ev=>{
     const [file]=ev.target.files||[];
     if(file) await loadTrainingFromFile(file);
@@ -4427,11 +4496,11 @@ function bindUI(){
   applyRewardsToEnv();
   updateControlAvailability();
   setTrainingMode(trainingMode);
+  updateTuneModeUI();
   updateAutoLogVisibility();
   updateAiIntervalReadout();
   setAiAutoStyle(aiAutoTuneStyle,{announce:false});
   updateAiRunLimitHint();
-  if(ui.aiAutoTuneToggle) ui.aiAutoTuneToggle.checked=aiAutoTuneEnabled;
   updateCheckpointToggleUI();
   updateProgressChart();
 }
@@ -4448,7 +4517,7 @@ function updateGridLabel(){
 }
 function updateControlAvailability(){
   if(ui.btnStep){
-    ui.btnStep.disabled=trainingMode==='auto'||envCount>1;
+    ui.btnStep.disabled=(trainingMode!=='manual')||envCount>1;
   }
 }
 function createContextSlot(index,state){
@@ -4476,7 +4545,7 @@ function ensureContextPool(){
 }
 function reconfigureEnvironment({count=envCount,size=COLS,force=false}={}){
   let desiredCount=Math.max(1,count|0);
-  if(trainingMode==='auto'){
+  if(trainingMode!=='manual'){
     desiredCount=Math.max(12,desiredCount);
   }
   const desiredSize=Math.max(8,(+size)|0);
@@ -4521,19 +4590,25 @@ function applyEnvCountFromUI(){
   if(wasTraining&&!watching) startTraining();
 }
 function setTrainingMode(mode){
-  let next=mode==='auto'?'auto':'manual';
+  const allowed=['manual','auto','ai'];
+  let next=allowed.includes(mode)?mode:'manual';
   const wasTraining=training;
   const prevMode=trainingMode;
-  if(next==='auto' && agent?.kind!=='dqn'){
-    flash('Auto mode requires a DQN agent',true);
+  const wantsAutomation=next!=='manual';
+  if(wantsAutomation && agent?.kind!=='dqn'){
+    flash('Auto- och AI-lägen kräver en DQN-agent',true);
     next='manual';
   }
   if(wasTraining) stopTraining();
   trainingMode=next;
   ui.modeButtons.forEach(btn=>btn.classList.toggle('active',btn.dataset.mode===trainingMode));
-  if(trainingMode==='auto'){
-    const firstActivation=prevMode!=='auto';
-    autoPilot=new BrowserAutoPilot({rewardConfig:{...rewardConfig}});
+  if(trainingMode!=='manual'){
+    const firstActivation=prevMode==='manual'||!autoPilot;
+    if(firstActivation){
+      autoPilot=new BrowserAutoPilot({rewardConfig:{...rewardConfig}});
+      lastAutoMetrics=null;
+      lastAutoSummaryEpisode=0;
+    }
     autoPilot.setAgent(agent);
     autoPilot.setTuningStyle(aiAutoTuneStyle);
     const desiredCount=Math.max(12,envCount);
@@ -4542,6 +4617,7 @@ function setTrainingMode(mode){
       ui.gridSize.value='10';
       updateGridLabel();
       reconfigureEnvironment({count:desiredCount,size:10,force:true});
+      resetAutoLog();
     }else{
       reconfigureEnvironment({count:desiredCount,size:+ui.gridSize.value,force:true});
     }
@@ -4551,17 +4627,15 @@ function setTrainingMode(mode){
     lastAutoMetrics=null;
     lastAutoSummaryEpisode=autoPilot?.episode||0;
     autoPilot.lastEvaluationEpisode=autoPilot.episode||0;
-    if(firstActivation){
-      resetAutoLog();
-      updateAutoLogVisibility();
+    if(prevMode!==trainingMode){
+      const modeLabel=trainingMode==='ai'?'AI-läge':'Auto-läge';
+      const tone=trainingMode==='ai'?'ai':'info';
       logAutoEvent({
-        title:'Auto mode activated',
+        title:`${modeLabel} aktiverat`,
         detail:`${envCount} environments • ${COLS}×${ROWS}`,
-        tone:'info',
+        tone,
         episode:autoPilot?.episode||0,
       });
-    }else{
-      updateAutoLogVisibility();
     }
     ui.envCount.disabled=true;
   }else{
@@ -4569,10 +4643,10 @@ function setTrainingMode(mode){
     ui.envCount.disabled=agent?.kind!=='dqn';
     lastAutoMetrics=null;
     lastAutoSummaryEpisode=0;
-    updateAutoLogVisibility();
     autoRunStopEpisode=null;
   }
-  if(trainingMode==='auto') ui.envCount.disabled=true;
+  if(trainingMode!=='manual') ui.envCount.disabled=true;
+  applyTuneMode();
   updateControlAvailability();
   updateReadouts();
   updateAiRunLimitHint();
@@ -5060,7 +5134,7 @@ function instantiateAgent(key,opts={}){
   currentStagePresetKey='';
   refreshStagePresetOptions(currentAlgoKey,{preserveSelection:false});
   resetTrainingStats();
-  if(agent.kind!=='dqn' && trainingMode==='auto'){
+  if(agent.kind!=='dqn' && trainingMode!=='manual'){
     setTrainingMode('manual');
   }
   if(agent.kind!=='dqn'){
@@ -5420,7 +5494,7 @@ async function finalizeContextEpisode(ctx,envIndex){
   }
   const latestLoss=lossHist.length?lossHist[lossHist.length-1]:null;
   let adjustments=[];
-  if(trainingMode==='auto' && autoPilot){
+  if(autoActive && autoPilot){
     autoPilot.setAgent(agent);
     autoPilot.recordEpisode({
       fruits:ctx.fruits,
@@ -5450,16 +5524,17 @@ async function finalizeContextEpisode(ctx,envIndex){
       lastAutoSummaryEpisode=autoEpisode;
     }
   }
-  if(trainingMode==='auto' && autoRunLimit>0){
+  if(autoActive && autoRunLimit>0){
     if(autoRunStopEpisode && episode>=autoRunStopEpisode){
       const preset=AUTO_TUNING_STYLES[aiAutoTuneStyle]||AUTO_TUNING_STYLES[DEFAULT_AUTO_STYLE];
+      const modeLabel=tuneMode===TUNE_MODES.AI?'AI-läge':'Auto-läge';
       logAutoEvent({
-        title:'Auto-run pausad',
+        title:`${modeLabel} pausat`,
         detail:`${autoRunLimit} episoder i ${preset.label.toLowerCase()} läge`,
         tone:'summary',
         episode:autoPilot?.episode||episode,
       });
-      flash('Mål nått – AI Auto-Tune pausad.');
+      flash(`Mål nått – ${modeLabel} pausat.`);
       stopTraining({reachedTarget:true});
       autoRunStopEpisode=null;
     }else if(autoRunStopEpisode){
@@ -5857,7 +5932,7 @@ function applyMeta(meta={}){
   updateRewardTelemetryUI();
   const hasMetaCount=typeof meta.envCount==='number';
   let nextCount=hasMetaCount?meta.envCount:envCount;
-  if(trainingMode==='auto'){
+  if(trainingMode!=='manual'){
     nextCount=Math.max(12,nextCount||12);
   }else{
     nextCount=Math.max(1,nextCount||1);
@@ -5871,7 +5946,7 @@ function applyMeta(meta={}){
     updateGridLabel();
   }
   reconfigureEnvironment({count:nextCount,size:nextSize,force:true});
-  if(trainingMode==='auto' && autoPilot){
+  if(trainingMode!=='manual' && autoPilot){
     const stageIdx=autoPilot.boardStages.findIndex(stage=>stage.size===COLS);
     if(stageIdx>=0) autoPilot.stageIndex=stageIdx;
   }
@@ -6023,7 +6098,7 @@ aiTuner=createAITuner({
   handleGroqResponse,
 });
 aiTuner.setInterval(aiAnalysisInterval);
-aiTuner.setEnabled(aiAutoTuneEnabled);
+aiTuner.setEnabled(tuneMode!==TUNE_MODES.CLASSIC);
 
 window.addEventListener('load',()=>{
   bindUI();
