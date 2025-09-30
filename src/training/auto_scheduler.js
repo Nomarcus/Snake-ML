@@ -2,15 +2,15 @@ import { clamp } from '../utils/ring_buffer.js';
 import { MetricsCollector } from './metrics_collector.js';
 
 const EPS_END_MIN = 0.01;
-const EPS_END_MAX = 0.3;
+const EPS_END_MAX = 0.6;
 const EPS_DECAY_MIN = 5000;
-const EPS_DECAY_MAX = 200000;
+const EPS_DECAY_MAX = 500000;
 const GAMMA_MIN = 0.9;
 const GAMMA_MAX = 0.999;
-const LR_MIN = 2e-4;
-const LR_MAX = 5e-4;
+const LR_MIN = 1e-4;
+const LR_MAX = 2e-2;
 const NSTEP_MIN = 1;
-const NSTEP_MAX = 5;
+const NSTEP_MAX = 10;
 const ADJUST_COOLDOWN_EPISODES = 500;
 const EVAL_INTERVAL_EPISODES = 2000;
 const ROLLBACK_WINDOW_EPISODES = 5000;
@@ -239,24 +239,24 @@ export class AutoScheduler {
 
   _adjustRewards(agent, rewardConfig, metrics, episode, adjustments) {
     if (metrics.loopHitRate > 0.01 && metrics.fruitSlope <= 0 && this._canAdjust('reward-loop', episode)) {
-      rewardConfig.loopPenalty = clamp((rewardConfig.loopPenalty ?? 0.5) + 0.05, 0, 1);
+      rewardConfig.loopPenalty = clamp((rewardConfig.loopPenalty ?? 0.5) + 0.05, 0, 3);
       rewardConfig.compactWeight = 0;
       adjustments.push({ type: 'reward', key: 'loopPenalty', value: rewardConfig.loopPenalty });
     }
     if (metrics.revisitRate > 0.01 && this._canAdjust('reward-revisit', episode)) {
-      rewardConfig.revisitPenalty = clamp((rewardConfig.revisitPenalty ?? 0.05) + 0.005, 0, 0.1);
+      rewardConfig.revisitPenalty = clamp((rewardConfig.revisitPenalty ?? 0.05) + 0.005, 0, 0.3);
       const newEnd = clamp(agent.epsEnd + 0.02, EPS_END_MIN, EPS_END_MAX);
       agent.setEpsilonSchedule({ end: newEnd });
       adjustments.push({ type: 'reward', key: 'revisitPenalty', value: rewardConfig.revisitPenalty });
     }
     if (metrics.crashRateSelf > 0.4 && this._canAdjust('reward-self', episode)) {
-      rewardConfig.selfPenalty = clamp((rewardConfig.selfPenalty ?? 25.5) + 1, 0, 30);
-      rewardConfig.turnPenalty = clamp((rewardConfig.turnPenalty ?? 0.001) - 0.0002, 0, 0.02);
+      rewardConfig.selfPenalty = clamp((rewardConfig.selfPenalty ?? 25.5) + 1, 0, 150);
+      rewardConfig.turnPenalty = clamp((rewardConfig.turnPenalty ?? 0.001) - 0.0002, 0, 0.05);
       adjustments.push({ type: 'reward', key: 'selfPenalty', value: rewardConfig.selfPenalty });
     }
     if (metrics.timeToFruitAvg > 200 && metrics.loopHitRate < 0.005 && metrics.revisitRate < 0.005 && this._canAdjust('reward-fruit', episode)) {
-      rewardConfig.approachBonus = clamp((rewardConfig.approachBonus ?? 0.03) + 0.005, 0, 0.1);
-      rewardConfig.retreatPenalty = clamp((rewardConfig.retreatPenalty ?? 0.03) + 0.005, 0, 0.1);
+      rewardConfig.approachBonus = clamp((rewardConfig.approachBonus ?? 0.03) + 0.005, 0, 0.3);
+      rewardConfig.retreatPenalty = clamp((rewardConfig.retreatPenalty ?? 0.03) + 0.005, 0, 0.3);
       adjustments.push({ type: 'reward', key: 'approachBonus', value: rewardConfig.approachBonus });
     }
   }

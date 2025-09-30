@@ -1010,20 +1010,21 @@ footer{
               </label>
             </div>
             <input type="range" id="aiIntervalSlider" min="100" max="5000" step="100" value="500">
+            <span class="hint">Number of episodes between AI analysis calls.</span>
             <span class="mono" id="aiIntervalReadout">500 ep</span>
           </div>
         </section>
         <section class="ai-auto-tune__column" aria-labelledby="aiAutoTuneAutoHeading">
-         
+
         <h4 id="aiAutoTuneAutoHeading">Auto-körning</h4>
 <div class="field compact">
   <label for="aiRunLimit">Rundor att köra</label>
   <input type="number" id="aiRunLimit" min="0" step="100" inputmode="numeric" placeholder="0"
          style="width: 70px; padding: 2px; font-size: 14px;">
-  <span class="hint" id="aiRunLimitHint">0 = obegränsat</span>
+  <span class="hint" id="aiRunLimitHint">0 = unlimited auto-run cycles.</span>
 </div>
          <div class="field">
-            <span class="hint">Justeringstempo</span>
+            <span class="hint">Adjustment tempo</span>
             <div class="pill-group" id="aiStyleGroup" role="group" aria-label="Justeringstempo">
               <button type="button" class="pill" data-style="calm">Lugn</button>
               <button type="button" class="pill active" data-style="balanced">Medel</button>
@@ -1116,21 +1117,25 @@ footer{
         <h3>Tempo &amp; direction</h3>
         <div class="row">
           <label>Step penalty
-            <input type="range" id="rewardStep" min="0" max="0.05" step="0.001" value="0.010">
+            <span class="hint">Penalizes every move so the snake keeps routes efficient.</span>
+            <input type="range" id="rewardStep" min="0" max="0.2" step="0.001" value="0.010">
             <span class="mono" id="rewardStepReadout">0.010</span>
           </label>
           <label>Turn penalty
-            <input type="range" id="rewardTurn" min="0" max="0.02" step="0.001" value="0.001">
+            <span class="hint">Adds cost to direction changes to discourage zig-zags.</span>
+            <input type="range" id="rewardTurn" min="0" max="0.05" step="0.001" value="0.001">
             <span class="mono" id="rewardTurnReadout">0.001</span>
           </label>
           <label>Toward fruit bonus
-            <input type="range" id="rewardApproach" min="0" max="0.1" step="0.005" value="0.030">
+            <span class="hint">Rewards steps that move the head closer to the fruit.</span>
+            <input type="range" id="rewardApproach" min="0" max="0.3" step="0.005" value="0.030">
             <span class="mono" id="rewardApproachReadout">0.030</span>
           </label>
         </div>
         <div class="row">
           <label>Away from fruit penalty
-            <input type="range" id="rewardRetreat" min="0" max="0.1" step="0.005" value="0.030">
+            <span class="hint">Punishes moves that increase the distance to the fruit.</span>
+            <input type="range" id="rewardRetreat" min="0" max="0.3" step="0.005" value="0.030">
             <span class="mono" id="rewardRetreatReadout">0.030</span>
           </label>
         </div>
@@ -1139,11 +1144,13 @@ footer{
         <h3>Loops &amp; revisits</h3>
         <div class="row">
           <label>Loop penalty
-            <input type="range" id="rewardLoop" min="0" max="1" step="0.01" value="0.50">
+            <span class="hint">Applies extra loss when the snake repeats tight loops.</span>
+            <input type="range" id="rewardLoop" min="0" max="3" step="0.01" value="0.50">
             <span class="mono" id="rewardLoopReadout">0.50</span>
           </label>
           <label>Revisit penalty
-            <input type="range" id="rewardRevisit" min="0" max="0.1" step="0.001" value="0.050">
+            <span class="hint">Penalizes revisiting recent tiles to promote exploration.</span>
+            <input type="range" id="rewardRevisit" min="0" max="0.3" step="0.001" value="0.050">
             <span class="mono" id="rewardRevisitReadout">0.050</span>
           </label>
         </div>
@@ -1152,25 +1159,30 @@ footer{
         <h3>Crashes &amp; stalling</h3>
         <div class="row">
           <label>Wall crash
-            <input type="range" id="rewardWall" min="0" max="30" step="0.5" value="10">
+            <span class="hint">Sets the penalty when the snake hits the board edge.</span>
+            <input type="range" id="rewardWall" min="0" max="100" step="0.5" value="10">
             <span class="mono" id="rewardWallReadout">10.0</span>
           </label>
           <label>Self crash
-            <input type="range" id="rewardSelf" min="0" max="30" step="0.5" value="25.5">
+            <span class="hint">Sets the penalty for colliding with the snake's own body.</span>
+            <input type="range" id="rewardSelf" min="0" max="150" step="0.5" value="25.5">
             <span class="mono" id="rewardSelfReadout">25.5</span>
           </label>
           <label>Timeout penalty
-            <input type="range" id="rewardTimeout" min="0" max="20" step="0.5" value="5">
+            <span class="hint">Charges a penalty if no fruit is eaten before the timer expires.</span>
+            <input type="range" id="rewardTimeout" min="0" max="60" step="0.5" value="5">
             <span class="mono" id="rewardTimeoutReadout">5.0</span>
           </label>
         </div>
         <div class="row">
           <label>Trap penalty
-            <input type="range" id="rewardTrap" min="0" max="2" step="0.05" value="0.50">
+            <span class="hint">Punishes creating dead-end pockets around the head.</span>
+            <input type="range" id="rewardTrap" min="0" max="5" step="0.05" value="0.50">
             <span class="mono" id="rewardTrapReadout">0.50</span>
           </label>
           <label>Open space bonus
-            <input type="range" id="rewardSpace" min="0" max="0.2" step="0.01" value="0.05">
+            <span class="hint">Rewards leaving breathable space around the head.</span>
+            <input type="range" id="rewardSpace" min="0" max="0.5" step="0.01" value="0.05">
             <span class="mono" id="rewardSpaceReadout">0.05</span>
           </label>
         </div>
@@ -1179,15 +1191,18 @@ footer{
         <h3>High-impact rewards</h3>
         <div class="row">
           <label>Fruit reward
-            <input type="range" id="rewardFruit" min="0" max="30" step="0.5" value="10">
+            <span class="hint">Defines the main reward granted when fruit is eaten.</span>
+            <input type="range" id="rewardFruit" min="0" max="120" step="0.5" value="10">
             <span class="mono" id="rewardFruitReadout">10.0</span>
           </label>
-          <label>Tillväxtbonus
-            <input type="range" id="rewardGrowth" min="0" max="5" step="0.1" value="1.0">
+          <label>Growth bonus
+            <span class="hint">Adds a bonus for extending the snake's length.</span>
+            <input type="range" id="rewardGrowth" min="0" max="20" step="0.1" value="1.0">
             <span class="mono" id="rewardGrowthReadout">1.0</span>
           </label>
           <label>Compactness bonus
-            <input type="range" id="rewardCompact" min="0" max="0.1" step="0.001" value="0.000">
+            <span class="hint">Rewards tighter body packing inside the bounding box.</span>
+            <input type="range" id="rewardCompact" min="0" max="0.3" step="0.001" value="0.000">
             <span class="mono" id="rewardCompactReadout">0.000</span>
           </label>
         </div>
@@ -1200,15 +1215,18 @@ footer{
         <h3>Shared</h3>
         <div class="row">
           <label>Parallel environments
-            <input type="range" id="envCount" min="1" max="24" step="1" value="1">
+            <span class="hint">Number of simultaneous game instances for experience collection.</span>
+            <input type="range" id="envCount" min="1" max="48" step="1" value="1">
             <span class="mono" id="envCountReadout">1</span>
           </label>
           <label>γ (discount)
+            <span class="hint">Discount factor balancing immediate and future rewards.</span>
             <input type="range" id="gamma" min="0.90" max="0.999" step="0.001" value="0.98">
             <span class="mono" id="gammaReadout">0.98</span>
           </label>
           <label>LR
-            <input type="range" id="lr" min="0.0001" max="0.005" step="0.0001" value="0.0005">
+            <span class="hint">Learning rate controlling the optimizer step size.</span>
+            <input type="range" id="lr" min="0.0001" max="0.02" step="0.0001" value="0.0005">
             <span class="mono" id="lrReadout">0.0005</span>
           </label>
         </div>
@@ -1217,42 +1235,51 @@ footer{
         <h3>DQN family</h3>
         <div class="row">
           <label>ε start
+            <span class="hint">Initial exploration probability at the start of training.</span>
             <input type="range" id="epsStart" min="0.2" max="1.0" step="0.05" value="1.0">
             <span class="mono" id="epsStartReadout">1.00</span>
           </label>
           <label>ε end
-            <input type="range" id="epsEnd" min="0.01" max="0.3" step="0.01" value="0.12">
+            <span class="hint">Minimum exploration probability after decay completes.</span>
+            <input type="range" id="epsEnd" min="0.01" max="0.6" step="0.01" value="0.12">
             <span class="mono" id="epsEndReadout">0.12</span>
           </label>
           <label>ε decay (steps)
-            <input type="range" id="epsDecay" min="5000" max="200000" step="5000" value="80000">
+            <span class="hint">Number of steps before ε reaches the floor value.</span>
+            <input type="range" id="epsDecay" min="5000" max="500000" step="5000" value="80000">
             <span class="mono" id="epsDecayReadout">80000</span>
           </label>
         </div>
         <div class="row">
           <label>Batch
-            <input type="range" id="batchSize" min="32" max="512" step="32" value="128">
+            <span class="hint">Samples drawn per gradient update from replay memory.</span>
+            <input type="range" id="batchSize" min="32" max="1024" step="32" value="128">
             <span class="mono" id="batchReadout">128</span>
           </label>
           <label>Replay size
-            <input type="range" id="bufferSize" min="5000" max="200000" step="5000" value="50000">
+            <span class="hint">Capacity of the experience replay buffer.</span>
+            <input type="range" id="bufferSize" min="5000" max="400000" step="5000" value="50000">
             <span class="mono" id="bufferReadout">50000</span>
           </label>
           <label>Target sync (steps)
-            <input type="range" id="targetSync" min="500" max="10000" step="500" value="2000">
+            <span class="hint">Frequency of copying weights to the target network.</span>
+            <input type="range" id="targetSync" min="500" max="50000" step="500" value="2000">
             <span class="mono" id="targetSyncReadout">2000</span>
           </label>
         </div>
         <div class="row">
           <label>n-step
-            <input type="range" id="nStep" min="1" max="5" step="1" value="3">
+            <span class="hint">Horizon length for multi-step return targets.</span>
+            <input type="range" id="nStep" min="1" max="10" step="1" value="3">
             <span class="mono" id="nStepReadout">3</span>
           </label>
           <label>PER α
+            <span class="hint">Strength of TD-error prioritisation when sampling replay.</span>
             <input type="range" id="priorityAlpha" min="0.1" max="1" step="0.05" value="0.6">
             <span class="mono" id="alphaReadout">0.60</span>
           </label>
           <label>PER β
+            <span class="hint">Bias correction term that anneals prioritised replay.</span>
             <input type="range" id="priorityBeta" min="0.1" max="1" step="0.05" value="0.4">
             <span class="mono" id="betaReadout">0.40</span>
           </label>
@@ -1262,7 +1289,8 @@ footer{
         <h3>Policy Gradient</h3>
         <div class="row">
           <label>Entropy weight
-            <input type="range" id="pgEntropy" min="0" max="0.05" step="0.001" value="0.01">
+            <span class="hint">Entropy bonus encouraging exploration in the policy.</span>
+            <input type="range" id="pgEntropy" min="0" max="0.15" step="0.001" value="0.01">
             <span class="mono" id="pgEntropyReadout">0.010</span>
           </label>
         </div>
@@ -1271,11 +1299,13 @@ footer{
         <h3>Actor-Critic</h3>
         <div class="row">
           <label>Entropy weight
-            <input type="range" id="acEntropy" min="0" max="0.05" step="0.001" value="0.005">
+            <span class="hint">Exploration bonus for the actor distribution.</span>
+            <input type="range" id="acEntropy" min="0" max="0.15" step="0.001" value="0.005">
             <span class="mono" id="acEntropyReadout">0.005</span>
           </label>
           <label>Value weight
-            <input type="range" id="acValueCoef" min="0.1" max="1.0" step="0.05" value="0.5">
+            <span class="hint">Scale applied to the critic loss inside the objective.</span>
+            <input type="range" id="acValueCoef" min="0.1" max="2.5" step="0.05" value="0.5">
             <span class="mono" id="acValueCoefReadout">0.50</span>
           </label>
         </div>
@@ -1284,29 +1314,35 @@ footer{
         <h3>PPO</h3>
         <div class="row">
           <label>Entropy weight
-            <input type="range" id="ppoEntropy" min="0" max="0.05" step="0.001" value="0.003">
+            <span class="hint">Entropy bonus that keeps PPO policies exploratory.</span>
+            <input type="range" id="ppoEntropy" min="0" max="0.15" step="0.001" value="0.003">
             <span class="mono" id="ppoEntropyReadout">0.003</span>
           </label>
           <label>Clip factor
-            <input type="range" id="ppoClip" min="0.05" max="0.4" step="0.01" value="0.2">
+            <span class="hint">Clipping range that limits the policy ratio updates.</span>
+            <input type="range" id="ppoClip" min="0.05" max="0.6" step="0.01" value="0.2">
             <span class="mono" id="ppoClipReadout">0.20</span>
           </label>
           <label>GAE λ
+            <span class="hint">Controls bias versus variance in advantage estimates.</span>
             <input type="range" id="ppoLambda" min="0.5" max="1.0" step="0.01" value="0.95">
             <span class="mono" id="ppoLambdaReadout">0.95</span>
           </label>
         </div>
         <div class="row">
           <label>Batch
-            <input type="range" id="ppoBatch" min="32" max="512" step="32" value="256">
+            <span class="hint">Trajectory samples processed per PPO update batch.</span>
+            <input type="range" id="ppoBatch" min="32" max="1024" step="32" value="256">
             <span class="mono" id="ppoBatchReadout">256</span>
           </label>
           <label>Epochs
-            <input type="range" id="ppoEpochs" min="1" max="10" step="1" value="4">
+            <span class="hint">Gradient passes per collected batch during optimisation.</span>
+            <input type="range" id="ppoEpochs" min="1" max="20" step="1" value="4">
             <span class="mono" id="ppoEpochsReadout">4</span>
           </label>
           <label>Value weight
-            <input type="range" id="ppoValueCoef" min="0.1" max="1.0" step="0.05" value="0.5">
+            <span class="hint">Relative weight of the critic loss in PPO's objective.</span>
+            <input type="range" id="ppoValueCoef" min="0.1" max="2.5" step="0.05" value="0.5">
             <span class="mono" id="ppoValueCoefReadout">0.50</span>
           </label>
         </div>
@@ -3878,19 +3914,19 @@ function setAiAutoStyle(style,{announce=true}={}){
 function updateAiRunLimitHint(reachedTarget=false){
   if(!ui.aiRunLimitHint) return;
   if(autoRunLimit<=0){
-    ui.aiRunLimitHint.textContent='0 = obegränsat';
+    ui.aiRunLimitHint.textContent='0 = unlimited auto-run cycles.';
     return;
   }
   const preset=AUTO_TUNING_STYLES[aiAutoTuneStyle]||AUTO_TUNING_STYLES[DEFAULT_AUTO_STYLE];
   if(reachedTarget){
-    ui.aiRunLimitHint.textContent=`Mål nått – ${preset.label} läge pausade efter ${autoRunLimit} episoder`;
+    ui.aiRunLimitHint.textContent=`Target reached – ${preset.label} mode paused after ${autoRunLimit} episodes`;
     return;
   }
   if(trainingMode==='auto' && training && autoRunStopEpisode){
     const remaining=Math.max(0,autoRunStopEpisode-episode);
-    ui.aiRunLimitHint.textContent=`Pausar efter ${autoRunLimit} episoder (${remaining} återstår)`;
+    ui.aiRunLimitHint.textContent=`Pausing after ${autoRunLimit} episodes (${remaining} remaining)`;
   }else{
-    ui.aiRunLimitHint.textContent=`Pausar efter ${autoRunLimit} episoder`;
+    ui.aiRunLimitHint.textContent=`Pausing after ${autoRunLimit} episodes`;
   }
 }
 
@@ -4781,29 +4817,29 @@ class BrowserAutoPilot{
     this.lastEvaluationEpisode=this.episode;
     const breakdownAvg=this._averageBreakdown(240);
     if(metrics.fruitSlope<=0 && metrics.improvement2000<2 && this._canAdjust('epsilon-up',500)){
-      const newEnd=clamp(actor.epsEnd+this._scaleAdd(0.03),0.01,0.3);
-      const newDecay=clamp(actor.epsDecay*this._scaleMultiplier(1.2),5000,200000);
+      const newEnd=clamp(actor.epsEnd+this._scaleAdd(0.03),0.01,0.6);
+      const newDecay=clamp(actor.epsDecay*this._scaleMultiplier(1.2),5000,500000);
       actor.setEpsilonSchedule?.({end:newEnd,decay:newDecay});
       adjustments.push({type:'epsilon',end:newEnd,decay:newDecay,reason:'stagnation'});
     }
     if(metrics.regression && this._canAdjust('regression',800)){
-      const newEnd=clamp(actor.epsEnd+this._scaleAdd(0.02),0.01,0.3);
+      const newEnd=clamp(actor.epsEnd+this._scaleAdd(0.02),0.01,0.6);
       actor.setEpsilonSchedule?.({end:newEnd});
-      const newLr=Math.max(0.0002,actor.lr*this._scaleMultiplier(0.8));
+      const newLr=Math.max(0.0001,actor.lr*this._scaleMultiplier(0.8));
       actor.setLearningRate(newLr);
       adjustments.push({type:'lr',value:newLr,reason:'regression'});
     }else if(metrics.fruitSlope>0 && actor.epsEnd>0.12 && this._canAdjust('epsilon-down',800)){
-      const newEnd=clamp(actor.epsEnd-this._scaleAdd(0.02),0.01,0.3);
-      const newDecay=clamp(actor.epsDecay*this._scaleMultiplier(0.9),5000,200000);
+      const newEnd=clamp(actor.epsEnd-this._scaleAdd(0.02),0.01,0.6);
+      const newDecay=clamp(actor.epsDecay*this._scaleMultiplier(0.9),5000,500000);
       actor.setEpsilonSchedule?.({end:newEnd,decay:newDecay});
       adjustments.push({type:'epsilon',end:newEnd,decay:newDecay,reason:'recovery'});
     }
     if(metrics.lossRatio>0.85 && this._canAdjust('lr-down',1000)){
-      const newLr=Math.max(0.0002,actor.lr*this._scaleMultiplier(0.85));
+      const newLr=Math.max(0.0001,actor.lr*this._scaleMultiplier(0.85));
       actor.setLearningRate(newLr);
       adjustments.push({type:'lr',value:newLr,reason:'loss_ratio'});
     }else if(metrics.lossRatio<0.3 && this._canAdjust('lr-up',1200)){
-      const newLr=Math.min(0.0005,actor.lr*this._scaleMultiplier(1.05));
+      const newLr=Math.min(0.02,actor.lr*this._scaleMultiplier(1.05));
       actor.setLearningRate(newLr);
       adjustments.push({type:'lr',value:newLr,reason:'recover'});
     }
@@ -4814,27 +4850,27 @@ class BrowserAutoPilot{
     if(!metrics) return;
     const rewardConfig=this.rewardConfig||{};
     if(metrics.loopHitRate>0.01 && metrics.fruitSlope<=0 && this._canAdjust('reward-loop',500)){
-      rewardConfig.loopPenalty=clamp((rewardConfig.loopPenalty??0.5)+this._scaleAdd(0.05),0,1);
+      rewardConfig.loopPenalty=clamp((rewardConfig.loopPenalty??0.5)+this._scaleAdd(0.05),0,3);
       rewardConfig.compactWeight=0;
       adjustments.push({type:'reward',key:'loopPenalty',value:rewardConfig.loopPenalty,reason:'loop_penalty'});
     }
     if(metrics.revisitRate>0.01 && this._canAdjust('reward-revisit',500)){
-      rewardConfig.revisitPenalty=clamp((rewardConfig.revisitPenalty??0.05)+this._scaleAdd(0.005),0,0.1);
-      const newEnd=clamp((actor?.epsEnd??0.12)+this._scaleAdd(0.02),0.01,0.3);
+      rewardConfig.revisitPenalty=clamp((rewardConfig.revisitPenalty??0.05)+this._scaleAdd(0.005),0,0.3);
+      const newEnd=clamp((actor?.epsEnd??0.12)+this._scaleAdd(0.02),0.01,0.6);
       actor?.setEpsilonSchedule?.({end:newEnd});
       adjustments.push({type:'reward',key:'revisitPenalty',value:rewardConfig.revisitPenalty,reason:'revisit_penalty'});
       adjustments.push({type:'epsilon',end:newEnd,reason:'revisit_penalty'});
     }
     if(metrics.crashRateSelf>0.4 && this._canAdjust('reward-self',500)){
-      rewardConfig.selfPenalty=clamp((rewardConfig.selfPenalty??25.5)+this._scaleAdd(1),0,30);
-      rewardConfig.turnPenalty=clamp((rewardConfig.turnPenalty??0.001)-this._scaleAdd(0.0002),0,0.02);
+      rewardConfig.selfPenalty=clamp((rewardConfig.selfPenalty??25.5)+this._scaleAdd(1),0,150);
+      rewardConfig.turnPenalty=clamp((rewardConfig.turnPenalty??0.001)-this._scaleAdd(0.0002),0,0.05);
       adjustments.push({type:'reward',key:'selfPenalty',value:rewardConfig.selfPenalty,reason:'self_penalty'});
     }
     let approachAdjusted=false;
     let retreatAdjusted=false;
     if(metrics.timeToFruitAvg>200 && metrics.loopHitRate<0.005 && metrics.revisitRate<0.005 && this._canAdjust('reward-fruit',500)){
-      rewardConfig.approachBonus=clamp((rewardConfig.approachBonus??0.03)+this._scaleAdd(0.005),0,0.1);
-      rewardConfig.retreatPenalty=clamp((rewardConfig.retreatPenalty??0.03)+this._scaleAdd(0.005),0,0.1);
+      rewardConfig.approachBonus=clamp((rewardConfig.approachBonus??0.03)+this._scaleAdd(0.005),0,0.3);
+      rewardConfig.retreatPenalty=clamp((rewardConfig.retreatPenalty??0.03)+this._scaleAdd(0.005),0,0.3);
       adjustments.push({type:'reward',key:'approachBonus',value:rewardConfig.approachBonus,reason:'slow_fruit'});
       adjustments.push({type:'reward',key:'retreatPenalty',value:rewardConfig.retreatPenalty,reason:'slow_fruit'});
       approachAdjusted=true;
@@ -4846,7 +4882,7 @@ class BrowserAutoPilot{
       const avgRetreat=breakdownAvg.retreatPenalty??0;
       const avgApproach=breakdownAvg.approachBonus??0;
       if(avgStep<0 && Math.abs(avgStep)>Math.max(0.5,Math.abs(avgFruit))*1.3 && this._canAdjust('reward-step-down',900)){
-        rewardConfig.stepPenalty=clamp((rewardConfig.stepPenalty??0.01)*this._scaleMultiplier(0.9),0.001,0.05);
+        rewardConfig.stepPenalty=clamp((rewardConfig.stepPenalty??0.01)*this._scaleMultiplier(0.9),0.001,0.2);
         adjustments.push({type:'reward',key:'stepPenalty',value:rewardConfig.stepPenalty,reason:'step_drag'});
       }
       if(!retreatAdjusted && Math.abs(avgRetreat)>(Math.abs(avgApproach)+0.5) && this._canAdjust('reward-retreat-down',900)){
@@ -4854,11 +4890,11 @@ class BrowserAutoPilot{
         adjustments.push({type:'reward',key:'retreatPenalty',value:rewardConfig.retreatPenalty,reason:'retreat_load'});
       }
       if(avgFruit<3 && metrics.timeToFruitAvg>160 && this._canAdjust('reward-fruit-extra',1200)){
-        rewardConfig.fruitReward=clamp((rewardConfig.fruitReward??10)+this._scaleAdd(1),0,30);
+        rewardConfig.fruitReward=clamp((rewardConfig.fruitReward??10)+this._scaleAdd(1),0,120);
         adjustments.push({type:'reward',key:'fruitReward',value:rewardConfig.fruitReward,reason:'fruit_support'});
       }
       if(!approachAdjusted && avgApproach<1 && metrics.timeToFruitAvg>150 && this._canAdjust('reward-approach-boost',1200)){
-        rewardConfig.approachBonus=clamp((rewardConfig.approachBonus??0.03)+this._scaleAdd(0.005),0,0.1);
+        rewardConfig.approachBonus=clamp((rewardConfig.approachBonus??0.03)+this._scaleAdd(0.005),0,0.3);
         adjustments.push({type:'reward',key:'approachBonus',value:rewardConfig.approachBonus,reason:'fruit_support'});
       }
     }
