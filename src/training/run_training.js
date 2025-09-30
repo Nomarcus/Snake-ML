@@ -129,6 +129,8 @@ export async function runTraining(options) {
     targetSync: targetSync ?? 2000,
     nStep: nStep ?? 3,
     warmupSteps: options.warmupSteps ?? 5000,
+    boardCols: initialBoard,
+    boardRows: initialBoard,
   });
 
   const metricsCollector = mode === 'auto' ? null : new MetricsCollector();
