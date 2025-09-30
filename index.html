@@ -3837,83 +3837,61 @@ function updateAutoLogVisibility(){
   ui.autoLogPanel.classList.toggle('hidden',!autoActive);
 }
 
-function updateTuneModeUI(){
-  if(!ui.tuneStatus) return;
-  if(tuneMode===TUNE_MODES.MANUAL){
-    ui.tuneStatus.textContent='⚪ Manuell – inga automatiska justeringar';
-  }else if(tuneMode===TUNE_MODES.CLASSIC){
-    ui.tuneStatus.textContent='🟣 Auto – klassisk autojustering';
-  }else if(tuneMode===TUNE_MODES.AI){
-    ui.tuneStatus.textContent='🟢 AI – analys och automatiska justeringar';
-  }
-}
+function updateTuneModeUI() {
+  if (ui.autoButton) {
+    ui.autoButton.setAttribute('aria-pressed', autoActive ? 'true' : 'false');
+    ui.autoButton.classList.remove('blue', 'purple', 'green');
 
-function applyTuneMode(){
-  if(trainingMode==='manual'){
-    tuneMode=TUNE_MODES.MANUAL;
-    autoActive=false;
-    aiAutoTuneEnabled=false;
-  }else if(trainingMode==='auto'){
-    tuneMode=TUNE_MODES.CLASSIC;
-    autoActive=true;
-    aiAutoTuneEnabled=false;
-  }else if(trainingMode==='ai'){
-    tuneMode=TUNE_MODES.AI;
-    autoActive=true;
-    aiAutoTuneEnabled=true;
-  }else{
-    tuneMode=TUNE_MODES.MANUAL;
-    autoActive=false;
-    aiAutoTuneEnabled=false;
-  }
-  if(aiTuner) aiTuner.setEnabled(tuneMode===TUNE_MODES.AI);
-  updateAutoLogVisibility();
-  updateTuneModeUI();
-
-}
-
-function updateTuneModeUI(){
-  if(ui.autoButton){
-    ui.autoButton.setAttribute('aria-pressed',autoActive?'true':'false');
-    ui.autoButton.classList.remove('blue','purple','green');
-    if(tuneMode===TUNE_MODES.ANALYSIS){
+    if (tuneMode === TUNE_MODES.ANALYSIS) {
       ui.autoButton.classList.add('blue');
-    }else if(tuneMode===TUNE_MODES.CLASSIC){
+    } else if (tuneMode === TUNE_MODES.CLASSIC) {
       ui.autoButton.classList.add('purple');
-    }else if(tuneMode===TUNE_MODES.AI){
+    } else if (tuneMode === TUNE_MODES.AI) {
       ui.autoButton.classList.add('green');
     }
   }
-  if(ui.tuneStatus){
-    if(tuneMode===TUNE_MODES.ANALYSIS){
-      ui.tuneStatus.textContent='🔵 Analysläge – AI föreslår, inga ändringar';
-    }else if(tuneMode===TUNE_MODES.CLASSIC){
-      ui.tuneStatus.textContent='🟣 Auto-Tune utan AI – klassisk reglering';
-    }else if(tuneMode===TUNE_MODES.AI){
-      ui.tuneStatus.textContent='🟢 Auto-Tune med AI – ändringar appliceras automatiskt';
+
+  if (ui.tuneStatus) {
+    if (tuneMode === TUNE_MODES.ANALYSIS) {
+      ui.tuneStatus.textContent = '🔵 Analysläge – AI föreslår, inga ändringar';
+    } else if (tuneMode === TUNE_MODES.CLASSIC) {
+      ui.tuneStatus.textContent = '🟣 Auto-Tune utan AI – klassisk reglering';
+    } else if (tuneMode === TUNE_MODES.AI) {
+      ui.tuneStatus.textContent = '🟢 Auto-Tune med AI – ändringar appliceras automatiskt';
     }
   }
-  if(ui.aiAutoTuneToggle){
-    ui.aiAutoTuneToggle.disabled=!autoActive;
+
+  if (ui.aiAutoTuneToggle) {
+    // AI-toggle ska bara gå att klicka på om Auto-knappen är aktiv
+    ui.aiAutoTuneToggle.disabled = !autoActive;
   }
 }
 
-function applyTuneMode(){
-  if(!ui.autoButton) return;
-  let aiChecked=!!ui.aiAutoTuneToggle?.checked;
-  if(!autoActive&&aiChecked&&ui.aiAutoTuneToggle){
-    ui.aiAutoTuneToggle.checked=false;
-    aiChecked=false;
+function applyTuneMode() {
+  if (!ui.autoButton) return;
+
+  let aiChecked = !!ui.aiAutoTuneToggle?.checked;
+
+  // Om auto inte är aktivt → AI ska tvingas av
+  if (!autoActive && aiChecked && ui.aiAutoTuneToggle) {
+    ui.aiAutoTuneToggle.checked = false;
+    aiChecked = false;
   }
-  if(!autoActive){
-    tuneMode=TUNE_MODES.ANALYSIS;
-  }else{
-    tuneMode=aiChecked?TUNE_MODES.AI:TUNE_MODES.CLASSIC;
+
+  // Bestäm vilket läge vi hamnar i
+  if (!autoActive) {
+    tuneMode = TUNE_MODES.ANALYSIS;
+  } else {
+    tuneMode = aiChecked ? TUNE_MODES.AI : TUNE_MODES.CLASSIC;
   }
-  aiAnalysisOnly=tuneMode===TUNE_MODES.ANALYSIS;
-  aiAutoTuneEnabled=tuneMode===TUNE_MODES.AI;
-  const shouldEnableAITuner=tuneMode!==TUNE_MODES.CLASSIC;
-  if(aiTuner) aiTuner.setEnabled(shouldEnableAITuner);
+
+  aiAnalysisOnly = tuneMode === TUNE_MODES.ANALYSIS;
+  aiAutoTuneEnabled = tuneMode === TUNE_MODES.AI;
+
+  // Bara Analys & AI ska aktivera aiTuner – Classic körs utan AI
+  const shouldEnableAITuner = tuneMode !== TUNE_MODES.CLASSIC;
+  if (aiTuner) aiTuner.setEnabled(shouldEnableAITuner);
+
   updateAutoLogVisibility();
   updateTuneModeUI();
 }
