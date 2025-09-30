@@ -231,6 +231,7 @@ export class DQNAgent {
   }
 
   syncTarget(hard = false) {
+
     const sourceWeights = this.online.weights;
     const targetWeights = this.target.weights;
     if (sourceWeights.length !== targetWeights.length) {
@@ -247,6 +248,7 @@ export class DQNAgent {
         targetVar.assign(updated);
       });
     }
+n
   }
 
   act(state) {
@@ -332,12 +334,14 @@ export class DQNAgent {
       tdTensor = targets.sub(qPred);
       const loss = tdTensor.square().mul(isWeights).mean();
       return loss;
+
     }, trainableVars);
 
     const gradList = this.online.trainableWeights.map((weight) => grads[weight.val.name]);
     const clipLimit = this.gradientClip ?? 10;
     const clipped = gradList.map((grad) => {
       const clippedGrad = tf.clipByValue(grad, -clipLimit, clipLimit);
+
       grad.dispose();
       return clippedGrad;
     });
@@ -490,6 +494,7 @@ export class DQNAgent {
     this.target.dispose();
     this.online = this.buildModel();
     this.target = this.buildModel();
+
     this.optimizer.dispose?.();
     this.optimizer = tf.train.adam(this.lr);
     if (stateDimMismatch) {
@@ -497,6 +502,7 @@ export class DQNAgent {
         '[DQN] Imported state uses outdated observation size; skipping weight load and reinitializing.',
       );
     } else if (Array.isArray(state.weights)) {
+
       const tensors = state.weights.map((w) =>
         tf.tensor(Buffer.from(w.data, 'base64'), w.shape, w.dtype),
       );

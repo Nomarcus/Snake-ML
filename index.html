@@ -2355,6 +2355,7 @@ class DQNAgent{
     if(tail.length) tail.forEach(t=>this.buffer.push(t));
   }
   syncTarget(hard=false){
+
     const sourceWeights=this.online.weights;
     const targetWeights=this.target.weights;
     if(sourceWeights.length!==targetWeights.length){
@@ -2371,6 +2372,7 @@ class DQNAgent{
         targetVar.assign(updated);
       });
     }
+
   }
   updateEpsilon(step){
     const t=Math.min(1,step/this.epsDecay);
@@ -2528,14 +2530,16 @@ class DQNAgent{
     this.online.dispose();
     this.target.dispose();
     this.online=this.build();
-    this.target=this.build();
+ 
     this.optimizer?.dispose?.();
     this.optimizer=tf.train.adam(this.lr);
     if(stateDimMismatch){
       console.warn('[DQN] Imported state uses outdated observation size; skipping weight load and reinitializing.');
     }else if(Array.isArray(state.weights)){
+
       const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
       this.online.setWeights(tensors);
+      this.target.setWeights(tensors);
       tensors.forEach(t=>t.dispose());
     }
     this.syncTarget(true);
