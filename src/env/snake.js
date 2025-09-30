@@ -141,11 +141,12 @@ export class SnakeEnv {
     const key = `${nx},${ny}`;
     const tail = this.snake[this.snake.length - 1];
     const willGrow = nx === this.fruit.x && ny === this.fruit.y;
+    const survivalBonus = 0.001 * this.snake.length;
     const hitsWall = nx < 0 || ny < 0 || nx >= this.cols || ny >= this.rows;
     const hitsBody = this.snakeSet.has(key) && !(tail && tail.x === nx && tail.y === ny && !willGrow);
     if (hitsWall || hitsBody) {
       this.alive = false;
-      const crashReward = hitsWall ? -R.wallPenalty : -R.selfPenalty;
+      const crashReward = (hitsWall ? -R.wallPenalty : -R.selfPenalty) + survivalBonus;
       return {
         state: this.getState(),
         reward: crashReward,
@@ -160,18 +161,21 @@ export class SnakeEnv {
       };
     }
 
+    const futureSpace = this.freeSpaceFrom(nx, ny, !willGrow);
     let spaceReward = 0;
-    if ((R.trapPenalty ?? 0) !== 0 || (R.spaceGainBonus ?? 0) !== 0) {
-      const space = this.freeSpaceFrom(nx, ny, !willGrow);
-      const need = this.snake.length + 2;
-      const denom = Math.max(1, need);
-      if (space < need) {
-        spaceReward -= R.trapPenalty * (1 + (need - space) / denom);
-      } else if (R.spaceGainBonus) {
-        const curSpace = this.freeSpaceFrom(this.snake[0].x, this.snake[0].y, true);
-        if (space > curSpace) {
-          spaceReward += R.spaceGainBonus * Math.min(1, (space - curSpace) / denom);
-        }
+    if (R.spaceGainBonus) {
+      const curSpace = this.freeSpaceFrom(this.snake[0].x, this.snake[0].y, true);
+      const growthNeed = this.snake.length + 2;
+      const denom = Math.max(1, growthNeed);
+      if (futureSpace > curSpace) {
+        spaceReward += R.spaceGainBonus * Math.min(1, (futureSpace - curSpace) / denom);
+      }
+    }
+    if (R.trapPenalty) {
+      const safeNeed = this.snake.length + 5;
+      if (futureSpace < safeNeed) {
+        const deficit = safeNeed - futureSpace;
+        spaceReward -= R.trapPenalty * (deficit / Math.max(1, safeNeed));
       }
     }
 
@@ -203,7 +207,8 @@ export class SnakeEnv {
     let approachDelta = 0;
     if (nx === this.fruit.x && ny === this.fruit.y) {
       ateFruit = true;
-      reward += R.fruitReward;
+      const fruitScale = 1 + this.snake.length * 0.05;
+      reward += R.fruitReward * fruitScale;
       this.snakeSet.add(`${nx},${ny}`);
       this.spawnFruit();
       timeToFruit = this.stepsSinceFruit;
@@ -245,6 +250,7 @@ export class SnakeEnv {
     if (this.stepsSinceFruit > this.cols * this.rows * 2) {
       this.alive = false;
       reward -= R.timeoutPenalty;
+      reward += survivalBonus;
       return {
         state: this.getState(),
         reward,
@@ -259,6 +265,8 @@ export class SnakeEnv {
         },
       };
     }
+
+    reward += survivalBonus;
 
     return {
       state: this.getState(),
@@ -285,6 +293,21 @@ export class SnakeEnv {
       return x < 0 || y < 0 || x >= this.cols || y >= this.rows || this.snakeSet.has(`${x},${y}`) ? 1 : 0;
     };
     const danger = [block(this.dir.x, this.dir.y), block(left.x, left.y), block(right.x, right.y)];
+    const maxRange = Math.max(this.cols, this.rows) || 1;
+    const bodyProximity = [this.dir, left, right].map((dirVec) => {
+      let x = head.x;
+      let y = head.y;
+      let distance = 0;
+      while (true) {
+        x += dirVec.x;
+        y += dirVec.y;
+        distance += 1;
+        if (x < 0 || y < 0 || x >= this.cols || y >= this.rows) return 0;
+        if (this.snakeSet.has(`${x},${y}`)) {
+          return 1 - Math.min(1, Math.max(0, distance - 1) / maxRange);
+        }
+      }
+    });
     const dir = [
       this.dir.y === -1 ? 1 : 0,
       this.dir.y === 1 ? 1 : 0,
@@ -312,14 +335,38 @@ export class SnakeEnv {
       this.getVisit(head.x - 1, head.y),
       this.getVisit(head.x + 1, head.y),
     ];
+    const normSpace = (dirVec) => {
+      const tx = head.x + dirVec.x;
+      const ty = head.y + dirVec.y;
+      if (tx < 0 || ty < 0 || tx >= this.cols || ty >= this.rows) return 0;
+      if (this.snakeSet.has(`${tx},${ty}`)) return 0;
+      const willGrow = tx === this.fruit.x && ty === this.fruit.y;
+      const space = this.freeSpaceFrom(tx, ty, !willGrow);
+      return space / Math.max(1, this.cols * this.rows);
+    };
+    const spaceAhead = normSpace(this.dir);
+    const spaceLeft = normSpace(left);
+    const spaceRight = normSpace(right);
+    const tail = this.snake[this.snake.length - 1];
+    const tailPrev = this.snake[this.snake.length - 2] ?? tail;
+    const tailVec = { x: tail.x - tailPrev.x, y: tail.y - tailPrev.y };
+    const tailLen = Math.hypot(tailVec.x, tailVec.y) || 1;
+    const tailDir = [tailVec.x / tailLen, tailVec.y / tailLen];
+    const normLength = this.snake.length / Math.max(1, this.cols * this.rows);
     return Float32Array.from([
       ...danger,
+      ...bodyProximity,
       ...dir,
       ...fruit,
       ...dists,
       dy / len,
       dx / len,
       ...crowd,
+      spaceAhead,
+      spaceLeft,
+      spaceRight,
+      ...tailDir,
+      normLength,
     ]);
   }
 
