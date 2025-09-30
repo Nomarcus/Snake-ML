@@ -32,7 +32,7 @@ Pause logic:
 - In all normal cases, even if performance is poor or stagnating, continue training and set "pause": false.  
 - If "pause": true is used, analysisText must clearly explain the extreme condition that triggered it.  
 
-Output must always be strict JSON in this format:  
+⚠️ Output must always be strict JSON in this format:  
 {
   "rewardConfig": {
     "fruitReward": <number>,

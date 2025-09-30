@@ -4226,6 +4226,20 @@ function applyAITunerHyperparameters(updates={}){
   return result;
 }
 
+
+function cleanJsonString(str){
+  if(typeof str!=='string') return '';
+  let cleaned=str.trim();
+  const fenced=cleaned.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if(fenced){
+    cleaned=fenced[1];
+  }else if(cleaned.startsWith('```')){
+    cleaned=cleaned.replace(/^```(?:json)?\s*/i,'');
+    cleaned=cleaned.replace(/\s*```$/,'');
+  }
+  return cleaned.trim();
+}
+
 async function handleGroqResponse(responseJson){
   try{
     const aiResult=responseJson?.data?.choices?.[0]?.message?.content;
@@ -4234,16 +4248,38 @@ async function handleGroqResponse(responseJson){
       return;
     }
 
-    const parsed=JSON.parse(aiResult);
+
+    const cleaned=cleanJsonString(aiResult);
+    let parsed;
+    try{
+      parsed=JSON.parse(cleaned);
+    }catch(err){
+      console.error("Fel vid parsing av AI-svar:", err);
+      console.error("Rått AI-svar:", aiResult);
+      return;
+    }
+
+    const analysisText=typeof parsed.analysisText==='string'?parsed.analysisText:'';
+    console.log("🤖 AI analys:", analysisText||'(saknas)');
+    if(analysisText){
+      try{
+        logAITunerEvent?.({title:'AI analys',detail:analysisText,tone:'ai',episodeNumber:episode});
+      }catch(err){
+        console.warn('[handleGroqResponse] kunde inte logga analys',err);
+      }
+    }
 
     if(parsed.pause===true){
-      console.warn("⏸️ AI beslutade att pausa träningen:", parsed.analysisText);
+      console.warn("⏸️ AI beslutade att pausa träningen:", analysisText);
+
       if(typeof pauseTraining==='function'){
         pauseTraining();
       }else if(typeof stopTraining==='function'){
         stopTraining();
       }
-      return;
+
+      return parsed;
+=
     }
 
     if(parsed.pause===false){
@@ -4254,7 +4290,9 @@ async function handleGroqResponse(responseJson){
       }
     }
 
-    if(parsed.rewardConfig){
+
+    if(parsed.rewardConfig && typeof parsed.rewardConfig==='object'){
+
       const rewardResult=applyAITunerRewardConfig(parsed.rewardConfig);
       if(rewardResult?.config){
         Object.assign(rewardConfig,rewardResult.config);
@@ -4264,7 +4302,9 @@ async function handleGroqResponse(responseJson){
       }
     }
 
-    if(parsed.hyper){
+
+    if(parsed.hyper && typeof parsed.hyper==='object'){
+
       const hyperResult=applyAITunerHyperparameters(parsed.hyper);
       if(hyperResult?.hyper){
         hyperParams={...hyperResult.hyper};
@@ -4275,18 +4315,11 @@ async function handleGroqResponse(responseJson){
       }
     }
 
-    if(parsed.analysisText){
-      console.log("🤖 AI analys:", parsed.analysisText);
-      try{
-        logAITunerEvent?.({title:'AI analys',detail:parsed.analysisText,tone:'ai',episodeNumber:episode});
-      }catch(err){
-        console.warn('[handleGroqResponse] kunde inte logga analys',err);
-      }
-    }else{
-      console.log("🤖 AI analys:", parsed.analysisText);
-    }
+    return parsed;
   }catch(err){
-    console.error("Fel vid parsing av AI-svar:", err);
+    console.error("Fel vid hantering av Groq-svar:", err);
+    console.error("Rått proxysvar:", responseJson);
+
   }
 }
 
