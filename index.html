@@ -208,6 +208,7 @@ canvas#board{
 .auto-tune-controls .toggle{
   margin-left:auto;
 }
+
 .toggle{
   display:inline-flex;
   align-items:center;
@@ -250,6 +251,7 @@ canvas#board{
   opacity:0.5;
   cursor:not-allowed;
 }
+
 .tune-status{
   font-size:12px;
   font-weight:600;
@@ -1048,8 +1050,11 @@ footer{
       <div class="pill-group" id="modeGroup" role="group" aria-label="Training mode">
         <button type="button" class="pill active" data-mode="manual">Manual</button>
         <button type="button" class="pill" data-mode="auto">Auto</button>
+        <button type="button" class="pill" data-mode="ai">AI</button>
       </div>
+
       <span class="hint">Auto-läge låser upp Auto/AI-kontrollerna nedan.</span>
+
     </div>
     <div class="field block">
       <label for="algoSelect">Algorithm</label>
@@ -1089,6 +1094,7 @@ footer{
       </div>
 
       <div id="tuneStatus" class="tune-status" role="status" aria-live="polite">🔵 Analysläge – AI föreslår, inga ändringar</div>
+
 
       <div class="ai-auto-tune__controls" role="group" aria-label="AI Auto-Tune inställningar">
         <section class="ai-auto-tune__column" aria-labelledby="aiAutoTuneAiHeading">
@@ -3613,6 +3619,7 @@ const ui={
   aiAutoTuneToggle:document.getElementById('aiAutoTuneToggle'),
   algoSelect:document.getElementById('algoSelect'),
   algoDescription:document.getElementById('algoDescription'),
+
   tuneStatus:document.getElementById('tuneStatus'),
   aiIntervalSlider:document.getElementById('aiIntervalSlider'),
   aiIntervalReadout:document.getElementById('aiIntervalReadout'),
@@ -3757,12 +3764,14 @@ let contexts=[];
 let renderTick=0;
 let trainingMode='manual';
 const TUNE_MODES={
+
   ANALYSIS:'analysis',
   CLASSIC:'classic',
   AI:'ai',
 };
 let tuneMode=TUNE_MODES.ANALYSIS;
 let autoActive=false;
+
 let autoPilot=null;
 const autoLogEntries=[];
 const MAX_AUTO_LOG_ENTRIES=24;
@@ -3879,6 +3888,7 @@ function resetAutoLog(){
 }
 function updateAutoLogVisibility(){
   if(!ui.autoLogPanel) return;
+
   ui.autoLogPanel.classList.toggle('hidden',trainingMode!=='auto');
 }
 
@@ -3961,6 +3971,7 @@ function applyTuneMode(){
   if(prevMode!==tuneMode){
     announceTuneModeChange(prevMode,tuneMode);
   }
+
 }
 function logAutoEvent({title='',detail='',metrics=null,tone='info',episode=null}={}){
   if(!ui.autoLogStream) return;
@@ -4038,7 +4049,7 @@ function describeAutoAdjustment(adj={}){
   return res;
 }
 function logAutoAdjustments(adjustments=[]){
-  if(trainingMode!=='auto') return;
+  if(tuneMode===TUNE_MODES.MANUAL) return;
   if(!Array.isArray(adjustments)||!adjustments.length) return;
   adjustments.forEach(adj=>{
     const metrics=adj.metrics||lastAutoMetrics;
@@ -4050,7 +4061,7 @@ function logAutoAdjustments(adjustments=[]){
   });
 }
 function logAutoSummary(metrics,episodeNumber){
-  if(trainingMode!=='auto') return;
+  if(tuneMode===TUNE_MODES.MANUAL) return;
   if(!metrics) return;
   logAutoEvent({title:'Auto check-in',detail:'No new adjustments',metrics,tone:'summary',episode:episodeNumber});
 }
@@ -4544,6 +4555,10 @@ function bindUI(){
   ui.btnPause.addEventListener('click',stopTraining);
   ui.btnStep.addEventListener('click',async()=>{ await playSingleEpisode(); });
   ui.btnWatch.addEventListener('click',watchSmoothEpisode);
+  ui.autoButton?.addEventListener('click',()=>{
+    const targetMode=autoActive?'manual':'auto';
+    setTrainingMode(targetMode);
+  });
   ui.btnToggleLiveView?.addEventListener('click',()=>{
     setLiveViewHidden(!liveViewHidden);
   });
@@ -4577,6 +4592,7 @@ function bindUI(){
       setAiAutoStyle(btn.dataset.style||DEFAULT_AUTO_STYLE);
     });
   });
+
   ui.fileLoader?.addEventListener('change',async ev=>{
     const [file]=ev.target.files||[];
     if(file) await loadTrainingFromFile(file);
@@ -4699,21 +4715,27 @@ function applyEnvCountFromUI(){
   if(wasTraining&&!watching) startTraining();
 }
 function setTrainingMode(mode){
+
   const allowed=['manual','auto'];
+
   let next=allowed.includes(mode)?mode:'manual';
   const wasTraining=training;
   const prevMode=trainingMode;
   const wantsAutomation=next!=='manual';
   if(wantsAutomation && agent?.kind!=='dqn'){
+
     flash('Auto-läge kräver en DQN-agent',true);
+
     next='manual';
   }
   if(wasTraining) stopTraining();
   trainingMode=next;
   ui.modeButtons.forEach(btn=>btn.classList.toggle('active',btn.dataset.mode===trainingMode));
   if(trainingMode!=='manual'){
+
     autoActive=false;
     aiAutoTuneEnabled=false;
+
     const firstActivation=prevMode==='manual'||!autoPilot;
     if(firstActivation){
       autoPilot=new BrowserAutoPilot({rewardConfig:{...rewardConfig}});
@@ -4739,10 +4761,12 @@ function setTrainingMode(mode){
     lastAutoSummaryEpisode=autoPilot?.episode||0;
     autoPilot.lastEvaluationEpisode=autoPilot.episode||0;
     if(prevMode!==trainingMode){
+
       logAutoEvent({
         title:'Auto-läge aktiverat',
+
         detail:`${envCount} environments • ${COLS}×${ROWS}`,
-        tone:'info',
+        tone,
         episode:autoPilot?.episode||0,
       });
     }
@@ -4754,7 +4778,9 @@ function setTrainingMode(mode){
     lastAutoSummaryEpisode=0;
     autoRunStopEpisode=null;
   }
+
   if(trainingMode!=='manual') ui.envCount.disabled=true;
+
   applyTuneMode();
   updateControlAvailability();
   updateReadouts();
@@ -5636,7 +5662,9 @@ async function finalizeContextEpisode(ctx,envIndex){
   if(autoActive && autoRunLimit>0){
     if(autoRunStopEpisode && episode>=autoRunStopEpisode){
       const preset=AUTO_TUNING_STYLES[aiAutoTuneStyle]||AUTO_TUNING_STYLES[DEFAULT_AUTO_STYLE];
+
       const modeLabel=tuneMode===TUNE_MODES.AI?'Auto-Tune med AI':'Auto-Tune utan AI';
+
       logAutoEvent({
         title:`${modeLabel} pausat`,
         detail:`${autoRunLimit} episoder i ${preset.label.toLowerCase()} läge`,
@@ -6207,7 +6235,9 @@ aiTuner=createAITuner({
   handleGroqResponse,
 });
 aiTuner.setInterval(aiAnalysisInterval);
+
 applyTuneMode();
+
 
 window.addEventListener('load',()=>{
   bindUI();
