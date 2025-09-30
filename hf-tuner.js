@@ -739,9 +739,7 @@ export function createAITuner(options = {}) {
     instruction,
     getInstruction,
     isCheckpointEnabled,
-
-    handleGroqResponse: handleGroqResponseOption,
-
+    handleGroqResponse,
   } = options;
 
   if (typeof fetchTelemetry !== 'function') {
@@ -750,12 +748,6 @@ export function createAITuner(options = {}) {
 
   const logger = typeof log === 'function' ? log : () => {};
   const resolveEnv = typeof getVecEnv === 'function' ? getVecEnv : () => getVecEnv ?? null;
-  const groqResponseHandler =
-    typeof handleGroqResponseOption === 'function'
-      ? handleGroqResponseOption
-      : typeof globalThis !== 'undefined' && typeof globalThis.handleGroqResponse === 'function'
-        ? globalThis.handleGroqResponse
-        : null;
   let enabled = false;
   let interval = 500;
   let busy = false;
@@ -923,18 +915,139 @@ export function createAITuner(options = {}) {
 
     const responseJson = await groqResponse.json();
 
-
-
-    if (!groqResponseHandler) {
-      console.warn('[hf-tuner] handleGroqResponse saknas – kan inte tolka Groq-svar.');
+    if (typeof handleGroqResponse === 'function') {
+      await handleGroqResponse(responseJson);
       return;
     }
 
-    const parsed = await groqResponseHandler(responseJson);
-    if (parsed && typeof parsed === 'object' && typeof parsed.analysisText === 'string') {
-      lastAnalysisText = parsed.analysisText;
+    const payload = responseJson;
+    if (payload?.error) {
+      const baseMessage = payload.error;
+      const rawDetails = typeof payload.raw === 'string' && payload.raw ? payload.raw : '';
+      if (rawDetails) {
+        console.error('[hf-tuner] Proxy råsvar (fel):', rawDetails);
+      }
+      const enriched = [
+        `Proxy error: ${baseMessage}`,
+        payload?.model ? `modell: ${payload.model}` : null,
+        payload?.url ? `endpoint: ${payload.url}` : null,
+        rawDetails ? `HF: ${rawDetails}` : null,
+      ]
+        .filter(Boolean)
+        .join(' | ');
+      throw new Error(enriched);
     }
-    return;
+
+    const rawText = typeof payload?.raw === 'string' ? payload.raw : '';
+    if (rawText) {
+      console.log('[hf-tuner] Hugging Face råsvar:', rawText);
+    }
+
+    if (payload?.contentType) {
+      console.log('[hf-tuner] Hugging Face content-type:', payload.contentType);
+    }
+
+    if (payload?.model) {
+      console.log('[hf-tuner] Modell som användes:', payload.model);
+    }
+
+    if (payload?.url) {
+      console.log('[hf-tuner] Hugging Face-endpoint:', payload.url);
+    }
+
+    const data = payload?.data ?? payload;
+    const parsed = extractTuningPayload(data, rawText);
+
+    if (!parsed || typeof parsed !== 'object') {
+      const snippet = rawText ? ` Rådata: ${rawText.slice(0, 200)}` : '';
+      throw new Error(`Saknar giltigt JSON-svar från modellen.${snippet}`);
+    }
+
+    const rewardTarget = fillMissingKeys(parsed.rewardConfig || parsed.reward || {}, currentConfig.reward);
+    const hyperTarget = fillMissingKeys(parsed.hyper || parsed.hyperparameters || {}, currentConfig.hyper);
+    const shouldLogPrompt = typeof isCheckpointEnabled === 'function' ? !!isCheckpointEnabled() : false;
+
+    const rewardResult = typeof applyRewardConfig === 'function'
+      ? applyRewardConfig(rewardTarget)
+      : { changes: [], config: null };
+
+    const hyperResult = typeof applyHyperparameters === 'function'
+      ? applyHyperparameters(hyperTarget)
+      : { changes: [], hyper: null };
+
+    const envInstance = resolveEnv?.();
+    if (envInstance?.setRewardConfig && rewardResult?.config) {
+      try {
+        envInstance.setRewardConfig(rewardResult.config);
+      } catch (err) {
+        console.warn('[hf-tuner] setRewardConfig failed', err);
+      }
+    }
+
+    const rewardSummary = formatChanges(rewardResult?.changes);
+    const hyperSummary = formatChanges(hyperResult?.changes);
+
+    const analysisParts = [];
+    const primaryAnalysis =
+      typeof parsed.analysisText === 'string'
+        ? parsed.analysisText.trim()
+        : typeof parsed.analysis?.analysisText === 'string'
+          ? parsed.analysis.analysisText.trim()
+          : '';
+    if (primaryAnalysis) {
+      analysisParts.push(primaryAnalysis);
+    }
+    const summaryField = parsed.summary ?? parsed.analysis?.summary ?? null;
+    if (Array.isArray(summaryField)) {
+      const joined = summaryField
+        .map(item => (typeof item === 'string' ? item.trim() : ''))
+        .filter(Boolean)
+        .join(' ');
+      if (joined) {
+        analysisParts.push(joined);
+      }
+    } else if (typeof summaryField === 'string') {
+      const trimmed = summaryField.trim();
+      if (trimmed) {
+        analysisParts.push(trimmed);
+      }
+    }
+    let combinedAnalysis = analysisParts.join(' ').replace(/\s+/g, ' ').trim();
+    if (combinedAnalysis) {
+      combinedAnalysis = limitWords(combinedAnalysis, 80).trim();
+    }
+
+    if (combinedAnalysis) {
+      lastAnalysisText = combinedAnalysis;
+      console.log('[AI Analysis]', combinedAnalysis);
+      logEvent({ title: 'AI analys', detail: combinedAnalysis, tone: 'summary', episodeNumber: episode });
+    }
+
+    if (shouldLogPrompt) {
+      await appendSnakeHistory({
+        type: 'analysis',
+        ts: new Date().toISOString(),
+        episode: meta.episode ?? telemetry?.latestEpisode?.episode ?? null,
+        model: payload?.model ?? activeModel,
+        prompt: messagePayload,
+        response: {
+          rewardConfig: rewardTarget,
+          hyper: hyperTarget,
+          analysisText: primaryAnalysis || null,
+          summary: summaryField ?? null,
+        },
+      });
+    }
+
+    if (rewardSummary) {
+      logEvent({ title: 'AI belöningar', detail: rewardSummary, tone: 'reward', episodeNumber: episode });
+    }
+    if (hyperSummary) {
+      logEvent({ title: 'AI hyperparametrar', detail: hyperSummary, tone: 'lr', episodeNumber: episode });
+    }
+    if (!rewardSummary && !hyperSummary) {
+      logEvent({ title: 'AI Auto-Tune', detail: 'Ingen justering rekommenderades.', tone: 'ai', episodeNumber: episode });
+    }
   }
 
   function maybeTune({ episode } = {}) {
