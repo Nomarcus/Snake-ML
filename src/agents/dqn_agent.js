@@ -333,12 +333,14 @@ export class DQNAgent {
       tdTensor = targets.sub(qPred);
       const loss = tdTensor.square().mul(isWeights).mean();
       return loss;
+
     }, trainableVars);
 
     const gradList = this.online.trainableWeights.map((weight) => grads[weight.val.name]);
     const clipLimit = this.gradientClip ?? 10;
     const clipped = gradList.map((grad) => {
       const clippedGrad = tf.clipByValue(grad, -clipLimit, clipLimit);
+
       grad.dispose();
       return clippedGrad;
     });
