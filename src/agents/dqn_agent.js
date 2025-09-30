@@ -313,6 +313,7 @@ export class DQNAgent {
     const isWeights = tf.tensor1d(weights.length ? weights : new Array(batch.length).fill(1));
 
     let tdTensor;
+    const trainableVars = this.online.trainableWeights.map((weight) => weight.val);
     const { value: lossTensor, grads } = tf.variableGrads(() => {
       const qPredAll = this.online.apply(states);
       const actionMask = tf.oneHot(actions, this.actionDim);
@@ -332,11 +333,14 @@ export class DQNAgent {
       tdTensor = targets.sub(qPred);
       const loss = tdTensor.square().mul(isWeights).mean();
       return loss;
-    }, this.online.trainableWeights);
 
-    const gradList = this.online.trainableWeights.map((weight) => grads[weight.name]);
+    }, trainableVars);
+
+    const gradList = this.online.trainableWeights.map((weight) => grads[weight.val.name]);
+    const clipLimit = this.gradientClip ?? 10;
     const clipped = gradList.map((grad) => {
-      const clippedGrad = tf.clipByValue(grad, -10, 10);
+      const clippedGrad = tf.clipByValue(grad, -clipLimit, clipLimit);
+
       grad.dispose();
       return clippedGrad;
     });
