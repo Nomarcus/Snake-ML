@@ -26,13 +26,13 @@ Your task:
 
 Pause logic:
 - Set "pause": true ONLY in extreme cases:
-  • Catastrophic degradation (avgReward suddenly drops far below all historical baselines for many episodes).  
-  • Runaway behavior (parameters drift to values that make training meaningless, e.g. learningRate > 1, gamma ≤ 0, or epsilonDecay > 1.0).  
-  • Telemetry data is missing critical fields or is invalid.  
+- Catastrophic degradation (avgReward suddenly drops far below all historical baselines for many episodes).  
+- Runaway behavior (parameters drift to values that make training meaningless, e.g. learningRate > 1, gamma ≤ 0, or epsilonDecay > 1.0).  
+- Telemetry data is missing critical fields or is invalid.  
 - In all normal cases, even if performance is poor or stagnating, continue training and set "pause": false.  
 - If "pause": true is used, analysisText must clearly explain the extreme condition that triggered it.  
 
-⚠️ Output must always be strict JSON in this format:  
+Output must always be strict JSON in this format:  
 {
   "rewardConfig": {
     "fruitReward": <number>,
@@ -61,8 +61,10 @@ Pause logic:
 Rules:
 - Always include ALL fields, even if unchanged.  
 - Never output extra commentary or markdown. JSON only.  
+- Never wrap JSON in code fences or markdown (no \`\`\`json).  
 - If "pause": true, analysisText must explain why.  
 `;
+
 
 
 
