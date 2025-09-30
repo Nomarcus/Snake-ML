@@ -739,7 +739,9 @@ export function createAITuner(options = {}) {
     instruction,
     getInstruction,
     isCheckpointEnabled,
+
     handleGroqResponse: handleGroqResponseOption,
+
   } = options;
 
   if (typeof fetchTelemetry !== 'function') {
@@ -920,6 +922,8 @@ export function createAITuner(options = {}) {
     }
 
     const responseJson = await groqResponse.json();
+
+
 
     if (!groqResponseHandler) {
       console.warn('[hf-tuner] handleGroqResponse saknas – kan inte tolka Groq-svar.');

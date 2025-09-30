@@ -4226,6 +4226,7 @@ function applyAITunerHyperparameters(updates={}){
   return result;
 }
 
+
 function cleanJsonString(str){
   if(typeof str!=='string') return '';
   let cleaned=str.trim();
@@ -4246,6 +4247,7 @@ async function handleGroqResponse(responseJson){
       console.warn("⚠️ Ingen AI-output hittades i svaret");
       return;
     }
+
 
     const cleaned=cleanJsonString(aiResult);
     let parsed;
@@ -4269,12 +4271,15 @@ async function handleGroqResponse(responseJson){
 
     if(parsed.pause===true){
       console.warn("⏸️ AI beslutade att pausa träningen:", analysisText);
+
       if(typeof pauseTraining==='function'){
         pauseTraining();
       }else if(typeof stopTraining==='function'){
         stopTraining();
       }
+
       return parsed;
+=
     }
 
     if(parsed.pause===false){
@@ -4285,7 +4290,9 @@ async function handleGroqResponse(responseJson){
       }
     }
 
+
     if(parsed.rewardConfig && typeof parsed.rewardConfig==='object'){
+
       const rewardResult=applyAITunerRewardConfig(parsed.rewardConfig);
       if(rewardResult?.config){
         Object.assign(rewardConfig,rewardResult.config);
@@ -4295,7 +4302,9 @@ async function handleGroqResponse(responseJson){
       }
     }
 
+
     if(parsed.hyper && typeof parsed.hyper==='object'){
+
       const hyperResult=applyAITunerHyperparameters(parsed.hyper);
       if(hyperResult?.hyper){
         hyperParams={...hyperResult.hyper};
@@ -4305,10 +4314,12 @@ async function handleGroqResponse(responseJson){
         hyperParams={...hyperParams,...parsed.hyper};
       }
     }
+
     return parsed;
   }catch(err){
     console.error("Fel vid hantering av Groq-svar:", err);
     console.error("Rått proxysvar:", responseJson);
+
   }
 }
 
