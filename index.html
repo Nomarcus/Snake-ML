@@ -1039,7 +1039,9 @@ footer{
         </div>
       </div>
 
+
       <div id="tuneStatus" class="tune-status" role="status" aria-live="polite">⚪ Manuell – inga automatiska justeringar</div>
+
 
       <div class="ai-auto-tune__controls" role="group" aria-label="AI Auto-Tune inställningar">
         <section class="ai-auto-tune__column" aria-labelledby="aiAutoTuneAiHeading">
@@ -3562,6 +3564,7 @@ const ui={
   modeButtons:Array.from(document.querySelectorAll('#modeGroup .pill')),
   algoSelect:document.getElementById('algoSelect'),
   algoDescription:document.getElementById('algoDescription'),
+
   tuneStatus:document.getElementById('tuneStatus'),
   aiIntervalSlider:document.getElementById('aiIntervalSlider'),
   aiIntervalReadout:document.getElementById('aiIntervalReadout'),
@@ -3706,12 +3709,14 @@ let contexts=[];
 let renderTick=0;
 let trainingMode='manual';
 const TUNE_MODES={
+
   MANUAL:'manual',
   CLASSIC:'classic',
   AI:'ai',
 };
 let tuneMode=TUNE_MODES.MANUAL;
 let autoActive=false;
+
 let autoPilot=null;
 const autoLogEntries=[];
 const MAX_AUTO_LOG_ENTRIES=24;
@@ -3828,6 +3833,7 @@ function resetAutoLog(){
 }
 function updateAutoLogVisibility(){
   if(!ui.autoLogPanel) return;
+
   ui.autoLogPanel.classList.toggle('hidden',!autoActive);
 }
 
@@ -3861,6 +3867,53 @@ function applyTuneMode(){
     aiAutoTuneEnabled=false;
   }
   if(aiTuner) aiTuner.setEnabled(tuneMode===TUNE_MODES.AI);
+  updateAutoLogVisibility();
+  updateTuneModeUI();
+
+}
+
+function updateTuneModeUI(){
+  if(ui.autoButton){
+    ui.autoButton.setAttribute('aria-pressed',autoActive?'true':'false');
+    ui.autoButton.classList.remove('blue','purple','green');
+    if(tuneMode===TUNE_MODES.ANALYSIS){
+      ui.autoButton.classList.add('blue');
+    }else if(tuneMode===TUNE_MODES.CLASSIC){
+      ui.autoButton.classList.add('purple');
+    }else if(tuneMode===TUNE_MODES.AI){
+      ui.autoButton.classList.add('green');
+    }
+  }
+  if(ui.tuneStatus){
+    if(tuneMode===TUNE_MODES.ANALYSIS){
+      ui.tuneStatus.textContent='🔵 Analysläge – AI föreslår, inga ändringar';
+    }else if(tuneMode===TUNE_MODES.CLASSIC){
+      ui.tuneStatus.textContent='🟣 Auto-Tune utan AI – klassisk reglering';
+    }else if(tuneMode===TUNE_MODES.AI){
+      ui.tuneStatus.textContent='🟢 Auto-Tune med AI – ändringar appliceras automatiskt';
+    }
+  }
+  if(ui.aiAutoTuneToggle){
+    ui.aiAutoTuneToggle.disabled=!autoActive;
+  }
+}
+
+function applyTuneMode(){
+  if(!ui.autoButton) return;
+  let aiChecked=!!ui.aiAutoTuneToggle?.checked;
+  if(!autoActive&&aiChecked&&ui.aiAutoTuneToggle){
+    ui.aiAutoTuneToggle.checked=false;
+    aiChecked=false;
+  }
+  if(!autoActive){
+    tuneMode=TUNE_MODES.ANALYSIS;
+  }else{
+    tuneMode=aiChecked?TUNE_MODES.AI:TUNE_MODES.CLASSIC;
+  }
+  aiAnalysisOnly=tuneMode===TUNE_MODES.ANALYSIS;
+  aiAutoTuneEnabled=tuneMode===TUNE_MODES.AI;
+  const shouldEnableAITuner=tuneMode!==TUNE_MODES.CLASSIC;
+  if(aiTuner) aiTuner.setEnabled(shouldEnableAITuner);
   updateAutoLogVisibility();
   updateTuneModeUI();
 }
@@ -4435,6 +4488,10 @@ function bindUI(){
   ui.btnPause.addEventListener('click',stopTraining);
   ui.btnStep.addEventListener('click',async()=>{ await playSingleEpisode(); });
   ui.btnWatch.addEventListener('click',watchSmoothEpisode);
+  ui.autoButton?.addEventListener('click',()=>{
+    const targetMode=autoActive?'manual':'auto';
+    setTrainingMode(targetMode);
+  });
   ui.btnToggleLiveView?.addEventListener('click',()=>{
     setLiveViewHidden(!liveViewHidden);
   });
@@ -4468,6 +4525,7 @@ function bindUI(){
       setAiAutoStyle(btn.dataset.style||DEFAULT_AUTO_STYLE);
     });
   });
+
   ui.fileLoader?.addEventListener('change',async ev=>{
     const [file]=ev.target.files||[];
     if(file) await loadTrainingFromFile(file);
@@ -4645,7 +4703,9 @@ function setTrainingMode(mode){
     lastAutoSummaryEpisode=0;
     autoRunStopEpisode=null;
   }
+
   if(trainingMode!=='manual') ui.envCount.disabled=true;
+
   applyTuneMode();
   updateControlAvailability();
   updateReadouts();
