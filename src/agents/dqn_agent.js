@@ -231,23 +231,24 @@ export class DQNAgent {
   }
 
   syncTarget(hard = false) {
-    const onlineWeights = this.online.getWeights();
-    if (hard) {
-      this.target.setWeights(onlineWeights);
-      onlineWeights.forEach((w) => w.dispose());
-      return;
+
+    const sourceWeights = this.online.weights;
+    const targetWeights = this.target.weights;
+    if (sourceWeights.length !== targetWeights.length) {
+      throw new Error('Target network shape mismatch');
     }
     const tau = this.tau;
-    const targetWeights = this.target.getWeights();
-    const updated = onlineWeights.map((onlineWeight, idx) => {
-      const targetWeight = targetWeights[idx];
-      const blended = tf.add(onlineWeight.mul(tau), targetWeight.mul(1 - tau));
-      onlineWeight.dispose();
-      targetWeight.dispose();
-      return blended;
-    });
-    this.target.setWeights(updated);
-    updated.forEach((tensor) => tensor.dispose());
+    for (let i = 0; i < targetWeights.length; i++) {
+      const targetVar = targetWeights[i].val;
+      const sourceVar = sourceWeights[i].val;
+      tf.tidy(() => {
+        const updated = hard
+          ? sourceVar.read()
+          : sourceVar.read().mul(tau).add(targetVar.read().mul(1 - tau));
+        targetVar.assign(updated);
+      });
+    }
+n
   }
 
   act(state) {
@@ -461,9 +462,7 @@ export class DQNAgent {
 
   async importState(state) {
     if (!state) throw new Error('Invalid state');
-    if (state.stateDim && state.stateDim !== this.stateDim) {
-      throw new Error('State dimension mismatch');
-    }
+    const stateDimMismatch = state.stateDim && state.stateDim !== this.stateDim;
     if (state.actionDim && state.actionDim !== this.actionDim) {
       throw new Error('Action dimension mismatch');
     }
@@ -495,13 +494,19 @@ export class DQNAgent {
     this.target.dispose();
     this.online = this.buildModel();
     this.target = this.buildModel();
-    this.syncTarget(true);
-    if (Array.isArray(state.weights)) {
+
+    this.optimizer.dispose?.();
+    this.optimizer = tf.train.adam(this.lr);
+    if (stateDimMismatch) {
+      console.warn(
+        '[DQN] Imported state uses outdated observation size; skipping weight load and reinitializing.',
+      );
+    } else if (Array.isArray(state.weights)) {
+
       const tensors = state.weights.map((w) =>
         tf.tensor(Buffer.from(w.data, 'base64'), w.shape, w.dtype),
       );
       this.online.setWeights(tensors);
-      this.target.setWeights(tensors);
       tensors.forEach((t) => t.dispose());
     }
     this.syncTarget(true);

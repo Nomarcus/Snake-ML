@@ -2355,23 +2355,24 @@ class DQNAgent{
     if(tail.length) tail.forEach(t=>this.buffer.push(t));
   }
   syncTarget(hard=false){
-    const onlineWeights=this.online.getWeights();
-    if(hard){
-      this.target.setWeights(onlineWeights);
-      onlineWeights.forEach(w=>w.dispose());
-      return;
+
+    const sourceWeights=this.online.weights;
+    const targetWeights=this.target.weights;
+    if(sourceWeights.length!==targetWeights.length){
+      throw new Error('Target network shape mismatch');
     }
-    const targetWeights=this.target.getWeights();
     const tau=this.tau;
-    const updated=onlineWeights.map((ow,i)=>{
-      const tw=targetWeights[i];
-      const blended=tf.add(ow.mul(tau),tw.mul(1-tau));
-      ow.dispose();
-      tw.dispose();
-      return blended;
-    });
-    this.target.setWeights(updated);
-    updated.forEach(w=>w.dispose());
+    for(let i=0;i<targetWeights.length;i++){
+      const targetVar=targetWeights[i].val;
+      const sourceVar=sourceWeights[i].val;
+      tf.tidy(()=>{
+        const updated=hard
+          ? sourceVar.read()
+          : sourceVar.read().mul(tau).add(targetVar.read().mul(1-tau));
+        targetVar.assign(updated);
+      });
+    }
+
   }
   updateEpsilon(step){
     const t=Math.min(1,step/this.epsDecay);
@@ -2493,7 +2494,7 @@ class DQNAgent{
   }
   async importState(state){
     if(!state) throw new Error('Invalid state');
-    if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
+    const stateDimMismatch=state.sDim && state.sDim!==this.sDim;
     if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
     const cfg=state.config??{};
     this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():this.layers;
@@ -2506,12 +2507,18 @@ class DQNAgent{
     this.setGamma(cfg.gamma??this.gamma);
     this.setLearningRate(cfg.lr??this.lr);
     this.batch=cfg.batch??this.batch;
-    this.buffer=ReplayBuffer.fromJSON(state.buffer,cfg.bufferSize,{
-      alpha:cfg.priorityAlpha,
-      beta:cfg.priorityBeta,
-      betaIncrement:cfg.priorityBetaIncrement,
-      priorityEps:cfg.priorityEps,
-    });
+    const bufferCap=cfg.bufferSize??this.buffer.cap;
+    const bufferOpts={
+      alpha:cfg.priorityAlpha??this.buffer.alpha,
+      beta:cfg.priorityBeta??this.buffer.beta,
+      betaIncrement:cfg.priorityBetaIncrement??this.buffer.betaIncrement,
+      priorityEps:cfg.priorityEps??this.buffer.priorityEps,
+    };
+    if(stateDimMismatch){
+      this.buffer=new ReplayBuffer(bufferCap,bufferOpts);
+    }else{
+      this.buffer=ReplayBuffer.fromJSON(state.buffer,bufferCap,bufferOpts);
+    }
     this.priorityEps=this.buffer.priorityEps;
     this.setEnvCount(cfg.envCount??this.envCount);
     this.epsStart=cfg.epsStart??this.epsStart;
@@ -2523,9 +2530,13 @@ class DQNAgent{
     this.online.dispose();
     this.target.dispose();
     this.online=this.build();
-    this.target=this.build();
-    this.syncTarget(true);
-    if(Array.isArray(state.weights)){
+ 
+    this.optimizer?.dispose?.();
+    this.optimizer=tf.train.adam(this.lr);
+    if(stateDimMismatch){
+      console.warn('[DQN] Imported state uses outdated observation size; skipping weight load and reinitializing.');
+    }else if(Array.isArray(state.weights)){
+
       const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
       this.online.setWeights(tensors);
       this.target.setWeights(tensors);
