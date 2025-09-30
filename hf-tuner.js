@@ -739,6 +739,7 @@ export function createAITuner(options = {}) {
     instruction,
     getInstruction,
     isCheckpointEnabled,
+    handleGroqResponse,
   } = options;
 
   if (typeof fetchTelemetry !== 'function') {
@@ -875,7 +876,7 @@ export function createAITuner(options = {}) {
       requestBody.instruction = instructionText;
     }
 
-    const response = await fetch(buildProxyUrl(), {
+    const groqResponse = await fetch(buildProxyUrl(), {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -883,8 +884,8 @@ export function createAITuner(options = {}) {
       body: JSON.stringify(requestBody),
     });
 
-    if (!response.ok) {
-      const text = await response.text();
+    if (!groqResponse.ok) {
+      const text = await groqResponse.clone().text();
 
       let parsedError = null;
       try {
@@ -902,7 +903,7 @@ export function createAITuner(options = {}) {
         console.error('[hf-tuner] Proxy råsvar (fel):', rawPayload);
       }
       const enriched = [
-        `Proxy ${response.status}${statusText ? ` (${statusText})` : ''}: ${baseMessage}`,
+        `Proxy ${groqResponse.status}${statusText ? ` (${statusText})` : ''}: ${baseMessage}`,
         upstreamModel ? `modell: ${upstreamModel}` : null,
         upstreamUrl ? `endpoint: ${upstreamUrl}` : null,
         rawPayload ? `HF: ${rawPayload}` : null,
@@ -912,7 +913,14 @@ export function createAITuner(options = {}) {
       throw new Error(enriched);
     }
 
-    const payload = await response.json();
+    const responseJson = await groqResponse.json();
+
+    if (typeof handleGroqResponse === 'function') {
+      await handleGroqResponse(responseJson);
+      return;
+    }
+
+    const payload = responseJson;
     if (payload?.error) {
       const baseMessage = payload.error;
       const rawDetails = typeof payload.raw === 'string' && payload.raw ? payload.raw : '';
