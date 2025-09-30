@@ -25,7 +25,7 @@ Your task:
 - If performance is stable and improving, return the same values.  
 - If you detect instability, runaway behavior, or catastrophic degradation, set "pause": true to pause training until the human resumes. Otherwise set "pause": false.  
 
-Output must always be strict JSON in this format:  
+⚠️ Output must always be strict JSON in this format:  
 {
   "rewardConfig": {
     "fruitReward": <number>,
@@ -52,7 +52,7 @@ Output must always be strict JSON in this format:
 }  
 
 Rules:
-- Always include ALL fields listed above, even if unchanged.  
+- Always include ALL fields, even if unchanged.  
 - Never output extra commentary or markdown. JSON only.  
 - If "pause": true, analysisText must explain why.  `;
 

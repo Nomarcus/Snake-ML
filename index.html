@@ -1619,6 +1619,7 @@ const REWARD_INPUT_IDS={
 const RECENT_EPISODES_MAX=32;
 const ROLLUP_WINDOW=1000;
 let rewardConfig={...REWARD_DEFAULTS};
+let hyperParams={};
 const LOOP_PATTERNS=new Set(['1,2,1,2','2,1,2,1']);
 
 /* ---------------- Serialization helpers ---------------- */
@@ -4166,6 +4167,7 @@ function applyAITunerRewardConfig(newConfig={}){
   });
   if(result.changes.length){
     applyRewardConfigToUI(merged);
+    rewardConfig={...merged};
     result.config={...merged};
   }
   return result;
@@ -4218,7 +4220,74 @@ function applyAITunerHyperparameters(updates={}){
     applyConfigToAgent();
     result.hyper=getHyperparameterSnapshot();
   }
+  if(result.hyper){
+    hyperParams={...result.hyper};
+  }
   return result;
+}
+
+async function handleGroqResponse(responseJson){
+  try{
+    const aiResult=responseJson?.data?.choices?.[0]?.message?.content;
+    if(!aiResult){
+      console.warn("⚠️ Ingen AI-output hittades i svaret");
+      return;
+    }
+
+    const parsed=JSON.parse(aiResult);
+
+    if(parsed.pause===true){
+      console.warn("⏸️ AI beslutade att pausa träningen:", parsed.analysisText);
+      if(typeof pauseTraining==='function'){
+        pauseTraining();
+      }else if(typeof stopTraining==='function'){
+        stopTraining();
+      }
+      return;
+    }
+
+    if(parsed.pause===false){
+      if(typeof resumeTraining==='function'){
+        resumeTraining();
+      }else if(!training && typeof startTraining==='function'){
+        startTraining();
+      }
+    }
+
+    if(parsed.rewardConfig){
+      const rewardResult=applyAITunerRewardConfig(parsed.rewardConfig);
+      if(rewardResult?.config){
+        Object.assign(rewardConfig,rewardResult.config);
+      }else{
+        Object.assign(rewardConfig,parsed.rewardConfig);
+        applyRewardsToEnv();
+      }
+    }
+
+    if(parsed.hyper){
+      const hyperResult=applyAITunerHyperparameters(parsed.hyper);
+      if(hyperResult?.hyper){
+        hyperParams={...hyperResult.hyper};
+      }else if(typeof getHyperparameterSnapshot==='function'){
+        hyperParams={...getHyperparameterSnapshot(),...parsed.hyper};
+      }else{
+        hyperParams={...hyperParams,...parsed.hyper};
+      }
+    }
+
+    if(parsed.analysisText){
+      console.log("🤖 AI analys:", parsed.analysisText);
+      try{
+        logAITunerEvent?.({title:'AI analys',detail:parsed.analysisText,tone:'ai',episodeNumber:episode});
+      }catch(err){
+        console.warn('[handleGroqResponse] kunde inte logga analys',err);
+      }
+    }else{
+      console.log("🤖 AI analys:", parsed.analysisText);
+    }
+  }catch(err){
+    console.error("Fel vid parsing av AI-svar:", err);
+  }
 }
 
 function logAITunerEvent({title='',detail='',tone='ai',metrics=null,episodeNumber=null}={}){
@@ -5918,6 +5987,7 @@ aiTuner=createAITuner({
   applyHyperparameters:applyAITunerHyperparameters,
   log:logAITunerEvent,
   isCheckpointEnabled:()=>checkpointEnabled,
+  handleGroqResponse,
 });
 aiTuner.setInterval(aiAnalysisInterval);
 aiTuner.setEnabled(aiAutoTuneEnabled);
@@ -5926,6 +5996,7 @@ window.addEventListener('load',()=>{
   bindUI();
   setPlaybackMode('cinematic');
   instantiateAgent('dueling');
+  hyperParams=getHyperparameterSnapshot();
   setImmediateState(env);
 });
 </script>
