@@ -4226,6 +4226,33 @@ function applyAITunerHyperparameters(updates={}){
   return result;
 }
 
+function parseAITunerContent(aiResult){
+  if(typeof aiResult!=='string') return null;
+  let cleaned=aiResult.trim();
+
+  const fenceMatch=cleaned.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
+  if(fenceMatch){
+    cleaned=fenceMatch[1].trim();
+  }
+
+  try{
+    return JSON.parse(cleaned);
+  }catch(parseErr){
+    const start=cleaned.indexOf('{');
+    const end=cleaned.lastIndexOf('}');
+    if(start!==-1&&end!==-1&&end>=start){
+      const snippet=cleaned.slice(start,end+1);
+      try{
+        return JSON.parse(snippet);
+      }catch(innerErr){
+        console.warn('[handleGroqResponse] kunde inte tolka JSON-blob efter sanering',innerErr,{snippet});
+      }
+    }
+    console.warn('[handleGroqResponse] AI-svar saknar giltig JSON',parseErr,{raw:aiResult});
+    return null;
+  }
+}
+
 async function handleGroqResponse(responseJson){
   try{
     const aiResult=responseJson?.data?.choices?.[0]?.message?.content;
@@ -4234,7 +4261,10 @@ async function handleGroqResponse(responseJson){
       return;
     }
 
-    const parsed=JSON.parse(aiResult);
+    const parsed=parseAITunerContent(aiResult);
+    if(!parsed){
+      return;
+    }
 
     if(parsed.pause===true){
       console.warn("⏸️ AI beslutade att pausa träningen:", parsed.analysisText);
