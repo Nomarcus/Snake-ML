@@ -46,14 +46,13 @@ Output must always be strict JSON in this format:
     "snakeLength": <number>,
     "fruitEaten": <number>
   },
-  "pause": <false>,
   "analysisText": "<short explanation (1–3 sentences)>"
-}  
+}
 
 Rules:
-- Always include ALL fields, even if unchanged.  
-- Never output extra commentary or markdown. JSON only.  
-- If "pause": true, analysisText must explain why.  `;
+- Always include ALL fields, even if unchanged.
+- Never output extra commentary or markdown. JSON only.
+- If you recommend halting training, explain it within analysisText.  `;
 
 
 const DEFAULT_ALLOWED_ORIGINS = [

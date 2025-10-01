@@ -4289,24 +4289,6 @@ async function handleGroqResponse(responseJson){
       return;
     }
 
-    if(parsed.pause===true){
-      console.warn("⏸️ AI beslutade att pausa träningen:", parsed.analysisText);
-      if(typeof pauseTraining==='function'){
-        pauseTraining();
-      }else if(typeof stopTraining==='function'){
-        stopTraining();
-      }
-      return;
-    }
-
-    if(parsed.pause===false){
-      if(typeof resumeTraining==='function'){
-        resumeTraining();
-      }else if(!training && typeof startTraining==='function'){
-        startTraining();
-      }
-    }
-
     const allowAutoAdjustment=aiAutoTuneEnabled&&aiAutoAdjustEnabled;
     let adjustmentsDeferred=false;
 
