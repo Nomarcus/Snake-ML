@@ -252,11 +252,25 @@ canvas#board{
   font-weight:600;
   cursor:pointer;
 }
+.toggle.toggle--disabled{
+  opacity:0.55;
+  cursor:not-allowed;
+}
 .toggle input[type="checkbox"]{
   width:18px;
   height:18px;
   accent-color:var(--accent-a);
   cursor:pointer;
+}
+.toggle input[type="checkbox"][disabled]{
+  cursor:not-allowed;
+}
+.ai-toggle-group{
+  display:flex;
+  align-items:center;
+  gap:12px;
+  flex-wrap:wrap;
+  justify-content:flex-end;
 }
 button{
   appearance:none;
@@ -1040,10 +1054,16 @@ footer{
           <div class="field compact ai-interval-field">
             <div class="field-header">
               <label for="aiIntervalSlider">Analysintervall</label>
-              <label class="toggle" for="aiAutoTuneToggle">
-                <input type="checkbox" id="aiAutoTuneToggle" aria-label="Aktivera AI Auto-Tune">
-                <span>Aktivera</span>
-              </label>
+              <div class="ai-toggle-group" role="group" aria-label="AI Auto-Tune växlare">
+                <label class="toggle" for="aiAutoTuneToggle">
+                  <input type="checkbox" id="aiAutoTuneToggle" aria-label="Aktivera AI Auto-Tune">
+                  <span>Aktivera</span>
+                </label>
+                <label class="toggle" for="aiAutoAdjustToggle">
+                  <input type="checkbox" id="aiAutoAdjustToggle" aria-label="Justera parametrar med AI">
+                  <span>Justera parametrar med AI</span>
+                </label>
+              </div>
             </div>
             <input type="range" id="aiIntervalSlider" min="100" max="5000" step="100" value="500">
             <span class="hint">Number of episodes between AI analysis calls.</span>
@@ -3525,6 +3545,7 @@ const ui={
   algoSelect:document.getElementById('algoSelect'),
   algoDescription:document.getElementById('algoDescription'),
   aiAutoTuneToggle:document.getElementById('aiAutoTuneToggle'),
+  aiAutoAdjustToggle:document.getElementById('aiAutoAdjustToggle'),
   aiIntervalSlider:document.getElementById('aiIntervalSlider'),
   aiIntervalReadout:document.getElementById('aiIntervalReadout'),
   aiRunLimit:document.getElementById('aiRunLimit'),
@@ -3681,6 +3702,7 @@ const DEFAULT_AUTO_STYLE='balanced';
 const aiEpisodeHistory=[];
 let aiAnalysisInterval=500;
 let aiAutoTuneEnabled=false;
+let aiAutoAdjustEnabled=false;
 let aiAutoTuneStyle=DEFAULT_AUTO_STYLE;
 let autoRunLimit=0;
 let autoRunStopEpisode=null;
@@ -4285,24 +4307,50 @@ async function handleGroqResponse(responseJson){
       }
     }
 
+    const allowAutoAdjustment=aiAutoTuneEnabled&&aiAutoAdjustEnabled;
+    let adjustmentsDeferred=false;
+
     if(parsed.rewardConfig){
-      const rewardResult=applyAITunerRewardConfig(parsed.rewardConfig);
-      if(rewardResult?.config){
-        Object.assign(rewardConfig,rewardResult.config);
+      if(allowAutoAdjustment){
+        const rewardResult=applyAITunerRewardConfig(parsed.rewardConfig);
+        if(rewardResult?.config){
+          Object.assign(rewardConfig,rewardResult.config);
+        }else{
+          Object.assign(rewardConfig,parsed.rewardConfig);
+          applyRewardsToEnv();
+        }
       }else{
-        Object.assign(rewardConfig,parsed.rewardConfig);
-        applyRewardsToEnv();
+        adjustmentsDeferred=true;
+        console.log('💡 AI föreslog belöningsändringar (autojustering är avstängd):',parsed.rewardConfig);
       }
     }
 
     if(parsed.hyper){
-      const hyperResult=applyAITunerHyperparameters(parsed.hyper);
-      if(hyperResult?.hyper){
-        hyperParams={...hyperResult.hyper};
-      }else if(typeof getHyperparameterSnapshot==='function'){
-        hyperParams={...getHyperparameterSnapshot(),...parsed.hyper};
+      if(allowAutoAdjustment){
+        const hyperResult=applyAITunerHyperparameters(parsed.hyper);
+        if(hyperResult?.hyper){
+          hyperParams={...hyperResult.hyper};
+        }else if(typeof getHyperparameterSnapshot==='function'){
+          hyperParams={...getHyperparameterSnapshot(),...parsed.hyper};
+        }else{
+          hyperParams={...hyperParams,...parsed.hyper};
+        }
       }else{
-        hyperParams={...hyperParams,...parsed.hyper};
+        adjustmentsDeferred=true;
+        console.log('💡 AI föreslog hyperparameter-ändringar (autojustering är avstängd):',parsed.hyper);
+      }
+    }
+
+    if(adjustmentsDeferred){
+      try{
+        logAITunerEvent?.({
+          title:'AI Auto-Tune',
+          detail:'Förslag mottogs – aktivera "Justera parametrar med AI" för att tillämpa dem automatiskt.',
+          tone:'ai',
+          episodeNumber:episode,
+        });
+      }catch(err){
+        console.warn('[handleGroqResponse] kunde inte logga notifiering om manuella justeringar',err);
       }
     }
 
@@ -4323,6 +4371,16 @@ async function handleGroqResponse(responseJson){
 
 function logAITunerEvent({title='',detail='',tone='ai',metrics=null,episodeNumber=null}={}){
   logAutoEvent({title,detail,metrics,tone,episode:episodeNumber??episode});
+}
+
+function syncAiAutoAdjustToggle(){
+  if(!ui.aiAutoAdjustToggle) return;
+  const shouldDisable=!aiAutoTuneEnabled;
+  ui.aiAutoAdjustToggle.disabled=shouldDisable;
+  const label=ui.aiAutoAdjustToggle.closest('.toggle');
+  if(label){
+    label.classList.toggle('toggle--disabled',shouldDisable);
+  }
 }
 
 function bindUI(){
@@ -4381,17 +4439,28 @@ function bindUI(){
       setAiAutoStyle(btn.dataset.style||DEFAULT_AUTO_STYLE);
     });
   });
+  if(ui.aiAutoAdjustToggle){
+    aiAutoAdjustEnabled=ui.aiAutoAdjustToggle.checked;
+    ui.aiAutoAdjustToggle.addEventListener('change',()=>{
+      aiAutoAdjustEnabled=ui.aiAutoAdjustToggle.checked;
+      const detail=aiAutoAdjustEnabled?'Autojustering aktiverad':'Autojustering avstängd';
+      logAITunerEvent({title:'AI Auto-Tune',detail,tone:'ai',episodeNumber:episode});
+    });
+    syncAiAutoAdjustToggle();
+  }
   ui.aiAutoTuneToggle?.addEventListener('change',()=>{
     if(ui.aiAutoTuneToggle.checked){
       const code=prompt('Ange säkerhetskod för att aktivera AI Auto-Tune:');
       if(code!=='1234554321'){
         ui.aiAutoTuneToggle.checked=false;
         aiAutoTuneEnabled=false;
+        syncAiAutoAdjustToggle();
         flash('Fel kod. AI Auto-Tune förblir avstängd.',true);
         return;
       }
     }
     aiAutoTuneEnabled=ui.aiAutoTuneToggle.checked;
+    syncAiAutoAdjustToggle();
     if(aiTuner) aiTuner.setEnabled(aiAutoTuneEnabled);
     const detail=aiAutoTuneEnabled?'Aktiverad':'Avstängd';
     logAITunerEvent({title:'AI Auto-Tune',detail,tone:'ai',episodeNumber:episode});
