@@ -988,6 +988,42 @@ footer{
       <label for="stagePresetSelect">Stage preset</label>
       <select id="stagePresetSelect"></select>
     </div>
+
+    <div class="kpi">
+      <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
+      <div class="item"><b>Avg reward (100)</b><span id="kAvgRw">0.0</span></div>
+      <div class="item"><b>Best length</b><span id="kBest">0</span></div>
+      <div class="item"><b>Fruit / ep</b><span id="kFruitRate">0.0</span></div>
+    </div>
+
+    <div class="progress-chart" id="progressChartPanel">
+      <div class="progress-chart__header">
+        <div>
+          <h3>Träningsprogress</h3>
+          <span class="hint">Medel per 100 episoder</span>
+        </div>
+        <button type="button" class="secondary micro" id="progressChartToggle" aria-expanded="true" aria-controls="progressChartBody">Dölj diagram</button>
+      </div>
+      <div class="progress-chart__body" id="progressChartBody">
+        <div class="progress-chart__canvas" id="progressChartCanvas">
+          <svg id="progressChartSvg" viewBox="0 0 360 160" role="img" aria-label="Linje-diagram över medelbelöning och frukt per 100 episoder">
+            <g id="progressChartGrid" class="progress-chart__grid"></g>
+            <path id="progressRewardPath" class="line reward" d=""></path>
+            <path id="progressFruitPath" class="line fruit" d=""></path>
+          </svg>
+        </div>
+        <div class="progress-chart__empty" id="progressChartEmpty">Kör minst 100 episoder för att se trenderna.</div>
+        <div class="progress-chart__legend" id="progressChartLegend">
+          <span class="legend-item"><span class="legend-swatch reward"></span>Medelbelöning</span>
+          <span class="legend-item"><span class="legend-swatch fruit"></span>Medel frukt</span>
+        </div>
+        <div class="progress-chart__meta" id="progressChartMeta">
+          <span class="hint">Episoder</span>
+          <span class="mono" id="progressChartRange">—</span>
+        </div>
+      </div>
+    </div>
+
     <p class="hint" id="algoDescription">Prioritized replay, n-step returns, and dueling heads make DQN stable and sample efficient.</p>
 
     <div class="ai-auto-tune" id="aiAutoTunePanel">
@@ -1041,41 +1077,6 @@ footer{
         <button type="button" id="autoLogClear" class="secondary micro">Clear</button>
       </div>
       <div id="autoLogStream" class="auto-log__stream" role="log" aria-live="polite"></div>
-    </div>
-
-    <div class="kpi">
-      <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
-      <div class="item"><b>Avg reward (100)</b><span id="kAvgRw">0.0</span></div>
-      <div class="item"><b>Best length</b><span id="kBest">0</span></div>
-      <div class="item"><b>Fruit / ep</b><span id="kFruitRate">0.0</span></div>
-    </div>
-
-    <div class="progress-chart" id="progressChartPanel">
-      <div class="progress-chart__header">
-        <div>
-          <h3>Träningsprogress</h3>
-          <span class="hint">Medel per 100 episoder</span>
-        </div>
-        <button type="button" class="secondary micro" id="progressChartToggle" aria-expanded="true" aria-controls="progressChartBody">Dölj diagram</button>
-      </div>
-      <div class="progress-chart__body" id="progressChartBody">
-        <div class="progress-chart__canvas" id="progressChartCanvas">
-          <svg id="progressChartSvg" viewBox="0 0 360 160" role="img" aria-label="Linje-diagram över medelbelöning och frukt per 100 episoder">
-            <g id="progressChartGrid" class="progress-chart__grid"></g>
-            <path id="progressRewardPath" class="line reward" d=""></path>
-            <path id="progressFruitPath" class="line fruit" d=""></path>
-          </svg>
-        </div>
-        <div class="progress-chart__empty" id="progressChartEmpty">Kör minst 100 episoder för att se trenderna.</div>
-        <div class="progress-chart__legend" id="progressChartLegend">
-          <span class="legend-item"><span class="legend-swatch reward"></span>Medelbelöning</span>
-          <span class="legend-item"><span class="legend-swatch fruit"></span>Medel frukt</span>
-        </div>
-        <div class="progress-chart__meta" id="progressChartMeta">
-          <span class="hint">Episoder</span>
-          <span class="mono" id="progressChartRange">—</span>
-        </div>
-      </div>
     </div>
 
     <div class="split charts">
