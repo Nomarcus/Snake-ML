@@ -10,7 +10,7 @@ const HISTORY_LOG_MAX_BYTES = 8 * 1024 * 1024;
 const HISTORY_LOG_PATH = path.join(process.cwd(), 'api', 'logs', 'snake-history.jsonl');
 
 const SYSTEM_PROMPT = `You are an advanced reinforcement learning tuner for Snake-ML.  
-The agent plays Snake on a 2-D grid.  
+The agent plays Snake on a 2-D grid and the goad is to complete the whole board.  
 
 You will always receive JSON telemetry containing:  
 - General: episode, avgFruit, avgReward  
@@ -23,9 +23,8 @@ Your task:
 - Analyze all telemetry and determine if the agent is improving, stagnating, or regressing.  
 - Propose numeric adjustments to both rewardConfig and hyperparameters if they are likely to improve learning.  
 - If performance is stable and improving, return the same values.  
-- If you detect instability, runaway behavior, or catastrophic degradation, set "pause": true to pause training until the human resumes. Otherwise set "pause": false.  
 
-⚠️ Output must always be strict JSON in this format:  
+Output must always be strict JSON in this format:  
 {
   "rewardConfig": {
     "fruitReward": <number>,
@@ -47,7 +46,7 @@ Your task:
     "snakeLength": <number>,
     "fruitEaten": <number>
   },
-  "pause": <true|false>,
+  "pause": <false>,
   "analysisText": "<short explanation (1–3 sentences)>"
 }  
 
