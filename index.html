@@ -2353,9 +2353,12 @@ class ReplayBuffer{
 class DQNAgent{
   constructor(sDim,aDim,cfg={}){
     this.kind='dqn';
-    this.sDim=sDim;
     this.aDim=aDim;
     this.envCount=Math.max(1,cfg.envCount??1);
+    this.stateProvider=typeof cfg.stateProvider==='function'?cfg.stateProvider:null; // Added: accept dynamic state resolver for sizing
+    this.sDim=Math.max(1,sDim|0); // Added: default state dimension fallback
+    this.stateSize=this._resolveInitialStateSize(this.sDim); // Added: infer actual state length from live environment
+    this.sDim=this.stateSize||this.sDim; // Added: ensure model input matches resolved state length
     this.gamma=cfg.gamma??0.98;
     this.lr=cfg.lr??0.0005;
     this.batch=cfg.batch??128;
@@ -2377,11 +2380,35 @@ class DQNAgent{
     this.nStep=cfg.nStep??3;
     this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma));
     this.trainStep=cfg.trainStep??0;
+    this._warnedStateMigration=false; // Added: track if state padding warning emitted
+    this._loggedWeights=false; // Added: ensure trainable weight log fires once per model build
+    this._disposed=false; // Added: mark disposal state to guard usage after dispose
+    this._replayNormalized=false; // Added: lazily migrate replay entries to new dimensionality
     this.optimizer=tf.train.adam(this.lr);
     this.online=this.build();
     this.target=this.build();
+    this.model=this.online; // Added: expose primary network via generic model handle
     this.syncTarget();
     this.updateEpsilon(this.trainStep);
+  }
+  _resolveInitialStateSize(fallbackDim){
+    const snapshot=this._fetchCurrentStateVector();
+    const resolvedLength=snapshot.length||Math.max(1,fallbackDim|0);
+    if(snapshot.length&&snapshot.length!==fallbackDim){
+      console.warn(`State dimension override detected: expected ${fallbackDim}, received ${snapshot.length}. Rebuilding with new size.`); // Added: surface dynamic state sizing override
+    }
+    return resolvedLength;
+  }
+  _fetchCurrentStateVector(){
+    try{
+      if(this.stateProvider){
+        const state=this.stateProvider();
+        if(state&&typeof state.length==='number'){ return Array.from(state); }
+      }
+    }catch(err){
+      console.warn('State provider failed while resolving dimension:',err); // Added: guard against provider errors during sizing
+    }
+    return new Array(Math.max(1,this.sDim|0)).fill(0); // Added: fallback zero vector when provider unavailable
   }
   build(){
     const input=tf.input({shape:[this.sDim]});
@@ -2400,6 +2427,7 @@ class DQNAgent{
     return tf.model({inputs:input,outputs:q});
   }
   _applyModel(model,input,trackGradient=false){
+    this.checkModelReady('predict'); // Added: guard inference against disposed/empty models
     const output=model.apply(input);
     if(!this.dueling) return output; // Added: fall back to vanilla DQN
     const [value,advantage]=output;
@@ -2414,6 +2442,83 @@ class DQNAgent{
     }
     return q;
   }
+  _normalizeStateVector(state){
+    const arr=Array.from(state??[]);
+    if(arr.length===this.sDim){
+      this.stateSize=this.sDim; // Added: track live state length when it matches model input
+      return arr;
+    }
+    if(!this._warnedStateMigration && arr.length){
+      console.warn(`State length ${arr.length} differs from expected ${this.sDim}. Applying migration padding/slicing.`); // Added: notify about automatic state migration
+      this._warnedStateMigration=true;
+    }
+    this._replayNormalized=false; // Added: trigger replay normalization on next learn after detecting mismatch
+    const normalized=new Array(this.sDim).fill(0);
+    const limit=Math.min(arr.length,this.sDim);
+    for(let i=0;i<limit;i++) normalized[i]=arr[i];
+    this.stateSize=this.sDim; // Added: ensure reported state size stays aligned with model input after migration
+    return normalized;
+  }
+  _normalizeTransition(sample={}){
+    return {
+      s:this._normalizeStateVector(sample.s),
+      a:sample.a|0,
+      r:+sample.r||0,
+      ns:this._normalizeStateVector(sample.ns),
+      d:!!sample.d,
+      w:sample.w??1,
+    }; // Added: ensure replay entries always match model dimension
+  }
+  _normalizeReplayBuffer(){
+    if(this._replayNormalized) return; // Added: avoid reprocessing buffer when already normalized
+    if(!this.buffer||!Array.isArray(this.buffer.buf)) return;
+    this.buffer.buf=this.buffer.buf.map(sample=>this._normalizeTransition(sample)); // Added: retro-fit stored samples to new state size
+    this._replayNormalized=true; // Added: mark normalization complete until a mismatch is detected again
+  }
+  dispose(){
+    if(this._disposed) return; // Added: skip double dispose
+    this.online?.dispose();
+    this.target?.dispose();
+    this.optimizer?.dispose?.();
+    this.online=null;
+    this.target=null;
+    this.model=null;
+    this.optimizer=null;
+    this._disposed=true; // Added: mark networks as unavailable for future calls
+  }
+  checkModelReady(context='check'){
+    if(this._disposed||!this.online||!this.target){
+      throw new Error('Model not initialized'); // Added: guard against using disposed networks
+    }
+    if(!this.model||!(this.model.trainableWeights?.length)){ // Added: validate generic model handle before use
+      console.log('Trainable weights:', this.model?.trainableWeights?.map(w=>w.name)||[]);
+      throw new Error('Model not initialized');
+    }
+    const weights=this.model.trainableWeights??this.online.trainableWeights??[];
+    const names=weights.map(w=>w.name);
+    if(!this._loggedWeights){
+      console.log('Trainable weights:', names); // Added: debug log to help trace missing trainables
+      this._loggedWeights=true;
+    }
+    if(!names.length){
+      console.log('Trainable weights:', names); // Added: ensure empty list is still surfaced before throwing
+      throw new Error('Model not initialized');
+    }
+    if(context==='learn'&&this.stateSize!==this.sDim&&!this._warnedStateMigration){
+      console.warn(`State size mismatch during learning (${this.stateSize} vs ${this.sDim}). States will be padded/sliced automatically.`); // Added: highlight mismatched replay state size
+      this._warnedStateMigration=true;
+    }
+    return true;
+  }
+  _pushSample(sample){
+    const normalized=this._normalizeTransition(sample); // Added: coerce replay entries to correct dimensionality
+    this.buffer.push({ // Added: ensure replay buffer only stores plain JS arrays
+      s:Array.from(normalized.s),
+      a:normalized.a,
+      r:normalized.r,
+      ns:Array.from(normalized.ns),
+      d:normalized.d,
+      w:normalized.w,
   _pushSample(sample){
     this.buffer.push({ // Added: ensure replay buffer only stores plain JS arrays
       s:Array.from(sample.s),
@@ -2459,6 +2564,9 @@ class DQNAgent{
     const idx=((envIndex|0)%this.envCount+this.envCount)%this.envCount;
     const buf=this.nStepBuffers[idx];
     if(!buf) return;
+    const normalizedState=this._normalizeStateVector(s); // Added: align incoming state to current dimension
+    const normalizedNext=this._normalizeStateVector(ns); // Added: align next-state to current dimension
+    const ready=buf.push({s:normalizedState,a,r,ns:normalizedNext,d});
     const ready=buf.push({s,a,r,ns,d});
     if(ready.length) ready.forEach(t=>this._pushSample(t)); // Added: funnel transitions through plain-array writer
     if(d){
@@ -2487,6 +2595,7 @@ class DQNAgent{
     if(tail.length) tail.forEach(t=>this._pushSample(t)); // Added: enforce array-only storage when draining single buffer
   }
   syncTarget(){
+    this.checkModelReady('syncTarget'); // Added: ensure both networks are ready before syncing
     const weights=this.online.getWeights(); // Added: clone weights for safe target sync
     this.target.setWeights(weights);
     weights.forEach(w=>w.dispose()); // Added: dispose cloned weights to avoid leaks
@@ -2497,8 +2606,11 @@ class DQNAgent{
     return this.epsilon;
   }
   act(s){
+    this.checkModelReady('act'); // Added: avoid acting with an uninitialized network
     if(Math.random()<this.epsilon) return (Math.random()*this.aDim)|0;
     return tf.tidy(()=>{
+      const normalized=this._normalizeStateVector(s); // Added: coerce act input to expected dimension
+      const input=tf.tensor2d([normalized], [1,this.sDim]); // Added: ensure plain array tensor input
       const input=tf.tensor2d([Array.from(s)], [1,this.sDim]); // Added: ensure plain array tensor input
       const q=this._applyModel(this.online,input,false); // Added: use dueling-aware predictor
       const action=q.argMax(1).dataSync()[0];
@@ -2506,7 +2618,10 @@ class DQNAgent{
     });
   }
   greedyAction(s){
+    this.checkModelReady('act'); // Added: reuse guard for greedy action calls
     return tf.tidy(()=>{
+      const normalized=this._normalizeStateVector(s); // Added: coerce greedy input to expected dimension
+      const input=tf.tensor2d([normalized], [1,this.sDim]); // Added: ensure tensor input cloned for greedy eval
       const input=tf.tensor2d([Array.from(s)], [1,this.sDim]); // Added: ensure tensor input cloned for greedy eval
       const q=this._applyModel(this.online,input,false); // Added: use dueling-aware predictor for greedy action
       const action=q.argMax(1).dataSync()[0];
@@ -2515,9 +2630,23 @@ class DQNAgent{
   }
   async learn(){
     if(this.buffer.size()<this.batch) return null;
+    this.checkModelReady('learn'); // Added: ensure networks are intact before training
+    this._normalizeReplayBuffer(); // Added: migrate legacy samples to the current dimensionality on-demand
     const sample=this.buffer.sample(this.batch);
     if(!sample||!sample.batch.length) return null;
     const {batch,idxs,weights}=sample;
+    const normalizedBatch=batch.map(item=>this._normalizeTransition(item)); // Added: enforce consistent state sizing inside sampled batch
+    const weightArr=(weights&&weights.length)?Array.from(weights):new Array(normalizedBatch.length).fill(1); // Added: normalize IS weights into plain array form
+    const {lossValue,tdErrors,gradNorm}=tf.tidy(()=>{
+      const states=tf.tensor2d(normalizedBatch.map(x=>x.s),[normalizedBatch.length,this.sDim]);
+      const nextStates=tf.tensor2d(normalizedBatch.map(x=>x.ns),[normalizedBatch.length,this.sDim]);
+      const actions=tf.tensor1d(normalizedBatch.map(x=>x.a),'int32');
+      const rewards=tf.tensor1d(normalizedBatch.map(x=>x.r));
+      const dones=tf.tensor1d(normalizedBatch.map(x=>x.d?1:0));
+      const isWeights=tf.tensor1d(weightArr);
+      let tdTensor;
+      const trainables=this.online.trainableWeights;
+      const varList=trainables.map(w=>w.val); // Added: supply actual tf.Variables to gradient calculator
     const weightArr=(weights&&weights.length)?Array.from(weights):new Array(batch.length).fill(1); // Added: normalize IS weights into plain array form
     const {lossValue,tdErrors,gradNorm}=tf.tidy(()=>{
       const states=tf.tensor2d(batch.map(x=>x.s),[batch.length,this.sDim]);
@@ -2552,6 +2681,15 @@ class DQNAgent{
         tdTensor=targets.sub(qPred);
         targets.dispose();
         return tdTensor.square().mul(isWeights).mean();
+      },varList);
+      const gradList=trainables.map(w=>{
+        const grad=grads[w.val.name]??grads[w.name]??grads[w.originalName];
+        if(!grad) throw new Error(`Missing gradient for variable ${w.val.name||w.name}`); // Added: explicit guard when grads are absent
+        return grad;
+      }); // Added: capture raw gradients for clipping
+      const [clippedGrads,gradNormTensor]=tf.clipByGlobalNorm(gradList,10);
+      const gradMap={};
+      trainables.forEach((w,idx)=>{gradMap[w.val.name]=clippedGrads[idx];});
       },this.online.trainableWeights);
       const gradList=this.online.trainableWeights.map(w=>grads[w.name]); // Added: capture raw gradients for clipping
       const [clippedGrads,gradNormTensor]=tf.clipByGlobalNorm(gradList,10);
@@ -2623,7 +2761,10 @@ class DQNAgent{
   }
   async importState(state){
     if(!state) throw new Error('Invalid state');
-    if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
+    const loadedStateDim=state.sDim??state.stateDim;
+    if(loadedStateDim && loadedStateDim!==this.sDim){
+      console.warn(`Loaded checkpoint state dimension ${loadedStateDim} differs from current ${this.sDim}. States will be padded or sliced automatically.`); // Added: warn instead of crashing on legacy checkpoints
+    }
     if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
     const cfg=state.config??{};
     this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():this.layers;
@@ -2647,17 +2788,32 @@ class DQNAgent{
     this.nStep=cfg.nStep??this.nStep;
     this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma));
     this.trainStep=state.trainStep??0;
-    this.online.dispose();
-    this.target.dispose();
+    this.dispose(); // Added: cleanly release old models before rebuilding
+    this._disposed=false;
+    this._warnedStateMigration=false;
+    this._loggedWeights=false;
+    this._replayNormalized=false;
+    this.optimizer=tf.train.adam(this.lr);
     this.online=this.build();
     this.target=this.build();
+    this.model=this.online;
+    this.stateSize=this.sDim; // Added: realign cached state size after rebuilding networks
     if(Array.isArray(state.weights)){
-      const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
-      this.online.setWeights(tensors);
-      tensors.forEach(t=>t.dispose());
+      if(!loadedStateDim || loadedStateDim===this.sDim){
+        try{
+          const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
+          this.online.setWeights(tensors);
+          tensors.forEach(t=>t.dispose());
+        }catch(err){
+          console.warn('Weight load failed due to shape mismatch:',err); // Added: downgrade weight import failures to warning
+        }
+      }else{
+        console.warn('Skipping weight restoration because the input dimension changed.'); // Added: avoid applying incompatible weights
+      }
     }
     this.syncTarget();
     this.updateEpsilon(this.trainStep);
+    this._normalizeReplayBuffer(); // Added: migrate replay samples loaded from checkpoint
   }
   setEntropy(){}
 }
@@ -5319,6 +5475,8 @@ function updateAdvancedVisibility(){
 }
 function instantiateAgent(key,opts={}){
   const {useCurrentUI=false,overrideDefaults=null}=opts;
+  const previousAgent=agent; // Added: capture current agent before replacement
+  previousAgent?.dispose?.(); // Added: prevent stale disposed models lingering in memory
   currentAlgoKey=AGENT_PRESETS[key]?key:'dueling';
   ui.algoSelect.value=currentAlgoKey;
   const preset=AGENT_PRESETS[currentAlgoKey];
@@ -5332,6 +5490,15 @@ function instantiateAgent(key,opts={}){
   if(!useCurrentUI){
     applyPresetToUI(appliedDefaults);
   }
+  const stateProvider=()=>{ // Added: provide live state snapshots for dynamic agent sizing
+    const liveEnv=vecEnv?.getEnv?.(0)||env;
+    if(liveEnv?.getState) return liveEnv.getState();
+    if(contexts?.length){
+      const firstCtx=contexts[0];
+      if(firstCtx?.state) return firstCtx.state;
+    }
+    return new Array(stateDim).fill(0);
+  };
   agent=preset.create(stateDim,actionDim,{
     gamma:+ui.gamma.value,
     lr:+ui.lr.value,
@@ -5354,6 +5521,7 @@ function instantiateAgent(key,opts={}){
     layers:appliedDefaults.layers,
     dueling:appliedDefaults.dueling,
     double:appliedDefaults.double,
+    stateProvider,
   });
   agent.learnRepeats=(appliedDefaults.learnRepeats??preset.defaults.learnRepeats)??agent.learnRepeats??1;
   targetSyncSteps=agent.kind==='dqn'? (+ui.targetSync.value||2000):Infinity;
@@ -6404,6 +6572,8 @@ async function loadTrainingFromFile(file){
     ui.gridSize.value=`${boardSize}`;
     updateGridLabel();
     reconfigureEnvironment({count:loadedEnvCount,size:boardSize,force:true});
+    agent?.model?.dispose?.(); // Added: ensure legacy model tensors are released before creating a new agent
+    agent?.dispose?.(); // Added: clear any lingering agent references prior to instantiation
     instantiateAgent(algo,{useCurrentUI:true});
     await agent.importState(data.agent);
     applyConfigToAgent();
