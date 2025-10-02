@@ -1600,6 +1600,8 @@ footer{
 <script type="module">
 import {createAITuner} from './hf-tuner.js';
 
+const DEBUG_LOG=false;
+
 const REWARD_DEFAULTS={
   stepPenalty:0.01,
   turnPenalty:0.001,
@@ -1813,14 +1815,17 @@ class SnakeEnv{
     const ny=h.y+this.dir.y;
     this.steps++;
     this.stepsSinceFruit++;
-    const key=`${nx},${ny}`;
-    const tail=this.snake[this.snake.length-1];
     const willGrow=(nx===this.fruit.x && ny===this.fruit.y);
     const hitsWall=nx<0||ny<0||nx>=this.cols||ny>=this.rows;
-    const hitsBody=this.snakeSet.has(key) && !(tail && tail.x===nx && tail.y===ny && !willGrow);
+    const bodyToCheck=willGrow?this.snake:this.snake.slice(0,-1);
+    const hitsBody=bodyToCheck.some(seg=>seg.x===nx && seg.y===ny);
     if(hitsWall||hitsBody){
       this.alive=false;
       const crashReward=hitsWall?-R.wallPenalty:-R.selfPenalty;
+      if(DEBUG_LOG){
+        if(hitsWall) console.log('Episode ended: Wall collision');
+        if(hitsBody) console.log('Episode ended: Self collision');
+      }
       if(hitsWall) breakdown.wallPenalty+=crashReward;
       else breakdown.selfPenalty+=crashReward;
       breakdown.total+=crashReward;
@@ -1942,6 +1947,7 @@ class SnakeEnv{
       this.lastCrash='timeout';
       this.rewardBreakdown.timeoutPenalty-=R.timeoutPenalty;
       this.rewardBreakdown.total+=r;
+      if(DEBUG_LOG) console.log('Episode ended: MaxSteps reached');
       return {state:this.getState(),reward:r,done:true,ateFruit:false};
     }
     this.rewardBreakdown.total+=r;
