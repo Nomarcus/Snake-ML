@@ -1618,6 +1618,8 @@ const REWARD_DEFAULTS={
   compactWeight:0,
   trapPenalty:0.5,
   spaceGainBonus:0.05,
+  survivalBonus:0.001, // Added: default survival bonus configuration
+  progressBonus:0.05, // Added: default progress bonus configuration
 };
 const REWARD_COMPONENTS=[
   {key:'fruitReward',label:'Fruit bonus',sign:'positive'},
@@ -1713,6 +1715,8 @@ class SnakeEnv{
   constructor(cols=20,rows=20,rewardOverrides={}){
     this.cols=cols;
     this.rows=rows;
+    this.boardArea=Math.max(1,this.cols*this.rows); // Added: cache board area for normalization and scaling
+    this.loopBufferSize=64; // Added: fixed ring-buffer size for loop detection
     this.setRewardConfig(rewardOverrides);
     this.reset();
   }
@@ -1721,8 +1725,66 @@ class SnakeEnv{
     REWARD_COMPONENT_KEYS.forEach(key=>{ base[key]=0; });
     return base;
   }
+  _resetLoopTracker(){
+    this.positionHistory=new Array(this.loopBufferSize).fill(null); // Added: allocate ring buffer for loop detection
+    this.positionCounts=new Map(); // Added: track visit frequency per cell
+    this.positionIndex=0; // Added: pointer into the ring buffer
+  }
+  _registerLoopPosition(x,y){
+    if(!this.positionHistory) this._resetLoopTracker(); // Added: lazily initialize loop tracking structures
+    const key=`${x},${y}`;
+    const oldKey=this.positionHistory[this.positionIndex];
+    if(oldKey!==null){
+      const prev=this.positionCounts.get(oldKey)||0;
+      if(prev<=1) this.positionCounts.delete(oldKey);
+      else this.positionCounts.set(oldKey,prev-1);
+    }
+    this.positionHistory[this.positionIndex]=key;
+    this.positionIndex=(this.positionIndex+1)%this.loopBufferSize;
+    const nextCount=(this.positionCounts.get(key)||0)+1;
+    this.positionCounts.set(key,nextCount);
+    return nextCount>1?nextCount-1:0; // Added: signal repeated visits for penalization
+  }
+  _computeTailReachability(){
+    // Added: BFS-based reachability check from head to tail
+    if(this.snake.length<=1) return 1;
+    const head=this.snake[0];
+    const tail=this.snake[this.snake.length-1];
+    const targetKey=`${tail.x},${tail.y}`;
+    const blocked=new Set(this.snakeSet);
+    blocked.delete(`${head.x},${head.y}`);
+    blocked.delete(targetKey);
+    const queue=[{x:head.x,y:head.y}];
+    const seen=new Set();
+    for(let i=0;i<queue.length;i++){
+      const node=queue[i];
+      const key=`${node.x},${node.y}`;
+      if(seen.has(key)) continue;
+      if(blocked.has(key)) continue;
+      if(key===targetKey) return 1;
+      seen.add(key);
+      if(seen.size>this.boardArea) break;
+      const neighbors=this.neighbors(node.x,node.y);
+      for(const n of neighbors) queue.push(n);
+    }
+    return 0;
+  }
+  _tailReachFeature(){
+    if(this.cachedTailReachStep===undefined || (this.steps-this.cachedTailReachStep)>=16){ // Added: throttle BFS refresh to every 16th step
+      this.cachedTailReachValue=this._computeTailReachability(); // Added: cache costly BFS tail reachability
+      this.cachedTailReachStep=this.steps; // Added: remember when cache was refreshed
+    }
+    return this.cachedTailReachValue;
+  }
   setRewardConfig(cfg={}){
-    this.reward={...REWARD_DEFAULTS,...cfg};
+    // Added: scale rewards with board size and ensure new bonuses propagate
+    const merged={...REWARD_DEFAULTS,...cfg};
+    const scale=Math.sqrt(this.boardArea/400);
+    merged.fruitReward*=scale;
+    merged.stepPenalty*=scale;
+    merged.survivalBonus=cfg.survivalBonus??merged.survivalBonus;
+    merged.progressBonus=cfg.progressBonus??merged.progressBonus;
+    this.reward=merged;
   }
   neighbors(x,y){
     return [
@@ -1748,7 +1810,7 @@ class SnakeEnv{
       if(blocked.has(key)) continue;
       seen.add(key);
       for(const n of this.neighbors(p.x,p.y)) q.push(n);
-      if(seen.size>this.cols*this.rows) break;
+      if(seen.size>this.boardArea) break; // Added: respect cached board area limit
     }
     return seen.size;
   }
@@ -1772,12 +1834,17 @@ class SnakeEnv{
     const cx=(this.cols/2|0), cy=(this.rows/2|0);
     this.snake=[{x:cx-1,y:cy},{x:cx,y:cy}];
     this.snakeSet=new Set(this.snake.map(p=>`${p.x},${p.y}`));
+    this._resetLoopTracker(); // Added: reset loop detector buffers when starting an episode
+    this._registerLoopPosition(this.snake[0].x,this.snake[0].y); // Added: seed loop detector with head position
     this.visit=new Float32Array(this.cols*this.rows).fill(0);
     this.actionHist=[];
     this.spawnFruit();
     this.rewardBreakdown=this._makeRewardBreakdown();
     this.steps=0;
     this.stepsSinceFruit=0;
+    this.cachedTailReachStep=-Infinity; // Added: ensure tail reachability cache recomputes on reset
+    this.cachedTailReachValue=0; // Added: initialize tail reachability cache value
+    this.lastLengthRatio=this.snake.length/this.boardArea; // Added: track growth progress ratio
     this.alive=true;
     this.prevSlack=this.computeSlack();
     this.maxLength=this.snake.length;
@@ -1868,6 +1935,7 @@ class SnakeEnv{
     }
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
     this.snake.unshift({x:nx,y:ny});
+    const repeatVisits=this._registerLoopPosition(nx,ny); // Added: feed new head position into loop detector
     let r=-R.stepPenalty;
     breakdown.stepPenalty-=R.stepPenalty;
     r+=spaceReward;
@@ -1896,6 +1964,11 @@ class SnakeEnv{
     r-=revisitPenalty;
     this.revisitAccum+=revisitPenalty;
     if(revisitPenalty) breakdown.revisitPenalty-=revisitPenalty;
+    if(repeatVisits>0){
+      const loopPenalty=R.loopPenalty*repeatVisits; // Added: punish repeated positions using loop detector counts
+      r-=loopPenalty;
+      breakdown.loopPenalty-=loopPenalty;
+    }
     let ateFruit=false;
     if(nx===this.fruit.x && ny===this.fruit.y){
       ateFruit=true;
@@ -1907,6 +1980,7 @@ class SnakeEnv{
       this.timeToFruitCount++;
       this.stepsSinceFruit=0;
       this.episodeFruit++;
+      this.cachedTailReachStep=this.steps-16; // Added: invalidate tail reach cache after growth
     }else{
       const tail=this.snake.pop();
       this.snakeSet.delete(`${tail.x},${tail.y}`);
@@ -1941,6 +2015,15 @@ class SnakeEnv{
       }
     }
     this.prevSlack=slack;
+    const lengthRatio=this.snake.length/this.boardArea; // Added: compute normalized snake length
+    const survivalBonus=R.survivalBonus*(1-lengthRatio); // Added: survival reward scaled by remaining space
+    if(survivalBonus) r+=survivalBonus;
+    if(lengthRatio>this.lastLengthRatio){
+      const progressDelta=lengthRatio-this.lastLengthRatio;
+      const progressReward=R.progressBonus*progressDelta*this.boardArea; // Added: grant progress bonus per new segment
+      if(progressReward) r+=progressReward;
+    }
+    this.lastLengthRatio=lengthRatio; // Added: persist ratio for next step comparison
     if(this.stepsSinceFruit>this.cols*this.rows*2){
       this.alive=false;
       r-=R.timeoutPenalty;
@@ -1981,7 +2064,48 @@ class SnakeEnv{
       this.getVisit(h.x-1, h.y),
       this.getVisit(h.x+1, h.y),
     ];
-    return Float32Array.from([...danger,...dir,...fruit,...dists,dy/len,dx/len,...crowd]);
+    const maxManhattan=Math.max(1,(this.cols-1)+(this.rows-1)); // Added: avoid division by zero for Manhattan normalization
+    const manhattan=(Math.abs(dx)+Math.abs(dy))/maxManhattan; // Added: normalized Manhattan distance to fruit
+    const lengthRatio=this.snake.length/this.boardArea; // Added: normalized snake size feature
+    const tailReach=this._tailReachFeature(); // Added: cached BFS tail reachability feature
+    const directionalSpace=(vec)=>{ // Added: helper to measure free space per direction
+      const tx=h.x+vec.x;
+      const ty=h.y+vec.y;
+      if(tx<0||ty<0||tx>=this.cols||ty>=this.rows) return 0;
+      if(this.snakeSet.has(`${tx},${ty}`)) return 0;
+      const willGrow=tx===this.fruit.x && ty===this.fruit.y;
+      return this.freeSpaceFrom(tx,ty,!willGrow)/this.boardArea;
+    };
+    const forwardSpace=directionalSpace(this.dir); // Added: forward free-space ratio
+    const leftSpace=directionalSpace({x:-this.dir.y,y:this.dir.x}); // Added: left free-space ratio
+    const rightSpace=directionalSpace({x:this.dir.y,y:-this.dir.x}); // Added: right free-space ratio
+    let bodyCount=0;
+    for(let oy=-1;oy<=1;oy++){ // Added: count body segments in 3x3 neighborhood
+      for(let ox=-1;ox<=1;ox++){
+        if(ox===0&&oy===0) continue;
+        const px=h.x+ox;
+        const py=h.y+oy;
+        if(px<0||py<0||px>=this.cols||py>=this.rows) continue;
+        if(this.snakeSet.has(`${px},${py}`)) bodyCount++;
+      }
+    }
+    const bodyDensity=bodyCount/8; // Added: normalize neighborhood occupancy
+    return Float32Array.from([
+      ...danger,
+      ...dir,
+      ...fruit,
+      ...dists,
+      dy/len,
+      dx/len,
+      ...crowd,
+      manhattan,
+      lengthRatio,
+      tailReach,
+      forwardSpace,
+      leftSpace,
+      rightSpace,
+      bodyDensity,
+    ]);
   }
 }
 
@@ -2057,10 +2181,10 @@ class NStepAccumulator{
   }
   push(step){
     const item={
-      s:Float32Array.from(step.s),
+      s:Array.from(step.s), // Added: store plain arrays to keep replay buffer tensor-free
       a:step.a|0,
       r:+step.r,
-      ns:Float32Array.from(step.ns),
+      ns:Array.from(step.ns), // Added: store next-state as plain array as well
       d:!!step.d,
     };
     this.queue.push(item);
@@ -2208,10 +2332,10 @@ class ReplayBuffer{
     const buffer=new ReplayBuffer(cap??json.cap,opts);
     if(Array.isArray(json.buf)){
       buffer.buf=json.buf.map(item=>({
-        s:Float32Array.from(item.s),
+        s:Array.from(item.s??[]), // Added: ensure imported samples remain plain arrays
         a:item.a,
         r:item.r,
-        ns:Float32Array.from(item.ns),
+        ns:Array.from(item.ns??[]), // Added: ensure imported next-states remain plain arrays
         d:item.d,
       }));
       buffer.priorities=new Float32Array(buffer.cap);
@@ -2229,14 +2353,17 @@ class ReplayBuffer{
 class DQNAgent{
   constructor(sDim,aDim,cfg={}){
     this.kind='dqn';
-    this.sDim=sDim;
     this.aDim=aDim;
     this.envCount=Math.max(1,cfg.envCount??1);
+    this.stateProvider=typeof cfg.stateProvider==='function'?cfg.stateProvider:null; // Added: accept dynamic state resolver for sizing
+    this.sDim=Math.max(1,sDim|0); // Added: default state dimension fallback
+    this.stateSize=this._resolveInitialStateSize(this.sDim); // Added: infer actual state length from live environment
+    this.sDim=this.stateSize||this.sDim; // Added: ensure model input matches resolved state length
     this.gamma=cfg.gamma??0.98;
     this.lr=cfg.lr??0.0005;
     this.batch=cfg.batch??128;
     this.priorityEps=cfg.priorityEps??0.001;
-    this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():[256,256,128];
+    this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():[512,512,256]; // Added: expanded backbone to [512,512,256]
     this.dueling=cfg.dueling!==undefined?!!cfg.dueling:true;
     this.double=cfg.double!==undefined?!!cfg.double:true;
     this.learnRepeats=cfg.learnRepeats??2;
@@ -2253,11 +2380,35 @@ class DQNAgent{
     this.nStep=cfg.nStep??3;
     this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma));
     this.trainStep=cfg.trainStep??0;
+    this._warnedStateMigration=false; // Added: track if state padding warning emitted
+    this._loggedWeights=false; // Added: ensure trainable weight log fires once per model build
+    this._disposed=false; // Added: mark disposal state to guard usage after dispose
+    this._replayNormalized=false; // Added: lazily migrate replay entries to new dimensionality
     this.optimizer=tf.train.adam(this.lr);
     this.online=this.build();
     this.target=this.build();
+    this.model=this.online; // Added: expose primary network via generic model handle
     this.syncTarget();
     this.updateEpsilon(this.trainStep);
+  }
+  _resolveInitialStateSize(fallbackDim){
+    const snapshot=this._fetchCurrentStateVector();
+    const resolvedLength=snapshot.length||Math.max(1,fallbackDim|0);
+    if(snapshot.length&&snapshot.length!==fallbackDim){
+      console.warn(`State dimension override detected: expected ${fallbackDim}, received ${snapshot.length}. Rebuilding with new size.`); // Added: surface dynamic state sizing override
+    }
+    return resolvedLength;
+  }
+  _fetchCurrentStateVector(){
+    try{
+      if(this.stateProvider){
+        const state=this.stateProvider();
+        if(state&&typeof state.length==='number'){ return Array.from(state); }
+      }
+    }catch(err){
+      console.warn('State provider failed while resolving dimension:',err); // Added: guard against provider errors during sizing
+    }
+    return new Array(Math.max(1,this.sDim|0)).fill(0); // Added: fallback zero vector when provider unavailable
   }
   build(){
     const input=tf.input({shape:[this.sDim]});
@@ -2265,24 +2416,119 @@ class DQNAgent{
     this.layers.forEach(units=>{
       x=tf.layers.dense({units,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
     });
-    let q;
     if(this.dueling){
-      const adv=tf.layers.dense({units:128,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
-      const advOut=tf.layers.dense({units:this.aDim,activation:'linear'}).apply(adv);
-      const val=tf.layers.dense({units:128,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
-      const valOut=tf.layers.dense({units:1,activation:'linear'}).apply(val);
-      q=tf.layers.add().apply([advOut,valOut]);
-    }else{
-      q=tf.layers.dense({units:this.aDim,activation:'linear'}).apply(x);
+      const valueHidden=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(x); // Added: value head hidden layer
+      const valueOut=tf.layers.dense({units:1,activation:'linear'}).apply(valueHidden); // Added: value head output
+      const advantageHidden=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(x); // Added: advantage head hidden layer
+      const advantageOut=tf.layers.dense({units:this.aDim,activation:'linear'}).apply(advantageHidden); // Added: advantage head output
+      return tf.model({inputs:input,outputs:[valueOut,advantageOut]}); // Added: expose separate value and advantage heads
     }
+    const q=tf.layers.dense({units:this.aDim,activation:'linear'}).apply(x);
     return tf.model({inputs:input,outputs:q});
+  }
+  _applyModel(model,input,trackGradient=false){
+    this.checkModelReady('predict'); // Added: guard inference against disposed/empty models
+    const output=model.apply(input);
+    if(!this.dueling) return output; // Added: fall back to vanilla DQN
+    const [value,advantage]=output;
+    const advMean=advantage.mean(1,true);
+    const centered=advantage.sub(advMean);
+    const q=centered.add(value);
+    if(!trackGradient){
+      value.dispose(); // Added: dispose intermediate tensors during inference
+      advantage.dispose();
+      advMean.dispose();
+      centered.dispose();
+    }
+    return q;
+  }
+  _normalizeStateVector(state){
+    const arr=Array.from(state??[]);
+    if(arr.length===this.sDim){
+      this.stateSize=this.sDim; // Added: track live state length when it matches model input
+      return arr;
+    }
+    if(!this._warnedStateMigration && arr.length){
+      console.warn(`State length ${arr.length} differs from expected ${this.sDim}. Applying migration padding/slicing.`); // Added: notify about automatic state migration
+      this._warnedStateMigration=true;
+    }
+    this._replayNormalized=false; // Added: trigger replay normalization on next learn after detecting mismatch
+    const normalized=new Array(this.sDim).fill(0);
+    const limit=Math.min(arr.length,this.sDim);
+    for(let i=0;i<limit;i++) normalized[i]=arr[i];
+    this.stateSize=this.sDim; // Added: ensure reported state size stays aligned with model input after migration
+    return normalized;
+  }
+  _normalizeTransition(sample={}){
+    return {
+      s:this._normalizeStateVector(sample.s),
+      a:sample.a|0,
+      r:+sample.r||0,
+      ns:this._normalizeStateVector(sample.ns),
+      d:!!sample.d,
+      w:sample.w??1,
+    }; // Added: ensure replay entries always match model dimension
+  }
+  _normalizeReplayBuffer(){
+    if(this._replayNormalized) return; // Added: avoid reprocessing buffer when already normalized
+    if(!this.buffer||!Array.isArray(this.buffer.buf)) return;
+    this.buffer.buf=this.buffer.buf.map(sample=>this._normalizeTransition(sample)); // Added: retro-fit stored samples to new state size
+    this._replayNormalized=true; // Added: mark normalization complete until a mismatch is detected again
+  }
+  dispose(){
+    if(this._disposed) return; // Added: skip double dispose
+    this.online?.dispose();
+    this.target?.dispose();
+    this.optimizer?.dispose?.();
+    this.online=null;
+    this.target=null;
+    this.model=null;
+    this.optimizer=null;
+    this._disposed=true; // Added: mark networks as unavailable for future calls
+  }
+  checkModelReady(context='check'){
+    if(this._disposed||!this.online||!this.target){
+      throw new Error('Model not initialized'); // Added: guard against using disposed networks
+    }
+    if(!this.model||!(this.model.trainableWeights?.length)){ // Added: validate generic model handle before use
+      console.log('Trainable weights:', this.model?.trainableWeights?.map(w=>w.name)||[]);
+      throw new Error('Model not initialized');
+    }
+    const weights=this.model.trainableWeights??this.online.trainableWeights??[];
+    const names=weights.map(w=>w.name);
+    if(!this._loggedWeights){
+      console.log('Trainable weights:', names); // Added: debug log to help trace missing trainables
+      this._loggedWeights=true;
+    }
+    if(!names.length){
+      console.log('Trainable weights:', names); // Added: ensure empty list is still surfaced before throwing
+      throw new Error('Model not initialized');
+    }
+    if(context==='learn'&&this.stateSize!==this.sDim&&!this._warnedStateMigration){
+      console.warn(`State size mismatch during learning (${this.stateSize} vs ${this.sDim}). States will be padded/sliced automatically.`); // Added: highlight mismatched replay state size
+      this._warnedStateMigration=true;
+    }
+    return true;
+  }
+  _pushSample(sample){
+    const normalized=this._normalizeTransition(sample); // Added: coerce replay entries to correct dimensionality
+    this.buffer.push({ // Added: ensure replay buffer only stores plain JS arrays
+      s:Array.from(normalized.s),
+      a:normalized.a,
+      r:normalized.r,
+      ns:Array.from(normalized.ns),
+      d:normalized.d,
+      w:normalized.w,
+    });
   }
   setGamma(val){
     this.gamma=val;
     this.nStepBuffers.forEach(buf=>buf.setConfig(this.nStep,this.gamma));
   }
   setLearningRate(val){
+    if(val===this.lr) return;
     this.lr=val;
+    this.optimizer.dispose?.(); // Added: dispose old optimizer to prevent leaks
     this.optimizer=tf.train.adam(this.lr);
   }
   setEpsilonSchedule({start,end,decay}={}){
@@ -2310,11 +2556,13 @@ class DQNAgent{
     const idx=((envIndex|0)%this.envCount+this.envCount)%this.envCount;
     const buf=this.nStepBuffers[idx];
     if(!buf) return;
-    const ready=buf.push({s,a,r,ns,d});
-    if(ready.length) ready.forEach(t=>this.buffer.push(t));
+    const normalizedState=this._normalizeStateVector(s); // Added: align incoming state to current dimension
+    const normalizedNext=this._normalizeStateVector(ns); // Added: align next-state to current dimension
+    const ready=buf.push({s:normalizedState,a,r,ns:normalizedNext,d});
+    if(ready.length) ready.forEach(t=>this._pushSample(t)); // Added: funnel transitions through plain-array writer
     if(d){
       const tail=buf.flush();
-      if(tail.length) tail.forEach(t=>this.buffer.push(t));
+      if(tail.length) tail.forEach(t=>this._pushSample(t)); // Added: ensure flush also respects array-only storage
     }
   }
   setEnvCount(count){
@@ -2327,7 +2575,7 @@ class DQNAgent{
     if(envIndex===undefined){
       this.nStepBuffers.forEach(buf=>{
         const tail=buf.flush();
-        if(tail.length) tail.forEach(t=>this.buffer.push(t));
+        if(tail.length) tail.forEach(t=>this._pushSample(t)); // Added: enforce array-only storage when draining all buffers
       });
       return;
     }
@@ -2335,10 +2583,13 @@ class DQNAgent{
     const buf=this.nStepBuffers[idx];
     if(!buf) return;
     const tail=buf.flush();
-    if(tail.length) tail.forEach(t=>this.buffer.push(t));
+    if(tail.length) tail.forEach(t=>this._pushSample(t)); // Added: enforce array-only storage when draining single buffer
   }
   syncTarget(){
-    this.target.setWeights(this.online.getWeights());
+    this.checkModelReady('syncTarget'); // Added: ensure both networks are ready before syncing
+    const weights=this.online.getWeights(); // Added: clone weights for safe target sync
+    this.target.setWeights(weights);
+    weights.forEach(w=>w.dispose()); // Added: dispose cloned weights to avoid leaks
   }
   updateEpsilon(step){
     const t=Math.min(1,step/this.epsDecay);
@@ -2346,60 +2597,103 @@ class DQNAgent{
     return this.epsilon;
   }
   act(s){
+    this.checkModelReady('act'); // Added: avoid acting with an uninitialized network
     if(Math.random()<this.epsilon) return (Math.random()*this.aDim)|0;
     return tf.tidy(()=>{
-      return this.online.predict(tf.tensor2d([s],[1,this.sDim])).argMax(1).dataSync()[0];
+      const normalized=this._normalizeStateVector(s); // Added: coerce act input to expected dimension
+      const input=tf.tensor2d([normalized], [1,this.sDim]); // Added: ensure plain array tensor input
+      const q=this._applyModel(this.online,input,false); // Added: use dueling-aware predictor
+      const action=q.argMax(1).dataSync()[0];
+      return action;
     });
   }
   greedyAction(s){
+    this.checkModelReady('act'); // Added: reuse guard for greedy action calls
     return tf.tidy(()=>{
-      return this.online.predict(tf.tensor2d([s],[1,this.sDim])).argMax(1).dataSync()[0];
+      const normalized=this._normalizeStateVector(s); // Added: coerce greedy input to expected dimension
+      const input=tf.tensor2d([normalized], [1,this.sDim]); // Added: ensure tensor input cloned for greedy eval
+      const q=this._applyModel(this.online,input,false); // Added: use dueling-aware predictor for greedy action
+      const action=q.argMax(1).dataSync()[0];
+      return action;
     });
   }
   async learn(){
     if(this.buffer.size()<this.batch) return null;
+    this.checkModelReady('learn'); // Added: ensure networks are intact before training
+    this._normalizeReplayBuffer(); // Added: migrate legacy samples to the current dimensionality on-demand
     const sample=this.buffer.sample(this.batch);
     if(!sample||!sample.batch.length) return null;
     const {batch,idxs,weights}=sample;
-    const S=tf.tensor2d(batch.map(x=>x.s),[batch.length,this.sDim]);
-    const NS=tf.tensor2d(batch.map(x=>x.ns),[batch.length,this.sDim]);
-    const A=tf.tensor1d(batch.map(x=>x.a),'int32');
-    const R=tf.tensor1d(batch.map(x=>x.r));
-    const D=tf.tensor1d(batch.map(x=>x.d?1:0));
-    const W=tf.tensor1d(weights);
-    let tdErrors;
-    const lossTensor=await this.optimizer.minimize(()=>{
-      const q=this.online.apply(S);
-      const oneHot=tf.oneHot(A,this.aDim);
-      const qPred=tf.sum(q.mul(oneHot),1);
-      const qNextTarget=this.target.apply(NS);
-      let qNext;
-      if(this.double){
-        const qNextOnline=this.online.apply(NS);
-        const aPrime=tf.argMax(qNextOnline,1);
-        const mask=tf.oneHot(aPrime,this.aDim);
-        qNext=tf.sum(qNextTarget.mul(mask),1);
-      }else{
-        qNext=tf.max(qNextTarget,1);
-      }
-      const target=R.add(qNext.mul(tf.scalar(this.gamma)).mul(tf.scalar(1).sub(D)));
-      tdErrors=tf.keep(target.sub(qPred));
-      const absErr=tdErrors.abs();
-      const quadratic=tf.minimum(absErr,tf.scalar(1));
-      const linear=absErr.sub(quadratic);
-      const losses=quadratic.square().mul(0.5).add(linear);
-      return losses.mul(W).mean();
-    },true);
-    const loss=lossTensor.dataSync()[0];
-    lossTensor.dispose();
-    const absTd=tdErrors.abs();
-    const tdArray=absTd.dataSync();
-    absTd.dispose();
-    tdErrors.dispose();
-    S.dispose(); NS.dispose(); A.dispose(); R.dispose(); D.dispose(); W.dispose();
-    this.buffer.updatePriorities(idxs,tdArray);
+    const normalizedBatch=batch.map(item=>this._normalizeTransition(item)); // Added: enforce consistent state sizing inside sampled batch
+    const weightArr=(weights&&weights.length)?Array.from(weights):new Array(normalizedBatch.length).fill(1); // Added: normalize IS weights into plain array form
+    const {lossValue,tdErrors,gradNorm}=tf.tidy(()=>{
+      const states=tf.tensor2d(normalizedBatch.map(x=>x.s),[normalizedBatch.length,this.sDim]);
+      const nextStates=tf.tensor2d(normalizedBatch.map(x=>x.ns),[normalizedBatch.length,this.sDim]);
+      const actions=tf.tensor1d(normalizedBatch.map(x=>x.a),'int32');
+      const rewards=tf.tensor1d(normalizedBatch.map(x=>x.r));
+      const dones=tf.tensor1d(normalizedBatch.map(x=>x.d?1:0));
+      const isWeights=tf.tensor1d(weightArr);
+      let tdTensor;
+      const trainables=this.online.trainableWeights;
+      const varList=trainables.map(w=>w.val); // Added: supply actual tf.Variables to gradient calculator
+      const {value:lossTensor,grads}=tf.variableGrads(()=>{
+        const qPredAll=this._applyModel(this.online,states,true);
+        const actionMask=tf.oneHot(actions,this.aDim);
+        const qPred=qPredAll.mul(actionMask).sum(1);
+        const nextQTargetAll=this._applyModel(this.target,nextStates,false);
+        let nextQ;
+        if(this.double){
+          const nextQOnline=this._applyModel(this.online,nextStates,false);
+          const nextActions=nextQOnline.argMax(1);
+          const nextMask=tf.oneHot(nextActions,this.aDim);
+          nextQ=nextQTargetAll.mul(nextMask).sum(1);
+          nextActions.dispose();
+          nextMask.dispose();
+          nextQOnline.dispose();
+        }else{
+          nextQ=nextQTargetAll.max(1);
+        }
+        nextQTargetAll.dispose();
+        const notDone=tf.onesLike(dones).sub(dones);
+        const targets=rewards.add(nextQ.mul(this.gamma).mul(notDone));
+        nextQ.dispose();
+        notDone.dispose();
+        tdTensor=targets.sub(qPred);
+        targets.dispose();
+        return tdTensor.square().mul(isWeights).mean();
+      },varList);
+      const gradList=trainables.map(w=>{
+        const grad=grads[w.val.name]??grads[w.name]??grads[w.originalName];
+        if(!grad) throw new Error(`Missing gradient for variable ${w.val.name||w.name}`); // Added: explicit guard when grads are absent
+        return grad;
+      }); // Added: capture raw gradients for clipping
+      const [clippedGrads,gradNormTensor]=tf.clipByGlobalNorm(gradList,10);
+      const gradMap={};
+      trainables.forEach((w,idx)=>{gradMap[w.val.name]=clippedGrads[idx];});
+      this.optimizer.applyGradients(gradMap);
+      gradList.forEach(g=>g.dispose()); // Added: release unclipped gradients after applying optimizer
+      const gradNormValue=gradNormTensor.dataSync()[0];
+      const lossValue=lossTensor.dataSync()[0];
+      const absTd=tdTensor.abs();
+      const tdErrors=Array.from(absTd.dataSync());
+      absTd.dispose();
+      tdTensor.dispose();
+      lossTensor.dispose();
+      clippedGrads.forEach(g=>g.dispose()); // Added: dispose clipped gradient tensors post-update
+      gradNormTensor.dispose();
+      // Added: explicit disposal for all temporary tensors created during training step
+      actions.dispose();
+      rewards.dispose();
+      dones.dispose();
+      isWeights.dispose();
+      states.dispose();
+      nextStates.dispose();
+      return {lossValue,tdErrors,gradNorm:gradNormValue};
+    });
+    this.buffer.updatePriorities(idxs,tdErrors);
+    if(gradNorm>50) console.warn('Gradient norm high:',gradNorm); // Added: warn about exploding gradients
     this.trainStep++;
-    return loss;
+    return lossValue;
   }
   async finishEpisode(){
     return null;
@@ -2442,7 +2736,10 @@ class DQNAgent{
   }
   async importState(state){
     if(!state) throw new Error('Invalid state');
-    if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
+    const loadedStateDim=state.sDim??state.stateDim;
+    if(loadedStateDim && loadedStateDim!==this.sDim){
+      console.warn(`Loaded checkpoint state dimension ${loadedStateDim} differs from current ${this.sDim}. States will be padded or sliced automatically.`); // Added: warn instead of crashing on legacy checkpoints
+    }
     if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
     const cfg=state.config??{};
     this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():this.layers;
@@ -2466,17 +2763,32 @@ class DQNAgent{
     this.nStep=cfg.nStep??this.nStep;
     this.nStepBuffers=Array.from({length:this.envCount},()=>new NStepAccumulator(this.nStep,this.gamma));
     this.trainStep=state.trainStep??0;
-    this.online.dispose();
-    this.target.dispose();
+    this.dispose(); // Added: cleanly release old models before rebuilding
+    this._disposed=false;
+    this._warnedStateMigration=false;
+    this._loggedWeights=false;
+    this._replayNormalized=false;
+    this.optimizer=tf.train.adam(this.lr);
     this.online=this.build();
     this.target=this.build();
+    this.model=this.online;
+    this.stateSize=this.sDim; // Added: realign cached state size after rebuilding networks
     if(Array.isArray(state.weights)){
-      const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
-      this.online.setWeights(tensors);
-      tensors.forEach(t=>t.dispose());
+      if(!loadedStateDim || loadedStateDim===this.sDim){
+        try{
+          const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
+          this.online.setWeights(tensors);
+          tensors.forEach(t=>t.dispose());
+        }catch(err){
+          console.warn('Weight load failed due to shape mismatch:',err); // Added: downgrade weight import failures to warning
+        }
+      }else{
+        console.warn('Skipping weight restoration because the input dimension changed.'); // Added: avoid applying incompatible weights
+      }
     }
     this.syncTarget();
     this.updateEpsilon(this.trainStep);
+    this._normalizeReplayBuffer(); // Added: migrate replay samples loaded from checkpoint
   }
   setEntropy(){}
 }
@@ -5138,6 +5450,8 @@ function updateAdvancedVisibility(){
 }
 function instantiateAgent(key,opts={}){
   const {useCurrentUI=false,overrideDefaults=null}=opts;
+  const previousAgent=agent; // Added: capture current agent before replacement
+  previousAgent?.dispose?.(); // Added: prevent stale disposed models lingering in memory
   currentAlgoKey=AGENT_PRESETS[key]?key:'dueling';
   ui.algoSelect.value=currentAlgoKey;
   const preset=AGENT_PRESETS[currentAlgoKey];
@@ -5151,6 +5465,15 @@ function instantiateAgent(key,opts={}){
   if(!useCurrentUI){
     applyPresetToUI(appliedDefaults);
   }
+  const stateProvider=()=>{ // Added: provide live state snapshots for dynamic agent sizing
+    const liveEnv=vecEnv?.getEnv?.(0)||env;
+    if(liveEnv?.getState) return liveEnv.getState();
+    if(contexts?.length){
+      const firstCtx=contexts[0];
+      if(firstCtx?.state) return firstCtx.state;
+    }
+    return new Array(stateDim).fill(0);
+  };
   agent=preset.create(stateDim,actionDim,{
     gamma:+ui.gamma.value,
     lr:+ui.lr.value,
@@ -5173,6 +5496,7 @@ function instantiateAgent(key,opts={}){
     layers:appliedDefaults.layers,
     dueling:appliedDefaults.dueling,
     double:appliedDefaults.double,
+    stateProvider,
   });
   agent.learnRepeats=(appliedDefaults.learnRepeats??preset.defaults.learnRepeats)??agent.learnRepeats??1;
   targetSyncSteps=agent.kind==='dqn'? (+ui.targetSync.value||2000):Infinity;
@@ -6223,6 +6547,8 @@ async function loadTrainingFromFile(file){
     ui.gridSize.value=`${boardSize}`;
     updateGridLabel();
     reconfigureEnvironment({count:loadedEnvCount,size:boardSize,force:true});
+    agent?.model?.dispose?.(); // Added: ensure legacy model tensors are released before creating a new agent
+    agent?.dispose?.(); // Added: clear any lingering agent references prior to instantiation
     instantiateAgent(algo,{useCurrentUI:true});
     await agent.importState(data.agent);
     applyConfigToAgent();
