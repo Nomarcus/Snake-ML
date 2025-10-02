@@ -1206,6 +1206,11 @@ footer{
             <input type="range" id="rewardSpace" min="0" max="0.5" step="0.01" value="0.05">
             <span class="mono" id="rewardSpaceReadout">0.05</span>
           </label>
+          <label>Dead-end penalty
+            <span class="hint">Scales the penalty when the head enters cramped pockets.</span>
+            <input type="range" id="rewardDeadEnd" min="0" max="1" step="0.01" value="0.50">
+            <span class="mono" id="rewardDeadEndReadout">0.50</span>
+          </label>
         </div>
       </div>
       <div class="stack">
@@ -1578,6 +1583,7 @@ const REWARD_DEFAULTS={
   retreatPenalty:0.03,
   loopPenalty:0.50,
   revisitPenalty:0.05,
+  deadEndPenalty:0.5,
   wallPenalty:10,
   selfPenalty:25.5,
   timeoutPenalty:5,
@@ -1598,6 +1604,7 @@ const REWARD_COMPONENTS=[
   {key:'retreatPenalty',label:'Retreat penalty',sign:'negative'},
   {key:'loopPenalty',label:'Loop penalty',sign:'negative'},
   {key:'revisitPenalty',label:'Revisit penalty',sign:'negative'},
+  {key:'deadEndPenalty',label:'Dead-end penalty',sign:'negative'},
   {key:'trapPenalty',label:'Trap penalty',sign:'negative'},
   {key:'selfPenalty',label:'Self crash penalty',sign:'negative'},
   {key:'wallPenalty',label:'Wall crash penalty',sign:'negative'},
@@ -1611,6 +1618,7 @@ const REWARD_LABELS={
   retreatPenalty:'Retreat penalty',
   loopPenalty:'Loop penalty',
   revisitPenalty:'Revisit penalty',
+  deadEndPenalty:'Dead-end penalty',
   trapPenalty:'Trap penalty',
   spaceGainBonus:'Space bonus',
   wallPenalty:'Wall crash penalty',
@@ -1628,6 +1636,7 @@ const REWARD_INPUT_IDS={
   retreatPenalty:'rewardRetreat',
   loopPenalty:'rewardLoop',
   revisitPenalty:'rewardRevisit',
+  deadEndPenalty:'rewardDeadEnd',
   trapPenalty:'rewardTrap',
   spaceGainBonus:'rewardSpace',
   wallPenalty:'rewardWall',
@@ -1792,9 +1801,18 @@ class SnakeEnv{
       this.lastCrash=hitsWall?'wall':'self';
       return {state:this.getState(),reward:crashReward,done:true,ateFruit:false};
     }
+    let futureSpace=null;
+    let futureSpaceKnown=false;
+    const getFutureSpace=()=>{
+      if(!futureSpaceKnown){
+        futureSpace=this.freeSpaceFrom(nx,ny,!willGrow);
+        futureSpaceKnown=true;
+      }
+      return futureSpace;
+    };
     let spaceReward=0;
     if((R.trapPenalty??0)!==0 || (R.spaceGainBonus??0)!==0){
-      const space=this.freeSpaceFrom(nx,ny,!willGrow);
+      const space=getFutureSpace();
       const need=this.snake.length+2;
       const denom=Math.max(1,need);
       if(space<need){
@@ -1806,6 +1824,17 @@ class SnakeEnv{
         }
       }
     }
+    let deadEndReward=0;
+    if((R.deadEndPenalty??0)!==0){
+      const reachable=getFutureSpace();
+      const margin=5;
+      const minReachable=this.snake.length+(willGrow?1:0)+margin;
+      if(minReachable>0 && reachable<minReachable){
+        const ratio=reachable/Math.max(1,minReachable);
+        const base=-0.5*(1-ratio);
+        deadEndReward=base*R.deadEndPenalty;
+      }
+    }
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
     this.snake.unshift({x:nx,y:ny});
     let r=-R.stepPenalty;
@@ -1813,6 +1842,10 @@ class SnakeEnv{
     r+=spaceReward;
     if(spaceReward>0) breakdown.spaceGainBonus+=spaceReward;
     else if(spaceReward<0) breakdown.trapPenalty+=spaceReward;
+    if(deadEndReward!==0){
+      r+=deadEndReward;
+      breakdown.deadEndPenalty+=deadEndReward;
+    }
     if(a!==0){
       r-=R.turnPenalty;
       breakdown.turnPenalty-=R.turnPenalty;
@@ -3615,6 +3648,8 @@ const ui={
   rewardTrapReadout:document.getElementById('rewardTrapReadout'),
   rewardSpace:document.getElementById('rewardSpace'),
   rewardSpaceReadout:document.getElementById('rewardSpaceReadout'),
+  rewardDeadEnd:document.getElementById('rewardDeadEnd'),
+  rewardDeadEndReadout:document.getElementById('rewardDeadEndReadout'),
   rewardFruit:document.getElementById('rewardFruit'),
   rewardFruitReadout:document.getElementById('rewardFruitReadout'),
   rewardGrowth:document.getElementById('rewardGrowth'),
@@ -4466,7 +4501,7 @@ function bindUI(){
     updateReadouts();
     applyEnvCountFromUI();
   });
-  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardFruit','rewardGrowth','rewardCompact'];
+  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardDeadEnd','rewardFruit','rewardGrowth','rewardCompact'];
   const updateRewards=()=>{ updateRewardReadouts(); applyRewardsToEnv(); };
   rewardIds.forEach(id=>ui[id]?.addEventListener('input',updateRewards));
   ui.tabTraining.addEventListener('click',()=>setActiveTab('training'));
@@ -4749,6 +4784,7 @@ function updateRewardReadouts(){
   ui.rewardTimeoutReadout.textContent=(+ui.rewardTimeout.value).toFixed(1);
   ui.rewardTrapReadout.textContent=(+ui.rewardTrap.value).toFixed(2);
   ui.rewardSpaceReadout.textContent=(+ui.rewardSpace.value).toFixed(2);
+  ui.rewardDeadEndReadout.textContent=(+ui.rewardDeadEnd.value).toFixed(2);
   ui.rewardFruitReadout.textContent=(+ui.rewardFruit.value).toFixed(1);
   ui.rewardGrowthReadout.textContent=(+ui.rewardGrowth.value).toFixed(1);
   ui.rewardCompactReadout.textContent=(+ui.rewardCompact.value).toFixed(3);
@@ -4766,6 +4802,7 @@ function getRewardConfigFromUI(){
     timeoutPenalty:+ui.rewardTimeout.value,
     trapPenalty:+ui.rewardTrap.value,
     spaceGainBonus:+ui.rewardSpace.value,
+    deadEndPenalty:+ui.rewardDeadEnd.value,
     fruitReward:+ui.rewardFruit.value,
     growthBonus:+ui.rewardGrowth.value,
     compactWeight:+ui.rewardCompact.value,
@@ -4789,6 +4826,7 @@ function applyRewardConfigToUI(config={}){
   if(config.timeoutPenalty!==undefined) ui.rewardTimeout.value=config.timeoutPenalty;
   if(config.trapPenalty!==undefined) ui.rewardTrap.value=config.trapPenalty;
   if(config.spaceGainBonus!==undefined) ui.rewardSpace.value=config.spaceGainBonus;
+  if(config.deadEndPenalty!==undefined) ui.rewardDeadEnd.value=config.deadEndPenalty;
   if(config.fruitReward!==undefined) ui.rewardFruit.value=config.fruitReward;
   if(config.growthBonus!==undefined) ui.rewardGrowth.value=config.growthBonus;
   if(config.compactWeight!==undefined) ui.rewardCompact.value=config.compactWeight;
