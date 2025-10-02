@@ -1547,6 +1547,7 @@ footer{
 <script type="module" src="hf-tuner.js"></script>
 <script type="module">
 import {createAITuner} from './hf-tuner.js';
+
 import {Chart, registerables} from 'https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.esm.js';
 
 Chart.register(...registerables);
@@ -1702,6 +1703,7 @@ function syncProgressCharts({
     fruitChart.update('none');
   }
 }
+
 
 const REWARD_DEFAULTS={
   stepPenalty:0.01,
