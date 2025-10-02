@@ -2350,29 +2350,97 @@ class ReplayBuffer{
 }
 
 /* ---------------- Agents ---------------- */
-class DQNAgent{
-  constructor(sDim,aDim,cfg={}){
-    this.kind='dqn';
-    this.aDim=aDim;
-    this.envCount=Math.max(1,cfg.envCount??1);
-    this.stateProvider=typeof cfg.stateProvider==='function'?cfg.stateProvider:null; // Added: accept dynamic state resolver for sizing
-    this.sDim=Math.max(1,sDim|0); // Added: default state dimension fallback
-    this.stateSize=this._resolveInitialStateSize(this.sDim); // Added: infer actual state length from live environment
-    this.sDim=this.stateSize||this.sDim; // Added: ensure model input matches resolved state length
-    this.gamma=cfg.gamma??0.98;
-    this.lr=cfg.lr??0.0005;
-    this.batch=cfg.batch??128;
-    this.priorityEps=cfg.priorityEps??0.001;
-    this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():[512,512,256]; // Added: expanded backbone to [512,512,256]
-    this.dueling=cfg.dueling!==undefined?!!cfg.dueling:true;
-    this.double=cfg.double!==undefined?!!cfg.double:true;
-    this.learnRepeats=cfg.learnRepeats??2;
-    this.buffer=new ReplayBuffer(cfg.bufferSize??50000,{
-      alpha:cfg.priorityAlpha??0.6,
-      beta:cfg.priorityBeta??0.4,
-      betaIncrement:cfg.priorityBetaIncrement??0.000002,
-      priorityEps:this.priorityEps,
+class DQNAgent {
+  constructor(sDim, aDim, cfg = {}) {
+    this.kind = 'dqn';
+    this.aDim = aDim;
+    this.envCount = Math.max(1, cfg.envCount ?? 1);
+
+    // State dimension
+    this.stateProvider = typeof cfg.stateProvider === 'function' ? cfg.stateProvider : null;
+    this.sDim = Math.max(1, sDim | 0);
+    this.stateSize = this._resolveInitialStateSize(this.sDim);
+    this.sDim = this.stateSize || this.sDim;
+
+    // Core hyperparameters
+    this.gamma = cfg.gamma ?? 0.98;
+    this.lr = cfg.lr ?? 0.0005;
+    this.batch = cfg.batch ?? 128;
+    this.priorityEps = cfg.priorityEps ?? 0.001;
+
+    // Network architecture
+    this.layers = Array.isArray(cfg.layers) ? cfg.layers.slice() : [512, 512, 256];
+    this.dueling = cfg.dueling !== undefined ? !!cfg.dueling : true;
+    this.double = cfg.double !== undefined ? !!cfg.double : true;
+
+    // Learning config
+    this.learnRepeats = cfg.learnRepeats ?? 2;
+
+    // Replay buffer
+    this.buffer = new ReplayBuffer(cfg.bufferSize ?? 50000, {
+      alpha: cfg.priorityAlpha ?? 0.6,
+      beta: cfg.priorityBeta ?? 0.4,
+      betaIncrement: cfg.priorityBetaIncrement ?? 0.000002,
+      priorityEps: this.priorityEps,
     });
+  }
+
+  /* ---------------- State utilities ---------------- */
+  _resolveInitialStateSize(defaultSize) {
+    if (this.stateProvider) {
+      try {
+        const testState = this.stateProvider();
+        if (Array.isArray(testState)) {
+          return testState.length;
+        }
+      } catch (e) {
+        console.warn("State provider failed, fallback to default size", e);
+      }
+    }
+    return defaultSize;
+  }
+
+  /* ---------------- Hyperparameter setters ---------------- */
+  setGamma(value) {
+    if (typeof value === "number" && value > 0 && value < 1) {
+      this.gamma = value;
+    } else {
+      console.warn("Invalid gamma, must be between 0 and 1");
+    }
+  }
+
+  setLearningRate(value) {
+    if (typeof value === "number" && value > 0) {
+      this.lr = value;
+    } else {
+      console.warn("Invalid learning rate");
+    }
+  }
+
+  setBatchSize(value) {
+    if (Number.isInteger(value) && value > 0) {
+      this.batch = value;
+    } else {
+      console.warn("Invalid batch size");
+    }
+  }
+
+  setLayers(layers) {
+    if (Array.isArray(layers) && layers.every(x => Number.isInteger(x) && x > 0)) {
+      this.layers = layers.slice();
+    } else {
+      console.warn("Invalid layers array");
+    }
+  }
+
+  setEpsilonDecay(value) {
+    if (typeof value === "number" && value > 0 && value < 1) {
+      this.epsilonDecay = value;
+    } else {
+      console.warn("Invalid epsilonDecay, must be between 0 and 1");
+    }
+  }
+}
     this.priorityEps=this.buffer.priorityEps;
     this.epsStart=cfg.epsStart??1.0;
     this.epsEnd=cfg.epsEnd??0.12;
