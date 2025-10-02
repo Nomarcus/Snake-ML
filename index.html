@@ -467,76 +467,29 @@ select{
 .progress-chart__body[hidden]{
   display:none;
 }
-.progress-chart__canvas{
-  width:100%;
-  max-width:100%;
-  height:160px;
-}
-.progress-chart svg{
-  width:100%;
-  height:100%;
-}
-.progress-chart path.line{
-  fill:none;
-  stroke-width:2.5;
-  stroke-linecap:round;
-  stroke-linejoin:round;
-}
-.progress-chart path.line.reward{
-  stroke:var(--accent-a);
-}
-.progress-chart path.line.fruit{
-  stroke:#5ad1a7;
-}
-.progress-chart path.line.greedy-reward{
-  stroke:#fbbf24;
-  stroke-dasharray:6 4;
-}
-.progress-chart path.line.greedy-fruit{
-  stroke:#38bdf8;
-  stroke-dasharray:6 4;
-}
-.progress-chart__grid line{
-  stroke:rgba(139,92,246,0.18);
-  stroke-width:1;
-}
-.progress-chart__grid text{
-  font-size:10px;
-  fill:var(--muted);
-}
-.progress-chart__legend{
+.progress-chart__charts{
   display:flex;
-  flex-wrap:wrap;
-  gap:14px;
-  font-size:12px;
-  color:#c7cdef;
+  flex-direction:column;
+  gap:18px;
 }
-.progress-chart__legend .legend-item{
-  display:inline-flex;
-  align-items:center;
-  gap:6px;
+.progress-chart__group{
+  display:flex;
+  flex-direction:column;
+  gap:10px;
 }
-.progress-chart__legend .legend-swatch{
-  width:10px;
-  height:10px;
-  border-radius:999px;
-  box-shadow:0 0 10px rgba(139,92,246,0.35);
+.progress-chart__group h3{
+  margin:0;
+  font-size:13px;
+  letter-spacing:0.04em;
+  color:#e4e8ff;
 }
-.progress-chart__legend .legend-swatch.reward{
-  background:var(--accent-a);
-}
-.progress-chart__legend .legend-swatch.fruit{
-  background:#5ad1a7;
-}
-.progress-chart__legend .legend-swatch.greedy-reward{
-  background:transparent;
-  border:2px dashed #fbbf24;
-  box-shadow:none;
-}
-.progress-chart__legend .legend-swatch.greedy-fruit{
-  background:transparent;
-  border:2px dashed #38bdf8;
-  box-shadow:none;
+.progress-chart__group canvas{
+  width:100%;
+  height:200px;
+  background:rgba(17,22,48,0.65);
+  border-radius:16px;
+  border:1px solid rgba(128,138,206,0.25);
+  box-shadow:inset 0 0 0 1px rgba(84,98,176,0.12);
 }
 .progress-chart__meta{
   display:flex;
@@ -1100,22 +1053,17 @@ footer{
         <button type="button" class="secondary micro" id="progressChartToggle" aria-expanded="true" aria-controls="progressChartBody">Dölj diagram</button>
       </div>
       <div class="progress-chart__body" id="progressChartBody">
-        <div class="progress-chart__canvas" id="progressChartCanvas">
-          <svg id="progressChartSvg" viewBox="0 0 360 160" role="img" aria-label="Linje-diagram över medelbelöning och frukt per 100 episoder">
-            <g id="progressChartGrid" class="progress-chart__grid"></g>
-            <path id="progressRewardPath" class="line reward" d=""></path>
-            <path id="progressFruitPath" class="line fruit" d=""></path>
-            <path id="progressGreedyRewardPath" class="line greedy-reward" d=""></path>
-            <path id="progressGreedyFruitPath" class="line greedy-fruit" d=""></path>
-          </svg>
+        <div class="progress-chart__charts" id="progressChartCharts">
+          <div class="progress-chart__group" id="rewardChartGroup">
+            <h3>Reward Progress (avg per 100 episodes)</h3>
+            <canvas id="rewardChart"></canvas>
+          </div>
+          <div class="progress-chart__group" id="fruitChartGroup">
+            <h3>Fruit Progress (avg per 100 episodes)</h3>
+            <canvas id="fruitChart"></canvas>
+          </div>
         </div>
         <div class="progress-chart__empty" id="progressChartEmpty">Kör minst 100 episoder för att se trenderna.</div>
-        <div class="progress-chart__legend" id="progressChartLegend">
-          <span class="legend-item"><span class="legend-swatch reward"></span>Medelbelöning</span>
-          <span class="legend-item"><span class="legend-swatch fruit"></span>Medel frukt</span>
-          <span class="legend-item"><span class="legend-swatch greedy-reward"></span>Greedy Reward</span>
-          <span class="legend-item"><span class="legend-swatch greedy-fruit"></span>Greedy Fruit</span>
-        </div>
         <div class="progress-chart__meta" id="progressChartMeta">
           <span class="hint">Episoder</span>
           <span class="mono" id="progressChartRange">—</span>
@@ -1599,6 +1547,7 @@ footer{
 <script type="module" src="hf-tuner.js"></script>
 <script type="module">
 import {createAITuner} from './hf-tuner.js';
+import {rewardChart, fruitChart, resetProgressCharts, syncProgressCharts} from './ui/charts.js';
 
 const REWARD_DEFAULTS={
   stepPenalty:0.01,
@@ -3694,15 +3643,12 @@ const ui={
   progressChartPanel:document.getElementById('progressChartPanel'),
   progressChartBody:document.getElementById('progressChartBody'),
   progressChartToggle:document.getElementById('progressChartToggle'),
-  progressChartCanvas:document.getElementById('progressChartCanvas'),
-  progressChartSvg:document.getElementById('progressChartSvg'),
-  progressChartGrid:document.getElementById('progressChartGrid'),
-  progressRewardPath:document.getElementById('progressRewardPath'),
-  progressFruitPath:document.getElementById('progressFruitPath'),
-  progressGreedyRewardPath:document.getElementById('progressGreedyRewardPath'),
-  progressGreedyFruitPath:document.getElementById('progressGreedyFruitPath'),
+  progressChartCharts:document.getElementById('progressChartCharts'),
+  rewardChartGroup:document.getElementById('rewardChartGroup'),
+  fruitChartGroup:document.getElementById('fruitChartGroup'),
+  rewardChartCanvas:document.getElementById('rewardChart'),
+  fruitChartCanvas:document.getElementById('fruitChart'),
   progressChartEmpty:document.getElementById('progressChartEmpty'),
-  progressChartLegend:document.getElementById('progressChartLegend'),
   progressChartMeta:document.getElementById('progressChartMeta'),
   progressChartRange:document.getElementById('progressChartRange'),
   tabTraining:document.getElementById('tabTraining'),
@@ -3748,8 +3694,6 @@ const rwHist=[],fruitHist=[],lossHist=[];
 const progressPoints=[];
 const greedyFruitHist=[],greedyRewardHist=[],greedyEpisodeHist=[];
 const PROGRESS_POINTS_MAX=120;
-const PROGRESS_CHART_WIDTH=360;
-const PROGRESS_CHART_HEIGHT=160;
 const rewardTelemetry=createRewardTelemetry(1200);
 let contexts=[];
 let renderTick=0;
@@ -5355,7 +5299,8 @@ function resetTrainingStats(){
   rewardTelemetry.reset();
   updateStatsUI();
   updateRewardTelemetryUI();
-  updateProgressChart();
+  resetProgressCharts();
+  updateProgressChart({syncCharts:false});
   renderTick=0;
   contexts.forEach(ctx=>ctx.needsReset=true);
   if(autoPilot){
@@ -5404,15 +5349,26 @@ function setProgressChartCollapsed(collapsed){
   ui.progressChartToggle.setAttribute('aria-expanded',String(!collapsed));
   ui.progressChartToggle.textContent=collapsed?'Visa diagram':'Dölj diagram';
 }
-function updateProgressChart(){
-  if(!ui.progressChartSvg) return;
-  const data=progressPoints.slice(-PROGRESS_POINTS_MAX);
-  const greedyRewardPoints=greedyEpisodeHist.map((episode,idx)=>({episode,value:greedyRewardHist[idx]}));
-  const greedyFruitPoints=greedyEpisodeHist.map((episode,idx)=>({episode,value:greedyFruitHist[idx]}));
-  const hasTraining=data.length>0;
-  const hasGreedy=greedyRewardPoints.length>0||greedyFruitPoints.length>0;
+function updateProgressChart(options={}){
+  const {syncCharts=true}=options;
+  if(syncCharts){
+    syncProgressCharts({
+      progressPoints,
+      greedyEpisodes:greedyEpisodeHist,
+      greedyRewards:greedyRewardHist,
+      greedyFruits:greedyFruitHist,
+      limit:PROGRESS_POINTS_MAX,
+    });
+  }
+  const hasTraining=progressPoints.length>0;
+  const hasGreedy=greedyEpisodeHist.length>0;
   const hasAny=hasTraining||hasGreedy;
-  const elements=[['progressChartCanvas',!hasAny],['progressChartLegend',!hasAny],['progressChartMeta',!hasAny]];
+  const elements=[
+    ['progressChartCharts',!hasAny],
+    ['rewardChartGroup',!hasAny],
+    ['fruitChartGroup',!hasAny],
+    ['progressChartMeta',!hasAny],
+  ];
   elements.forEach(([key,shouldHide])=>{
     const el=ui[key];
     if(!el) return;
@@ -5420,120 +5376,84 @@ function updateProgressChart(){
   });
   if(ui.progressChartEmpty) ui.progressChartEmpty.classList.toggle('hidden',hasAny);
   if(!hasAny){
-    ui.progressRewardPath?.setAttribute('d','');
-    ui.progressFruitPath?.setAttribute('d','');
-    ui.progressGreedyRewardPath?.setAttribute('d','');
-    ui.progressGreedyFruitPath?.setAttribute('d','');
-    if(ui.progressChartGrid) ui.progressChartGrid.innerHTML='';
     if(ui.progressChartRange) ui.progressChartRange.textContent='—';
     return;
   }
-  const width=PROGRESS_CHART_WIDTH;
-  const height=PROGRESS_CHART_HEIGHT;
-  const rewardVals=hasTraining?data.map(p=>p.reward).filter((v)=>Number.isFinite(v)):[];
-  const fruitVals=hasTraining?data.map(p=>p.fruit).filter((v)=>Number.isFinite(v)):[];
-  const greedyRewardVals=greedyRewardPoints.map((p)=>p.value).filter((v)=>Number.isFinite(v));
-  const greedyFruitVals=greedyFruitPoints.map((p)=>p.value).filter((v)=>Number.isFinite(v));
-  const values=[...rewardVals,...fruitVals,...greedyRewardVals,...greedyFruitVals];
-  let min=Math.min(...values);
-  let max=Math.max(...values);
-  if(!values.length||!Number.isFinite(min)||!Number.isFinite(max)){
-    min=0;
-    max=1;
-  }
-  if(min===max){
-    const pad=Math.abs(min)||1;
-    min-=pad*0.5;
-    max+=pad*0.5;
-  }
-  const pad=(max-min)*0.08;
-  min-=pad;
-  max+=pad;
-  const domainEpisodes=[];
-  if(hasTraining){
-    data.forEach((point)=>{
-      if(Number.isFinite(point.startEpisode)) domainEpisodes.push(point.startEpisode);
-      if(Number.isFinite(point.episode)) domainEpisodes.push(point.episode);
-    });
-  }
-  if(hasGreedy){
-    greedyEpisodeHist.forEach((ep)=>{
-      if(Number.isFinite(ep)) domainEpisodes.push(ep);
-    });
-  }
-  let minEpisode=Math.min(...domainEpisodes);
-  let maxEpisode=Math.max(...domainEpisodes);
-  if(!domainEpisodes.length||!Number.isFinite(minEpisode)||!Number.isFinite(maxEpisode)){
-    const fallbackStart=hasTraining?(data[0]?.startEpisode??data[0]?.episode??1):(greedyEpisodeHist[0]??1);
-    minEpisode=fallbackStart;
-    maxEpisode=fallbackStart+1;
-  }
-  if(minEpisode===maxEpisode){
-    maxEpisode+=1;
-  }
-  const range=maxEpisode-minEpisode||1;
-  const toX=(episode)=>{
-    if(!Number.isFinite(episode)) return width/2;
-    return ((episode-minEpisode)/range)*width;
-  };
-  const toY=(value)=>{
-    const norm=(value-min)/(max-min||1);
-    const y=height-(norm*height);
-    return Math.min(height,Math.max(0,y));
-  };
-  const buildPath=(points,{x,y})=>{
-    if(!points.length) return '';
-    if(points.length===1){
-      const pt=points[0];
-      const xVal=toX(x(pt)).toFixed(1);
-      const yVal=toY(y(pt)).toFixed(1);
-      return `M${xVal},${yVal} L${xVal},${yVal}`;
-    }
-    return points.map((pt,idx)=>{
-      const xVal=toX(x(pt)).toFixed(1);
-      const yVal=toY(y(pt)).toFixed(1);
-      return `${idx===0?'M':'L'}${xVal},${yVal}`;
-    }).join(' ');
-  };
-  const rewardPath=buildPath(data,{x:(pt)=>pt.episode,y:(pt)=>pt.reward});
-  const fruitPath=buildPath(data,{x:(pt)=>pt.episode,y:(pt)=>pt.fruit});
-  const greedyRewardPath=buildPath(greedyRewardPoints,{x:(pt)=>pt.episode,y:(pt)=>pt.value});
-  const greedyFruitPath=buildPath(greedyFruitPoints,{x:(pt)=>pt.episode,y:(pt)=>pt.value});
-  ui.progressRewardPath?.setAttribute('d',rewardPath);
-  ui.progressFruitPath?.setAttribute('d',fruitPath);
-  ui.progressGreedyRewardPath?.setAttribute('d',greedyRewardPath);
-  ui.progressGreedyFruitPath?.setAttribute('d',greedyFruitPath);
-  if(ui.progressChartGrid){
-    const ticks=[max,(max+min)/2,min];
-    ui.progressChartGrid.innerHTML=ticks.map((value)=>{
-      const y=toY(value);
-      return `<line x1="0" y1="${y.toFixed(1)}" x2="${width}" y2="${y.toFixed(1)}"></line>`+
-        `<text x="8" y="${y.toFixed(1)}" dominant-baseline="middle">${formatMetric(value,2)}</text>`;
-    }).join('');
-  }
-  if(ui.progressChartRange){
+  const episodeBounds=[];
+  progressPoints.forEach((point)=>{
+    if(Number.isFinite(point.startEpisode)) episodeBounds.push(point.startEpisode);
+    if(Number.isFinite(point.episode)) episodeBounds.push(point.episode);
+  });
+  greedyEpisodeHist.forEach((ep)=>{
+    if(Number.isFinite(ep)) episodeBounds.push(ep);
+  });
+  if(episodeBounds.length&&ui.progressChartRange){
+    const minEpisode=Math.min(...episodeBounds);
+    const maxEpisode=Math.max(...episodeBounds);
     ui.progressChartRange.textContent=`${Math.round(minEpisode)}–${Math.round(maxEpisode)}`;
+  }else if(ui.progressChartRange){
+    ui.progressChartRange.textContent='—';
   }
 }
+
 function recordProgressPoint(){
   if(rwHist.length<100||fruitHist.length<100) return;
   const rewardAvg=avg(rwHist,100);
   const fruitAvg=avg(fruitHist,100);
-  progressPoints.push({
+  const point={
     episode,
     startEpisode:Math.max(1,episode-99),
     reward:rewardAvg,
     fruit:fruitAvg,
-  });
-  if(progressPoints.length>PROGRESS_POINTS_MAX) progressPoints.shift();
-  updateProgressChart();
+  };
+  progressPoints.push(point);
+  if(progressPoints.length>PROGRESS_POINTS_MAX){
+    progressPoints.shift();
+    if(rewardChart?.data?.datasets?.[0]?.data?.length){
+      rewardChart.data.datasets[0].data.shift();
+    }
+    if(fruitChart?.data?.datasets?.[0]?.data?.length){
+      fruitChart.data.datasets[0].data.shift();
+    }
+  }
+  if(rewardChart){
+    rewardChart.data.datasets[0].data.push({x:episode,y:rewardAvg});
+    rewardChart.update('none');
+  }
+  if(fruitChart){
+    fruitChart.data.datasets[0].data.push({x:episode,y:fruitAvg});
+    fruitChart.update('none');
+  }
+  updateProgressChart({syncCharts:false});
 }
+
 function logGreedyMetrics(fruit,reward,episodeNumber){
   console.log(`[GREEDY EVAL] ep=${episodeNumber} | avgFruit=${fruit.toFixed(2)} | avgReward=${reward.toFixed(2)}`);
   greedyFruitHist.push(fruit);
   greedyRewardHist.push(reward);
   greedyEpisodeHist.push(episodeNumber);
+  if(greedyFruitHist.length>PROGRESS_POINTS_MAX){
+    greedyFruitHist.shift();
+    greedyRewardHist.shift();
+    greedyEpisodeHist.shift();
+    if(rewardChart?.data?.datasets?.[1]?.data?.length){
+      rewardChart.data.datasets[1].data.shift();
+    }
+    if(fruitChart?.data?.datasets?.[1]?.data?.length){
+      fruitChart.data.datasets[1].data.shift();
+    }
+  }
+  if(rewardChart){
+    rewardChart.data.datasets[1].data.push({x:episodeNumber,y:reward});
+    rewardChart.update('none');
+  }
+  if(fruitChart){
+    fruitChart.data.datasets[1].data.push({x:episodeNumber,y:fruit});
+    fruitChart.update('none');
+  }
+  updateProgressChart({syncCharts:false});
 }
+
 function updateRewardTelemetryUI(){
   if(!ui.rewardTelemetryBody) return;
   const {rows,total}=rewardTelemetry.summary();
