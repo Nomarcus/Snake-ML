@@ -2519,6 +2519,14 @@ class DQNAgent{
       ns:Array.from(normalized.ns),
       d:normalized.d,
       w:normalized.w,
+  _pushSample(sample){
+    this.buffer.push({ // Added: ensure replay buffer only stores plain JS arrays
+      s:Array.from(sample.s),
+      a:sample.a,
+      r:sample.r,
+      ns:Array.from(sample.ns),
+      d:sample.d,
+      w:sample.w??1,
     });
   }
   setGamma(val){
@@ -2559,6 +2567,7 @@ class DQNAgent{
     const normalizedState=this._normalizeStateVector(s); // Added: align incoming state to current dimension
     const normalizedNext=this._normalizeStateVector(ns); // Added: align next-state to current dimension
     const ready=buf.push({s:normalizedState,a,r,ns:normalizedNext,d});
+    const ready=buf.push({s,a,r,ns,d});
     if(ready.length) ready.forEach(t=>this._pushSample(t)); // Added: funnel transitions through plain-array writer
     if(d){
       const tail=buf.flush();
@@ -2602,6 +2611,7 @@ class DQNAgent{
     return tf.tidy(()=>{
       const normalized=this._normalizeStateVector(s); // Added: coerce act input to expected dimension
       const input=tf.tensor2d([normalized], [1,this.sDim]); // Added: ensure plain array tensor input
+      const input=tf.tensor2d([Array.from(s)], [1,this.sDim]); // Added: ensure plain array tensor input
       const q=this._applyModel(this.online,input,false); // Added: use dueling-aware predictor
       const action=q.argMax(1).dataSync()[0];
       return action;
@@ -2612,6 +2622,7 @@ class DQNAgent{
     return tf.tidy(()=>{
       const normalized=this._normalizeStateVector(s); // Added: coerce greedy input to expected dimension
       const input=tf.tensor2d([normalized], [1,this.sDim]); // Added: ensure tensor input cloned for greedy eval
+      const input=tf.tensor2d([Array.from(s)], [1,this.sDim]); // Added: ensure tensor input cloned for greedy eval
       const q=this._applyModel(this.online,input,false); // Added: use dueling-aware predictor for greedy action
       const action=q.argMax(1).dataSync()[0];
       return action;
@@ -2636,6 +2647,15 @@ class DQNAgent{
       let tdTensor;
       const trainables=this.online.trainableWeights;
       const varList=trainables.map(w=>w.val); // Added: supply actual tf.Variables to gradient calculator
+    const weightArr=(weights&&weights.length)?Array.from(weights):new Array(batch.length).fill(1); // Added: normalize IS weights into plain array form
+    const {lossValue,tdErrors,gradNorm}=tf.tidy(()=>{
+      const states=tf.tensor2d(batch.map(x=>x.s),[batch.length,this.sDim]);
+      const nextStates=tf.tensor2d(batch.map(x=>x.ns),[batch.length,this.sDim]);
+      const actions=tf.tensor1d(batch.map(x=>x.a),'int32');
+      const rewards=tf.tensor1d(batch.map(x=>x.r));
+      const dones=tf.tensor1d(batch.map(x=>x.d?1:0));
+      const isWeights=tf.tensor1d(weightArr);
+      let tdTensor;
       const {value:lossTensor,grads}=tf.variableGrads(()=>{
         const qPredAll=this._applyModel(this.online,states,true);
         const actionMask=tf.oneHot(actions,this.aDim);
@@ -2670,6 +2690,11 @@ class DQNAgent{
       const [clippedGrads,gradNormTensor]=tf.clipByGlobalNorm(gradList,10);
       const gradMap={};
       trainables.forEach((w,idx)=>{gradMap[w.val.name]=clippedGrads[idx];});
+      },this.online.trainableWeights);
+      const gradList=this.online.trainableWeights.map(w=>grads[w.name]); // Added: capture raw gradients for clipping
+      const [clippedGrads,gradNormTensor]=tf.clipByGlobalNorm(gradList,10);
+      const gradMap={};
+      this.online.trainableWeights.forEach((w,idx)=>{gradMap[w.name]=clippedGrads[idx];});
       this.optimizer.applyGradients(gradMap);
       gradList.forEach(g=>g.dispose()); // Added: release unclipped gradients after applying optimizer
       const gradNormValue=gradNormTensor.dataSync()[0];
