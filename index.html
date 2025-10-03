@@ -3068,6 +3068,8 @@ let currentAnim=null;
 let renderActive=false;
 let renderToken=0;
 let watching=false;
+let watchStopRequested=false;
+let watchLoopPromise=null;
 let liveViewHidden=false;
 let renderSuspended=false;
 const MAX_RENDER_QUEUE=240;
@@ -5928,35 +5930,61 @@ function previewDeath(env,action){
   const hitsBody=env.snakeSet.has(key) && !(tail && tail.x===nx && tail.y===ny && !willGrow);
   return hitsWall||hitsBody;
 }
-async function watchSmoothEpisode(){
-  if(watching||!agent) return;
-  const wasTraining=training;
-  if(wasTraining) stopTraining();
-  if(liveViewHidden) setLiveViewHidden(false);
-  watching=true;
-  ui.trainState.textContent='watching';
-  ui.btnWatch.disabled=true;
-  try{
-    await waitForRenderIdle();
-    if(window.showDirectoryPicker){
-      try{
-        const checkpoint=await readLatestCheckpoint();
-        await applyCheckpointData(checkpoint);
-      }catch(err){
-        console.warn('Failed to read latest-checkpoint',err);
-      }
+function captureExplorationState(){
+  if(!agent) return null;
+  if(agent.kind==='dqn'&&typeof agent.epsilon==='number'){
+    return {
+      type:'dqn',
+      epsilon:agent.epsilon,
+      epsStart:agent.epsStart,
+      epsEnd:agent.epsEnd,
+      epsDecay:agent.epsDecay,
+    };
+  }
+  if(typeof agent.epsilon==='number'){
+    return {type:'epsilon',epsilon:agent.epsilon};
+  }
+  return null;
+}
+function applyEvaluationExploration(state){
+  if(!agent) return;
+  if(state||typeof agent.epsilon==='number'){
+    agent.epsilon=0;
+  }
+}
+function restoreExplorationState(state){
+  if(!agent||!state) return;
+  if(state.type==='dqn'){
+    agent.epsStart=state.epsStart;
+    agent.epsEnd=state.epsEnd;
+    agent.epsDecay=state.epsDecay;
+    agent.epsilon=state.epsilon;
+  }else if(state.type==='epsilon'){
+    agent.epsilon=state.epsilon;
+  }
+}
+async function runWatchEpisodes(){
+  await waitForRenderIdle();
+  if(window.showDirectoryPicker){
+    try{
+      const checkpoint=await readLatestCheckpoint();
+      await applyCheckpointData(checkpoint);
+    }catch(err){
+      console.warn('Failed to read latest-checkpoint',err);
     }
-    const desired=+ui.gridSize.value;
-    if(env.cols!==desired||env.rows!==desired){
-      resetEnvironment(desired,true);
-    }
+  }
+  const desired=+ui.gridSize.value;
+  if(env.cols!==desired||env.rows!==desired){
+    resetEnvironment(desired,true);
+  }
+  const mode=playbackModes.watch;
+  while(!watchStopRequested){
     let state=env.reset();
     setImmediateState(env);
-    const mode=playbackModes.watch;
     const maxSteps=COLS*ROWS*6;
     let steps=0;
     let done=false;
-    while(!done && steps<maxSteps){
+    while(!done && steps<maxSteps && !watchStopRequested){
       const before=snapshotEnv(env);
       let action=agent.greedyAction(state);
       if(previewDeath(env,action)){
@@ -5976,12 +6004,70 @@ async function watchSmoothEpisode(){
     await waitForRenderIdle();
     bestLen=Math.max(bestLen,env.snake.length);
     ui.kBest.textContent=bestLen;
-  }finally{
-    watching=false;
-    ui.btnWatch.disabled=false;
-    ui.trainState.textContent=wasTraining?'training':'idle';
-    if(wasTraining) startTraining();
   }
+}
+async function finishWatchLoop(context){
+  try{
+    await waitForRenderIdle();
+  }catch(err){
+    console.warn('Failed waiting for render idle during watch cleanup',err);
+  }
+  restoreExplorationState(context?.explorationState);
+  updateReadouts();
+  watching=false;
+  watchLoopPromise=null;
+  watchStopRequested=false;
+  ui.btnWatch.disabled=false;
+  ui.btnWatch.classList.remove('active');
+  ui.btnWatch.textContent='Watch';
+  ui.btnWatch.setAttribute('aria-pressed','false');
+  const resume=context?.wasTraining;
+  ui.trainState.textContent=resume?'training':'idle';
+  if(resume) startTraining();
+}
+async function startWatchLoop(){
+  if(!agent) return;
+  watchStopRequested=false;
+  const context={
+    wasTraining:training,
+  };
+  ui.btnWatch.disabled=true;
+  if(context.wasTraining) stopTraining();
+  if(liveViewHidden) setLiveViewHidden(false);
+  watching=true;
+  ui.trainState.textContent='watching';
+  ui.btnWatch.classList.add('active');
+  ui.btnWatch.setAttribute('aria-pressed','true');
+  ui.btnWatch.textContent='Stop Watching';
+  context.explorationState=captureExplorationState();
+  applyEvaluationExploration(context.explorationState);
+  updateReadouts();
+  watchLoopPromise=(async()=>{
+    try{
+      await runWatchEpisodes();
+    }catch(err){
+      console.error('Watch mode failed',err);
+      flash('Watch mode encountered an error',true);
+    }finally{
+      await finishWatchLoop(context);
+    }
+  })();
+  watchLoopPromise.catch(err=>console.error('Unhandled watch loop error',err));
+  ui.btnWatch.disabled=false;
+}
+async function watchSmoothEpisode(){
+  if(watching){
+    if(watchStopRequested) return;
+    watchStopRequested=true;
+    ui.btnWatch.disabled=true;
+    ui.btnWatch.textContent='Stopping…';
+    if(watchLoopPromise){
+      await watchLoopPromise;
+    }
+    return;
+  }
+  if(watchLoopPromise||!agent) return;
+  await startWatchLoop();
 }
 
 /* ---------------- Save / load ---------------- */
