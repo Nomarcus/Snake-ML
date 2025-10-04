@@ -9,84 +9,51 @@ const DEFAULT_MODEL_ID =
 const HISTORY_LOG_MAX_BYTES = 8 * 1024 * 1024;
 const HISTORY_LOG_PATH = path.join(process.cwd(), 'api', 'logs', 'snake-history.jsonl');
 
-/* ------------------  SYSTEM PROMPT  ------------------ */
-const SYSTEM_PROMPT = `
-You are an expert reinforcement-learning optimizer specialized in Proximal Policy Optimization (PPO) for Snake-ML.
-The Snake agent plays on a 2-D grid. Your goal is to analyze its training telemetry and automatically propose stable
-parameter and reward adjustments to maximize fruit collection and survival.
+const SYSTEM_PROMPT = `You are an advanced reinforcement learning tuner for Snake-ML.  
+The agent plays Snake on a 2-D grid and the goad is to complete the whole board.  
 
-Incoming telemetry JSON always includes:
+You will always receive JSON telemetry containing:  
+- General: episode, avgFruit, avgReward  
+- Exploration: epsilon, epsilonDecay  
+- Learning: gamma, learningRate, batchSize, targetUpdate  
+- Environment: gridSize, maxSteps, snakeLength, fruitEaten  
+- Reward config: fruitReward, deathPenalty, stepPenalty, loopPenalty, tailPenalty, wallPenalty, idlePenalty (if present)  
+
+Your task:
+- Analyze all telemetry and determine if the agent is improving, stagnating, or regressing.  
+- Propose numeric adjustments to both rewardConfig and hyperparameters if they are likely to improve learning.  
+- If performance is stable and improving, return the same values.  
+
+Output must always be strict JSON in this format:  
 {
-  "episode": number,
-  "avgReward100": number,
-  "avgRewardTrend": number,
-  "fruitPerEp": number,
-  "entropy": number,
-  "entropyTrend": number,
-  "wallShare": number,
-  "loopShare": number,
-  "timeoutShare": number,
-  "config": {
-    "gamma": number,
-    "lr": number,
-    "lam": number,
-    "clipRatio": number,
-    "entropyCoef": number,
-    "valueCoef": number,
-    "rewardConfig": {
-      "fruitReward": number,
-      "stepPenalty": number,
-      "wallPenalty": number,
-      "loopPenalty": number,
-      "towardFruitBonus": number,
-      "growthBonus": number,
-      "openSpaceBonus": number
-    }
-  }
-}
-
-Your tasks:
-1. Detect improvement, stagnation, or regression.
-2. Adjust PPO hyperparameters and reward coefficients smoothly.
-3. Always return a full JSON object — even if nothing changes.
-4. Include a concise analysisText (1–3 sentences).
-
-Output JSON format:
-{
-  "adjustments": {
-    "gamma": <number>,
-    "lr": <number>,
-    "lam": <number>,
-    "clipRatio": <number>,
-    "entropyCoef": <number>,
-    "valueCoef": <number>,
-    "rewardConfig": {
-      "fruitReward": <number>,
-      "stepPenalty": <number>,
-      "wallPenalty": <number>,
-      "loopPenalty": <number>,
-      "towardFruitBonus": <number>,
-      "growthBonus": <number>,
-      "openSpaceBonus": <number>
-    }
+  "rewardConfig": {
+    "fruitReward": <number>,
+    "deathPenalty": <number>,
+    "stepPenalty": <number>,
+    "loopPenalty": <number>,
+    "tailPenalty": <number>,
+    "wallPenalty": <number>,
+    "idlePenalty": <number>
   },
-  "comment": "<short reasoning>"
+  "hyper": {
+    "gamma": <number>,
+    "learningRate": <number>,
+    "epsilonDecay": <number>,
+    "batchSize": <number>,
+    "targetUpdate": <number>,
+    "gridSize": <number>,
+    "maxSteps": <number>,
+    "snakeLength": <number>,
+    "fruitEaten": <number>
+  },
+  "analysisText": "<short explanation (1–3 sentences)>"
 }
 
-Guidelines:
-- If avgReward100 < −9 and fruitPerEp < 0.2 → increase exploration (entropyCoef +10-20%, clipRatio +0.05).
-- If reward variance high → decrease lr 10-20%.
-- If fruitPerEp > 0.5 and reward variance < 1.0 → decrease entropyCoef slightly.
-- If wallShare > 0.7 → reduce wallPenalty by 1–2, raise towardFruitBonus by 0.01–0.02.
-- Clamp to:
-  0.0001≤lr≤0.0005,  0.004≤entropyCoef≤0.02,  0.15≤clipRatio≤0.35,
-  0.9≤lam≤0.96,  0.94≤gamma≤0.99
-- Rewards within:
-  fruitReward 10–22, wallPenalty 6–14, stepPenalty 0.005–0.02
-- Output only valid JSON, no markdown or commentary.
-`;
+Rules:
+- Always include ALL fields, even if unchanged.
+- Never output extra commentary or markdown. JSON only.
+- If you recommend halting training, explain it within analysisText.  `;
 
-/* ---------------------------------------------------- */
 
 const DEFAULT_ALLOWED_ORIGINS = [
   'https://nomarcus.github.io',
@@ -97,68 +64,83 @@ const DEFAULT_ALLOWED_ORIGINS = [
   'http://127.0.0.1:3000',
   'http://127.0.0.1:4173',
   'http://127.0.0.1:5173',
-  'http://127.0.0.1:8080'
+  'http://127.0.0.1:8080',
 ];
 
 const allowedOriginSet = buildAllowedOriginSet(
   process.env.CORS_ALLOW_ORIGINS,
-  DEFAULT_ALLOWED_ORIGINS
+  DEFAULT_ALLOWED_ORIGINS,
 );
 const allowAllOrigins = allowedOriginSet.has('*');
-if (allowAllOrigins) allowedOriginSet.delete('*');
+if (allowAllOrigins) {
+  allowedOriginSet.delete('*');
+}
 
 const app = express();
 
-/* ----------------  CORS + BODY PARSER ---------------- */
 app.use((req, res, next) => {
   applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
   next();
 });
+
 app.use(express.json({ limit: '1mb' }));
 
-/* ------------------  CORS OPTIONS  ------------------ */
-for (const route of ['/api/proxy', '/api/logs/snake-history.jsonl']) {
-  app.options(route, (req, res) => {
-    const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
-    if (req.headers.origin && !allowed)
-      return res.status(403).json({ error: 'Otillåten origin.' });
-    res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
-    return res.sendStatus(204);
-  });
-}
+app.options('/api/proxy', (req, res) => {
+  const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
+  if (req.headers.origin && !allowed) {
+    return res.status(403).json({ error: 'Otillåten origin.' });
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  return res.sendStatus(204);
+});
 
-/* ------------------  PPO PROXY ENDPOINT  ------------------ */
+app.options('/api/logs/snake-history.jsonl', (req, res) => {
+  const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
+  if (req.headers.origin && !allowed) {
+    return res.status(403).json({ error: 'Otillåten origin.' });
+  }
+  res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  return res.sendStatus(204);
+});
+
 app.post('/api/proxy', async (req, res) => {
   const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
-  if (req.headers.origin && !allowed)
+  if (req.headers.origin && !allowed) {
     return res.status(403).json({ error: 'Otillåten origin.' });
+  }
 
   const token = process.env.GROQ_API_KEY;
-  if (!token)
+  if (!token) {
     return res.status(500).json({ error: 'GROQ_API_KEY saknas i miljön.' });
+  }
 
   try {
     const { telemetry, instruction, model } = req.body ?? {};
-    if (!telemetry)
+
+    if (typeof telemetry === 'undefined') {
       return res.status(400).json({ error: 'Fältet "telemetry" saknas.' });
+    }
 
     const targetModel = resolveModelId(model);
+    const userContent = buildUserContent({ telemetry, instruction });
+
     const payload = {
       model: targetModel,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: buildUserContent({ telemetry, instruction }) }
-      ]
+        { role: 'user', content: userContent },
+      ],
     };
 
     const response = await fetch(GROQ_API_URL, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
     });
 
     const rawText = await response.text();
@@ -171,48 +153,60 @@ app.post('/api/proxy', async (req, res) => {
       return res.status(response.status).json({
         error: message,
         raw: rawText.slice(0, 2000),
-        status: response.status
+        status: response.status,
       });
     }
 
     const data = safeJsonParse(rawText);
-    if (data === null)
+    if (data === null) {
       return res.status(502).json({
         error: 'Kunde inte tolka svaret från Groq.',
         raw: rawText.slice(0, 2000),
-        status: 502
+        status: 502,
       });
+    }
 
-    return res.status(200).json({ data, raw: rawText, model: targetModel });
-  } catch (err) {
-    console.error('Proxyfel:', err);
+    return res.status(200).json({
+      data,
+      raw: rawText,
+      status: 200,
+      model: targetModel,
+    });
+  } catch (error) {
+    console.error('Proxyfel:', error);
     return res.status(500).json({
       error: 'Oväntat fel i proxyn.',
-      raw: err instanceof Error ? err.message : undefined
+      raw: error instanceof Error && error.message ? error.message : undefined,
+      status: 500,
     });
   }
 });
 
-/* ------------------  LOGGING ENDPOINT  ------------------ */
 app.post('/api/logs/snake-history.jsonl', async (req, res) => {
   const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
-  if (req.headers.origin && !allowed)
+  if (req.headers.origin && !allowed) {
     return res.status(403).json({ error: 'Otillåten origin.' });
+  }
 
   const body = req.body ?? {};
   let line = '';
-
-  if (typeof body.line === 'string' && body.line.trim()) line = body.line.trim();
-  else if (body.entry && typeof body.entry === 'object')
+  if (typeof body.line === 'string' && body.line.trim()) {
+    line = body.line.trim();
+  } else if (body.entry && typeof body.entry === 'object') {
     try {
       line = JSON.stringify(body.entry);
-    } catch {
+    } catch (err) {
       return res.status(400).json({ error: 'Kunde inte serialisera loggpost.' });
     }
+  }
 
-  if (!line) return res.status(400).json({ error: 'Saknar loggrad.' });
-  if (line.length > 200000)
+  if (!line) {
+    return res.status(400).json({ error: 'Saknar loggrad.' });
+  }
+
+  if (line.length > 200000) {
     return res.status(413).json({ error: 'Loggrad för stor.' });
+  }
 
   try {
     await appendHistoryLine(line);
@@ -223,111 +217,217 @@ app.post('/api/logs/snake-history.jsonl', async (req, res) => {
   }
 });
 
-/* ------------------  START SERVER  ------------------ */
 const port = resolvePort(process.env.PORT);
 app.listen(port, '0.0.0.0', () => {
-  console.log(`PPO Proxyserver lyssnar på port ${port}`);
+  console.log(`Proxyserver lyssnar på port ${port}`);
 });
 
-/* ------------------  HELPERS  ------------------ */
 function buildUserContent({ telemetry, instruction }) {
   const parts = [];
-  if (typeof instruction === 'string' && instruction.trim())
+  if (typeof instruction === 'string' && instruction.trim()) {
     parts.push(instruction.trim());
-  parts.push(typeof telemetry === 'string' ? telemetry : JSON.stringify(telemetry));
+  }
+
+  const telemetryPart =
+    typeof telemetry === 'string'
+      ? telemetry
+      : JSON.stringify(telemetry);
+  parts.push(telemetryPart);
+
   return parts.join('\n\n');
 }
 
 function applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet }) {
   appendVaryHeader(res, 'Origin');
-  const origin = req.headers.origin;
-  if (!origin) return { allowed: true, applied: false };
-  const norm = normalizeOrigin(origin);
-  if (!norm) return { allowed: false, applied: false };
 
-  if (allowAllOrigins) res.setHeader('Access-Control-Allow-Origin', '*');
-  else if (allowedOriginSet.has(norm)) res.setHeader('Access-Control-Allow-Origin', origin);
-  else return { allowed: false, applied: false };
+  const origin = req.headers.origin;
+  if (!origin) {
+    return { allowed: true, applied: false };
+  }
+
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) {
+    return { allowed: false, applied: false };
+  }
+
+  if (allowAllOrigins) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (allowedOriginSet.has(normalizedOrigin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else {
+    return { allowed: false, applied: false };
+  }
 
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
   return { allowed: true, applied: true };
 }
 
-function buildAllowedOriginSet(env, defaults = []) {
-  const base = Array.isArray(defaults) ? defaults : [];
-  const extra =
-    typeof env === 'string' && env.trim()
-      ? env.split(',').map(x => x.trim()).filter(Boolean)
+function buildAllowedOriginSet(envValue, defaults = []) {
+  const baseList = Array.isArray(defaults) ? defaults : [];
+  const extraList =
+    typeof envValue === 'string' && envValue.trim()
+      ? envValue
+          .split(',')
+          .map(value => value.trim())
+          .filter(Boolean)
       : [];
+
   const result = new Set();
-  for (const v of [...base, ...extra]) {
-    if (v === '*') result.add('*');
-    else {
-      const n = normalizeOrigin(v);
-      if (n) result.add(n);
+
+  for (const value of [...baseList, ...extraList]) {
+    if (value === '*') {
+      result.add('*');
+      continue;
+    }
+
+    const normalized = normalizeOrigin(value);
+    if (normalized) {
+      result.add(normalized);
     }
   }
+
   return result;
 }
 
-function normalizeOrigin(v) {
-  return typeof v === 'string' ? v.trim().replace(/\/+$/, '').toLowerCase() : '';
+function normalizeOrigin(value) {
+  if (typeof value !== 'string') {
+    return '';
+  }
+
+  return value.trim().replace(/\/+$/, '').toLowerCase();
 }
 
-function appendVaryHeader(res, val) {
-  const cur = res.getHeader('Vary');
-  if (!cur) return res.setHeader('Vary', val);
-  const arr = String(cur)
+function appendVaryHeader(res, value) {
+  const current = res.getHeader('Vary');
+  if (!current) {
+    res.setHeader('Vary', value);
+    return;
+  }
+
+  const existing = String(current)
     .split(',')
-    .map(p => p.trim())
+    .map(part => part.trim())
     .filter(Boolean);
-  if (!arr.includes(val)) {
-    arr.push(val);
-    res.setHeader('Vary', arr.join(', '));
+
+  if (!existing.includes(value)) {
+    existing.push(value);
+    res.setHeader('Vary', existing.join(', '));
   }
 }
 
-function resolveModelId(cand) {
-  const list = [cand, DEFAULT_MODEL_ID];
-  for (const c of list) {
-    if (typeof c === 'string' && c.trim()) return c.trim();
+function resolveModelId(candidate) {
+  const candidates = [candidate, DEFAULT_MODEL_ID];
+
+  for (const item of candidates) {
+    if (typeof item !== 'string') {
+      continue;
+    }
+    const trimmed = item.trim();
+    if (trimmed) {
+      return trimmed;
+    }
   }
+
   return DEFAULT_MODEL_ID;
 }
 
-function safeJsonParse(txt) {
-  if (typeof txt !== 'string' || !txt.trim()) return null;
+function safeJsonParse(text) {
+  if (typeof text !== 'string' || !text.trim()) {
+    return null;
+  }
+
   try {
-    return JSON.parse(txt);
-  } catch {
+    return JSON.parse(text);
+  } catch (error) {
+    const repaired = repairJsonSnippet(text);
+    if (repaired !== text) {
+      try {
+        return JSON.parse(repaired);
+      } catch (innerError) {
+        console.warn('Kunde inte tolka reparerad JSON-sträng', innerError, {
+          snippet: repaired.slice(0, 2000),
+        });
+      }
+    }
     return null;
   }
 }
 
+function repairJsonSnippet(snippet) {
+  if (typeof snippet !== 'string') {
+    return snippet;
+  }
+
+  let repaired = snippet;
+  let mutated = false;
+
+  const replacements = [
+    [/[“”]/g, '"'],
+    [/[‘’]/g, "'"],
+    [/([{,]\s*)'([^'\\]*?)'\s*:/g, '$1"$2":'],
+    [/([{,]\s*)([A-Za-z0-9_]+)\s*:(?=\s)/g, '$1"$2":'],
+    [/(:\s*)'([^'\\]*(?:\\.[^'\\]*)*)'/g, '$1"$2"'],
+    [/,(\s*[}\]])/g, '$1'],
+  ];
+
+  for (const [pattern, replacement] of replacements) {
+    const updated = repaired.replace(pattern, replacement);
+    if (updated !== repaired) {
+      repaired = updated;
+      mutated = true;
+    }
+  }
+
+  return mutated ? repaired : snippet;
+}
+
 function extractErrorMessage(parsed) {
-  if (!parsed || typeof parsed !== 'object') return '';
-  if (typeof parsed.error === 'string') return parsed.error;
-  if (parsed.error?.message) return parsed.error.message;
-  if (parsed.message) return parsed.message;
+  if (!parsed || typeof parsed !== 'object') {
+    return '';
+  }
+
+  if (typeof parsed.error === 'string') {
+    return parsed.error;
+  }
+
+  if (parsed.error && typeof parsed.error === 'object') {
+    if (typeof parsed.error.message === 'string') {
+      return parsed.error.message;
+    }
+    if (typeof parsed.error.error === 'string') {
+      return parsed.error.error;
+    }
+  }
+
+  if (typeof parsed.message === 'string') {
+    return parsed.message;
+  }
+
   return '';
 }
 
-function resolvePort(val) {
-  const n = Number.parseInt(val ?? '', 10);
-  return Number.isFinite(n) && n > 0 ? n : 3001;
+function resolvePort(candidate) {
+  const parsed = Number.parseInt(candidate ?? '', 10);
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return parsed;
+  }
+
+  return 3001;
 }
 
-/* ------------------  LOG ROTATION ------------------ */
 async function appendHistoryLine(line) {
   await ensureHistoryDir();
   await fs.appendFile(HISTORY_LOG_PATH, `${line}\n`);
   await rotateHistoryLog();
 }
+
 async function ensureHistoryDir() {
   const dir = path.dirname(HISTORY_LOG_PATH);
   await fs.mkdir(dir, { recursive: true });
 }
+
 async function rotateHistoryLog() {
   let stat;
   try {
@@ -336,14 +436,19 @@ async function rotateHistoryLog() {
     if (err.code === 'ENOENT') return;
     throw err;
   }
-  if (stat.size <= HISTORY_LOG_MAX_BYTES) return;
-  const backup = `${HISTORY_LOG_PATH}.1`;
+
+  if (stat.size <= HISTORY_LOG_MAX_BYTES) {
+    return;
+  }
+
+  const backupPath = `${HISTORY_LOG_PATH}.1`;
   try {
-    await fs.unlink(backup);
+    await fs.unlink(backupPath);
   } catch (err) {
     if (err.code !== 'ENOENT') throw err;
   }
-  await fs.rename(HISTORY_LOG_PATH, backup);
+
+  await fs.rename(HISTORY_LOG_PATH, backupPath);
   await fs.writeFile(HISTORY_LOG_PATH, '');
 }
 
