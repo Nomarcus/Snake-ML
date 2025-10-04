@@ -8048,10 +8048,15 @@ window.addEventListener('load',()=>{
 async function runFinalWatch() {
   console.log("🟢 Final Watch started...");
 
-  if (typeof env === 'undefined' || typeof agent === 'undefined') {
-    alert('❌ Environment or agent not found — make sure training is running.');
-    return;
-  }
+// 🔍 Try to detect environment and agent automatically
+let env = window.env || window.trainingEnv || window.baseEnv || window.vecEnv?.getEnv?.(0) || null;
+let agent = window.agent || window.trainingAgent || window.aiAgent || null;
+
+if (!env || !agent) {
+  alert('❌ Environment or agent not found — start training first.');
+  console.error('Available globals:', Object.keys(window));
+  return;
+}
 
   const prevEpsilon = agent.epsilon;
   agent.epsilon = 0.0; // deterministic test run
