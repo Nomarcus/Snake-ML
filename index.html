@@ -978,6 +978,325 @@ footer{
 </style>
 </head>
 <body>
+<script type="module" id="inline-snake-env">
+  // Inlined from src/path_helpers.js
+  function bfsPath(gridSize, snake = [], fruit) {
+    const size = Number.isFinite(gridSize) ? gridSize | 0 : 0;
+    if (size <= 0 || !fruit || typeof fruit.x !== 'number' || typeof fruit.y !== 'number') {
+      return [];
+    }
+    if (!Array.isArray(snake) || snake.length === 0) {
+      return [];
+    }
+    const head = snake[0];
+    if (typeof head?.x !== 'number' || typeof head?.y !== 'number') {
+      return [];
+    }
+    const dirs = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ];
+    const key = (x, y) => `${x},${y}`;
+    const blocked = new Set();
+    for (const segment of snake) {
+      if (segment && Number.isFinite(segment.x) && Number.isFinite(segment.y)) {
+        blocked.add(key(segment.x, segment.y));
+      }
+    }
+    const visited = new Set();
+    const prev = new Map();
+    const queue = [{ x: head.x, y: head.y }];
+    let qIndex = 0;
+    visited.add(key(head.x, head.y));
+
+    while (qIndex < queue.length) {
+      const current = queue[qIndex++];
+      const currentKey = key(current.x, current.y);
+      if (current.x === fruit.x && current.y === fruit.y) {
+        const path = [{ x: current.x, y: current.y }];
+        let cursorKey = currentKey;
+        while (prev.has(cursorKey)) {
+          const parent = prev.get(cursorKey);
+          cursorKey = key(parent.x, parent.y);
+          path.unshift({ x: parent.x, y: parent.y });
+        }
+        return path;
+      }
+      for (const [dx, dy] of dirs) {
+        const nx = current.x + dx;
+        const ny = current.y + dy;
+        if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
+        const nextKey = key(nx, ny);
+        if (visited.has(nextKey)) continue;
+        if (blocked.has(nextKey) && !(nx === fruit.x && ny === fruit.y)) continue;
+        visited.add(nextKey);
+        prev.set(nextKey, { x: current.x, y: current.y });
+        queue.push({ x: nx, y: ny });
+      }
+    }
+    return [];
+  }
+
+  function bfsDistance(gridSize, snake = [], fruit) {
+    const path = bfsPath(gridSize, snake, fruit);
+    return path.length ? path.length - 1 : -1;
+  }
+
+  function generateHamiltonCycle(size) {
+    const n = Number.isFinite(size) ? size | 0 : 0;
+    if (n < 2 || n % 2 !== 0) {
+      return [];
+    }
+    if (n === 2) {
+      return [
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
+        { x: 1, y: 1 },
+        { x: 0, y: 1 },
+      ];
+    }
+    const cycle = [];
+    for (let x = 0; x < n; x++) {
+      cycle.push({ x, y: 0 });
+    }
+    for (let y = 1; y < n; y++) {
+      cycle.push({ x: n - 1, y });
+    }
+    for (let x = n - 2; x >= 0; x--) {
+      cycle.push({ x, y: n - 1 });
+    }
+    for (let y = n - 2; y >= 2; y--) {
+      cycle.push({ x: 0, y });
+    }
+    const inner = generateHamiltonCycle(n - 2);
+    for (let i = inner.length - 1; i >= 0; i--) {
+      const point = inner[i];
+      cycle.push({ x: point.x + 1, y: point.y + 1 });
+    }
+    cycle.push({ x: 0, y: 1 });
+    return cycle;
+  }
+
+  const LOOP_FACTOR = 6;
+
+  function toFloatState(state) {
+    if (state instanceof Float32Array) return state;
+    if (ArrayBuffer.isView(state)) return Float32Array.from(state);
+    if (Array.isArray(state)) return Float32Array.from(state);
+    if (state && typeof state.length === 'number') return Float32Array.from(state);
+    return new Float32Array();
+  }
+
+  function normalizeDirection(dir) {
+    const dx = Number.isFinite(dir?.x) ? Math.sign(dir.x) : 1;
+    const dy = Number.isFinite(dir?.y) ? Math.sign(dir.y) : 0;
+    if (dx === 0 && dy === 0) return { x: 1, y: 0 };
+    if (![ -1, 0, 1 ].includes(dx) || ![ -1, 0, 1 ].includes(dy)) {
+      return { x: 1, y: 0 };
+    }
+    return { x: dx, y: dy };
+  }
+
+  function boardSize(env) {
+    const cols = Number.isFinite(env?.cols) ? env.cols | 0 : 0;
+    const rows = Number.isFinite(env?.rows) ? env.rows | 0 : 0;
+    if (cols && rows) return Math.max(cols, rows);
+    return cols || rows || 0;
+  }
+
+  function nextStepAction(dir, head, path) {
+    if (!Array.isArray(path) || path.length < 2) return null;
+    if (!head || !Number.isFinite(head.x) || !Number.isFinite(head.y)) return null;
+    const next = path[1];
+    if (!next || !Number.isFinite(next.x) || !Number.isFinite(next.y)) return null;
+    const dx = next.x - head.x;
+    const dy = next.y - head.y;
+    const forward = dir;
+    const left = { x: -forward.y, y: forward.x };
+    const right = { x: forward.y, y: -forward.x };
+    if (dx === forward.x && dy === forward.y) return 0;
+    if (dx === left.x && dy === left.y) return 1;
+    if (dx === right.x && dy === right.y) return 2;
+    return null;
+  }
+
+  function planTailFollowAction(env, { debug = false } = {}) {
+    const snake = Array.isArray(env?.snake) ? env.snake : null;
+    if (!snake || snake.length === 0) return null;
+    const size = boardSize(env);
+    if (!size) return null;
+    const head = snake[0];
+    if (!head) return null;
+    const dir = normalizeDirection(env?.dir);
+
+    const fruit = env?.fruit;
+    const hasFruit = fruit && Number.isFinite(fruit.x) && Number.isFinite(fruit.y);
+    if (hasFruit) {
+      const pathToFruit = bfsPath(size, snake, fruit);
+      const fruitAction = nextStepAction(dir, head, pathToFruit);
+      if (fruitAction !== null) {
+        return { type: 'fruit', action: fruitAction, path: pathToFruit };
+      }
+    }
+
+    const tail = snake[snake.length - 1];
+    if (!tail || !Number.isFinite(tail.x) || !Number.isFinite(tail.y)) return null;
+    const pathToTail = bfsPath(size, snake, tail);
+    const tailAction = nextStepAction(dir, head, pathToTail);
+    if (tailAction !== null) {
+      if (debug && typeof console !== 'undefined' && typeof console.log === 'function') {
+        console.log('🐍 Following tail for safety');
+      }
+      return { type: 'tail', action: tailAction, path: pathToTail };
+    }
+    return null;
+  }
+
+  function selectAction(agent, state, train) {
+    if (!agent) return 0;
+    try {
+      if (!train && typeof agent.greedyAction === 'function') {
+        return agent.greedyAction(state);
+      }
+      if (typeof agent.act === 'function') {
+        return agent.act(state);
+      }
+      if (typeof agent.greedyAction === 'function') {
+        return agent.greedyAction(state);
+      }
+    } catch (err) {
+      console.warn('[snake-env] Failed to select action', err);
+    }
+    return 0;
+  }
+
+  async function renderStep(env, before, options) {
+    if (!options.render) return;
+    if (typeof window === 'undefined') return;
+    const enqueue = window.enqueueRenderFrame;
+    const snapshot = window.snapshotEnv;
+    if (typeof enqueue !== 'function' || typeof snapshot !== 'function') return;
+    const frameMs = options.frameMs ?? window.playbackModes?.watch?.frameMs ?? 100;
+    const queueTarget = options.queueTarget ?? window.playbackModes?.watch?.queueTarget ?? 60;
+    try {
+      const after = snapshot(env);
+      enqueue(before ?? after, after, frameMs);
+      const waitCapacity = window.waitForRenderCapacity;
+      if (typeof waitCapacity === 'function') {
+        await waitCapacity(queueTarget);
+      }
+    } catch (err) {
+      console.warn('[snake-env] Failed to enqueue render frame', err);
+    }
+  }
+
+  async function finishRender(options) {
+    if (!options.render) return;
+    if (typeof window === 'undefined') return;
+    const waitIdle = window.waitForRenderIdle;
+    if (typeof waitIdle === 'function') {
+      try {
+        await waitIdle();
+      } catch (err) {
+        console.warn('[snake-env] Failed waiting for render idle', err);
+      }
+    }
+  }
+
+  async function runEpisode(env, agent, options = {}) {
+    if (!env) throw new Error('[snake-env] Environment is required');
+    if (!agent) throw new Error('[snake-env] Agent is required');
+    const { train = true, render = false } = options;
+    const tailFollowFallback = options.tailFollowFallback ?? !train;
+    const debugTailFallback = options.debugTailFallback ?? false;
+    const cols = env.cols ?? 20;
+    const rows = env.rows ?? 20;
+    const maxSteps = Number.isFinite(options.maxSteps)
+      ? options.maxSteps
+      : Math.max(50, cols * rows * LOOP_FACTOR);
+
+    let state = toFloatState(env.reset());
+    let totalReward = 0;
+    let fruitEaten = 0;
+    let steps = 0;
+    let crashType = 'none';
+
+    if (render && typeof window !== 'undefined' && typeof window.setImmediateState === 'function') {
+      try {
+        window.setImmediateState(env);
+      } catch (err) {
+        console.warn('[snake-env] Failed to set immediate render state', err);
+      }
+    }
+
+    while (steps < maxSteps) {
+      let before = null;
+      if (render && typeof window !== 'undefined' && typeof window.snapshotEnv === 'function') {
+        try {
+          before = window.snapshotEnv(env);
+        } catch (err) {
+          console.warn('[snake-env] Failed to snapshot environment', err);
+        }
+      }
+
+      let action = selectAction(agent, state, train);
+      if (tailFollowFallback) {
+        const fallback = planTailFollowAction(env, { debug: debugTailFallback });
+        if (fallback?.type === 'tail' && fallback.action !== null) {
+          action = fallback.action;
+        }
+      }
+      const result = env.step(action) ?? {};
+      const nextState = toFloatState(result.state);
+      const reward = Number(result.reward ?? 0);
+      const done = Boolean(result.done);
+      const info = result.info ?? {};
+
+      totalReward += reward;
+      if (info.ateFruit) fruitEaten += 1;
+      steps += 1;
+
+      await renderStep(env, before, { ...options, render });
+
+      state = nextState;
+      if (done) {
+        crashType = info.crash ?? 'done';
+        break;
+      }
+
+      if (!train && typeof tf !== 'undefined' && typeof tf.nextFrame === 'function') {
+        await tf.nextFrame();
+      }
+    }
+
+    if (steps >= maxSteps && crashType === 'none') {
+      crashType = 'loop';
+    }
+
+    await finishRender({ render });
+
+    return {
+      totalReward,
+      fruitEaten,
+      steps,
+      crashType,
+    };
+  }
+
+  if (typeof window !== 'undefined') {
+    window.runEpisode = runEpisode;
+    window.snakeEnv = { runEpisode };
+  }
+
+  try { if (typeof SnakeEnv !== 'undefined') window.SnakeEnv = SnakeEnv; } catch (e) {}
+  try { if (typeof SnakeEnvironment !== 'undefined') window.SnakeEnvironment = SnakeEnvironment; } catch (e) {}
+  if (typeof window !== 'undefined') {
+    if (!window.SnakeEnv && window.SnakeEnvironment) window.SnakeEnv = window.SnakeEnvironment;
+    if (!window.SnakeEnvironment && window.SnakeEnv) window.SnakeEnvironment = window.SnakeEnv;
+  }
+</script>
 <header>
   <div class="header-inner">
     <div class="logo"><span class="logo-text">Snake Simulation</span></div>
@@ -2141,6 +2460,12 @@ class VecSnakeEnv{
     }
     return {nextStates,rewards,dones,ateFruit};
   }
+}
+
+if(typeof window!=='undefined'){
+  window.SnakeEnv=window.SnakeEnv??SnakeEnv;
+  window.SnakeEnvironment=window.SnakeEnvironment??SnakeEnv;
+  window.VecSnakeEnv=window.VecSnakeEnv??VecSnakeEnv;
 }
 
 /* ---------------- Replay buffer helpers ---------------- */
@@ -7705,223 +8030,6 @@ window.addEventListener('load',()=>{
 });
 </script>
 
-<!-- Snake Environment integrated inline -->
-<script type="module">
-  // === SNAKE ENVIRONMENT ===
-  const LOOP_FACTOR = 6;
-
-  function toFloatState(state) {
-    if (state instanceof Float32Array) return state;
-    if (ArrayBuffer.isView(state)) return Float32Array.from(state);
-    if (Array.isArray(state)) return Float32Array.from(state);
-    if (state && typeof state.length === 'number') return Float32Array.from(state);
-    return new Float32Array();
-  }
-
-  function normalizeDirection(dir) {
-    const dx = Number.isFinite(dir?.x) ? Math.sign(dir.x) : 1;
-    const dy = Number.isFinite(dir?.y) ? Math.sign(dir.y) : 0;
-    if (dx === 0 && dy === 0) return { x: 1, y: 0 };
-    if (![ -1, 0, 1 ].includes(dx) || ![ -1, 0, 1 ].includes(dy)) {
-      return { x: 1, y: 0 };
-    }
-    return { x: dx, y: dy };
-  }
-
-  function boardSize(env) {
-    const cols = Number.isFinite(env?.cols) ? env.cols | 0 : 0;
-    const rows = Number.isFinite(env?.rows) ? env.rows | 0 : 0;
-    if (cols && rows) return Math.max(cols, rows);
-    return cols || rows || 0;
-  }
-
-  function nextStepAction(dir, head, path) {
-    if (!Array.isArray(path) || path.length < 2) return null;
-    if (!head || !Number.isFinite(head.x) || !Number.isFinite(head.y)) return null;
-    const next = path[1];
-    if (!next || !Number.isFinite(next.x) || !Number.isFinite(next.y)) return null;
-    const dx = next.x - head.x;
-    const dy = next.y - head.y;
-    const forward = dir;
-    const left = { x: -forward.y, y: forward.x };
-    const right = { x: forward.y, y: -forward.x };
-    if (dx === forward.x && dy === forward.y) return 0;
-    if (dx === left.x && dy === left.y) return 1;
-    if (dx === right.x && dy === right.y) return 2;
-    return null;
-  }
-
-  function planTailFollowAction(env, { debug = false } = {}) {
-    const snake = Array.isArray(env?.snake) ? env.snake : null;
-    if (!snake || snake.length === 0) return null;
-    const size = boardSize(env);
-    if (!size) return null;
-    const head = snake[0];
-    if (!head) return null;
-    const dir = normalizeDirection(env?.dir);
-
-    const fruit = env?.fruit;
-    const hasFruit = fruit && Number.isFinite(fruit.x) && Number.isFinite(fruit.y);
-    if (hasFruit) {
-      const pathToFruit = bfsPath(size, snake, fruit);
-      const fruitAction = nextStepAction(dir, head, pathToFruit);
-      if (fruitAction !== null) {
-        return { type: 'fruit', action: fruitAction, path: pathToFruit };
-      }
-    }
-
-    const tail = snake[snake.length - 1];
-    if (!tail || !Number.isFinite(tail.x) || !Number.isFinite(tail.y)) return null;
-    const pathToTail = bfsPath(size, snake, tail);
-    const tailAction = nextStepAction(dir, head, pathToTail);
-    if (tailAction !== null) {
-      if (debug && typeof console !== 'undefined' && typeof console.log === 'function') {
-        console.log('🐍 Following tail for safety');
-      }
-      return { type: 'tail', action: tailAction, path: pathToTail };
-    }
-    return null;
-  }
-
-  function selectAction(agent, state, train) {
-    if (!agent) return 0;
-    try {
-      if (!train && typeof agent.greedyAction === 'function') {
-        return agent.greedyAction(state);
-      }
-      if (typeof agent.act === 'function') {
-        return agent.act(state);
-      }
-      if (typeof agent.greedyAction === 'function') {
-        return agent.greedyAction(state);
-      }
-    } catch (err) {
-      console.warn('[snake-env] Failed to select action', err);
-    }
-    return 0;
-  }
-
-  async function renderStep(env, before, options) {
-    if (!options.render) return;
-    if (typeof window === 'undefined') return;
-    const enqueue = window.enqueueRenderFrame;
-    const snapshot = window.snapshotEnv;
-    if (typeof enqueue !== 'function' || typeof snapshot !== 'function') return;
-    const frameMs = options.frameMs ?? window.playbackModes?.watch?.frameMs ?? 100;
-    const queueTarget = options.queueTarget ?? window.playbackModes?.watch?.queueTarget ?? 60;
-    try {
-      const after = snapshot(env);
-      enqueue(before ?? after, after, frameMs);
-      const waitCapacity = window.waitForRenderCapacity;
-      if (typeof waitCapacity === 'function') {
-        await waitCapacity(queueTarget);
-      }
-    } catch (err) {
-      console.warn('[snake-env] Failed to enqueue render frame', err);
-    }
-  }
-
-  async function finishRender(options) {
-    if (!options.render) return;
-    if (typeof window === 'undefined') return;
-    const waitIdle = window.waitForRenderIdle;
-    if (typeof waitIdle === 'function') {
-      try {
-        await waitIdle();
-      } catch (err) {
-        console.warn('[snake-env] Failed waiting for render idle', err);
-      }
-    }
-  }
-
-  async function runEpisode(env, agent, options = {}) {
-    if (!env) throw new Error('[snake-env] Environment is required');
-    if (!agent) throw new Error('[snake-env] Agent is required');
-    const { train = true, render = false } = options;
-    const tailFollowFallback = options.tailFollowFallback ?? !train;
-    const debugTailFallback = options.debugTailFallback ?? false;
-    const cols = env.cols ?? 20;
-    const rows = env.rows ?? 20;
-    const maxSteps = Number.isFinite(options.maxSteps)
-      ? options.maxSteps
-      : Math.max(50, cols * rows * LOOP_FACTOR);
-
-    let state = toFloatState(env.reset());
-    let totalReward = 0;
-    let fruitEaten = 0;
-    let steps = 0;
-    let crashType = 'none';
-
-    if (render && typeof window !== 'undefined' && typeof window.setImmediateState === 'function') {
-      try {
-        window.setImmediateState(env);
-      } catch (err) {
-        console.warn('[snake-env] Failed to set immediate render state', err);
-      }
-    }
-
-    while (steps < maxSteps) {
-      let before = null;
-      if (render && typeof window !== 'undefined' && typeof window.snapshotEnv === 'function') {
-        try {
-          before = window.snapshotEnv(env);
-        } catch (err) {
-          console.warn('[snake-env] Failed to snapshot environment', err);
-        }
-      }
-
-      let action = selectAction(agent, state, train);
-      if (tailFollowFallback) {
-        const fallback = planTailFollowAction(env, { debug: debugTailFallback });
-        if (fallback?.type === 'tail' && fallback.action !== null) {
-          action = fallback.action;
-        }
-      }
-      const result = env.step(action) ?? {};
-      const nextState = toFloatState(result.state);
-      const reward = Number(result.reward ?? 0);
-      const done = Boolean(result.done);
-      const info = result.info ?? {};
-
-      totalReward += reward;
-      if (info.ateFruit) fruitEaten += 1;
-      steps += 1;
-
-      await renderStep(env, before, { ...options, render });
-
-      state = nextState;
-      if (done) {
-        crashType = info.crash ?? 'done';
-        break;
-      }
-
-      if (!train && typeof tf !== 'undefined' && typeof tf.nextFrame === 'function') {
-        await tf.nextFrame();
-      }
-    }
-
-    if (steps >= maxSteps && crashType === 'none') {
-      crashType = 'loop';
-    }
-
-    await finishRender({ render });
-
-    return {
-      totalReward,
-      fruitEaten,
-      steps,
-      crashType,
-    };
-  }
-
-  window.runEpisode = runEpisode;
-  window.snakeEnv = { runEpisode };
-  if (typeof window !== 'undefined') {
-    window.SnakeEnv = window.SnakeEnv ?? SnakeEnv;
-    window.SnakeEnvironment = window.SnakeEnvironment ?? SnakeEnv;
-  }
-</script>
-
 <!-- === FINAL WATCH TEST BUTTON === -->
 <div id="finalWatchUI" style="text-align:center;margin:1em 0;">
   <button id="runFinalWatchBtn"
@@ -7935,8 +8043,15 @@ window.addEventListener('load',()=>{
 
 <!-- === FINAL WATCH – robust ε=0 evaluator === -->
 <script type="module">
+console.assert(typeof window.SnakeEnv==='function'||typeof window.SnakeEnvironment==='function',
+  'SnakeEnv not inlined: expected window.SnakeEnv or window.SnakeEnvironment');
+
 async function runFinalWatch({
-  makeEnv, makeAgent, agent,
+  makeEnv=(window.createEnv
+    ? window.createEnv
+    : (() => new (window.SnakeEnv || window.SnakeEnvironment)())),
+  makeAgent,
+  agent,
   episodes=100, maxSteps=null,
   seed=1337, fromCheckpoint=true,
   checkpointPath=null, baseEnv=null, onProgress=null,
@@ -8027,18 +8142,17 @@ async function runFinalWatch({
 }
 
 // Bind test button
-const btn=document.getElementById('runFinalWatchBtn');
-if(btn){
-  btn.addEventListener('click',()=>runFinalWatch({
-    makeEnv:window.createEnv??(()=>new SnakeEnvironment()),
-    makeAgent:window.createAgent??null,
-    agent:window.agent??null,
-    baseEnv:window.trainingEnv??null,
-    episodes:20,  // shorter test run
-    seed:20251004,
-    fromCheckpoint:true
-  }));
-}
+document.getElementById('runFinalWatchBtn')?.addEventListener('click',()=>runFinalWatch({
+  makeEnv:(window.createEnv
+    ? window.createEnv
+    : (()=>new (window.SnakeEnv||window.SnakeEnvironment)())),
+  makeAgent:window.createAgent??null,
+  agent:window.agent??null,
+  baseEnv:window.trainingEnv??null,
+  episodes:20,
+  seed:20251004,
+  fromCheckpoint:true
+}));
 </script>
 </body>
 </html>
