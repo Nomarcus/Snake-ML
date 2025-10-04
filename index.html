@@ -1597,7 +1597,7 @@ footer{
 <script type="module">
 import {createAITuner} from './hf-tuner.js';
 import {bfsDistance, bfsPath, generateHamiltonCycle} from './src/path_helpers.js';
-import {Chart, registerables as chartRegisterables} from 'https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.esm.js';
+import Chart from 'https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js';
 
 Chart.register(...chartRegisterables);
 Chart.defaults.color='#cdd4ff';
