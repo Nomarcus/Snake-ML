@@ -8046,100 +8046,95 @@ window.addEventListener('load',()=>{
 console.assert(typeof window.SnakeEnv==='function'||typeof window.SnakeEnvironment==='function',
   'SnakeEnv not inlined: expected window.SnakeEnv or window.SnakeEnvironment');
 
-async function runFinalWatch({
-  makeEnv=(window.createEnv
-    ? window.createEnv
-    : (() => new (window.SnakeEnv || window.SnakeEnvironment)())),
-  makeAgent,
-  agent,
-  episodes=100, maxSteps=null,
-  seed=1337, fromCheckpoint=true,
-  checkpointPath=null, baseEnv=null, onProgress=null,
-}={}) {
-  const evalAgent = agent ?? (typeof makeAgent==='function'?makeAgent():null);
-  if(!evalAgent) throw new Error('FinalWatch: No agent provided.');
+<!-- ✅ Final Watch integrated directly into index.html -->
+<script>
+async function runFinalWatch() {
+  console.log("🟢 Final Watch started...");
 
-  if(fromCheckpoint){
-    try{
-      if(checkpointPath && evalAgent.loadCheckpoint)
-        await evalAgent.loadCheckpoint(checkpointPath);
-      else if(evalAgent.tryAutoLoad) await evalAgent.tryAutoLoad();
-      else if(evalAgent.loadLatest) await evalAgent.loadLatest();
-    }catch(e){console.warn('Checkpoint load failed',e);}
+  if (typeof env === 'undefined' || typeof agent === 'undefined') {
+    alert('❌ Environment or agent not found — make sure training is running.');
+    return;
   }
 
-  if(evalAgent.setEvalMode) evalAgent.setEvalMode(true);
-  if(evalAgent.freezeTraining) evalAgent.freezeTraining(true);
+  const prevEpsilon = agent.epsilon;
+  agent.epsilon = 0.0; // deterministic test run
 
-  const policy=(s)=>{
-    if(evalAgent.predictQ){
-      const q=evalAgent.predictQ(s);let bi=0,bv=-1e9;
-      for(let i=0;i<q.length;i++) if(q[i]>bv){bv=q[i];bi=i;}
-      return bi;
+  let totalFruit = 0, totalReward = 0, totalSteps = 0, totalCrashes = 0;
+  const evalEpisodes = 10;
+
+  for (let ep = 0; ep < evalEpisodes; ep++) {
+    let done = false, rewardSum = 0, fruitCount = 0, step = 0;
+
+    env.reset();
+    while (!done && step < env.maxSteps) {
+      const state = env.getState();
+      const action = agent.act(state); // no exploration
+      const { reward, done: finished } = env.step(action);
+      rewardSum += reward;
+      step++;
+
+      if (reward > 0) fruitCount++;
+      done = finished;
     }
-    return evalAgent.act?evalAgent.act(s,{epsilon:0}):0;
-  };
 
-  const cloneEnv=()=>{
-    const e=makeEnv?makeEnv():null;
-    if(!e) throw new Error('makeEnv() required');
-    if(baseEnv){
-      if(baseEnv.rewardConfig) e.rewardConfig=JSON.parse(JSON.stringify(baseEnv.rewardConfig));
-      if(baseEnv.gridSize) e.gridSize=baseEnv.gridSize;
-      if(baseEnv.maxSteps) e.maxSteps=baseEnv.maxSteps;
-    }
-    if(e.seed) e.seed(seed);
-    return e;
-  };
-
-  let fruits=0,rewardSum=0,stepsSum=0,wall=0,self=0,loop=0;
-  for(let ep=0;ep<episodes;ep++){
-    const env=cloneEnv();let f=0,r=0,s=0,cr=false,ct=null;
-    const hook=(o,e,fn)=>{if(o?.on)o.on(e,fn);else if(o?.addEventListener)o.addEventListener(e,fn);};
-    hook(env,'fruit',()=>f++); hook(env,'crash',t=>{cr=true;ct=t;});
-
-    let st=env.reset?.()??env.init?.()??env.getState?.();
-    if(!st){const d=(evalAgent.stateSize??evalAgent.sDim??128)|0;st=new Array(d).fill(0);}
-    const lim=(maxSteps??env.maxSteps??1000)|0;
-
-    for(let t=0;t<lim;t++){
-      const a=policy(st);
-      const tr=env.step(a);
-      const rw=Number(tr?.reward??0); r+=rw; s++;
-      if(rw>0) f++;
-      st=tr?.nextState??env.getState?.()??st;
-      if(tr?.done){cr|=!!tr.info?.crash;ct=ct||tr.info?.crash;break;}
-    }
-    if(!f&&env.fruitEaten) f=env.fruitEaten;
-    if(!cr&&env.lastCrashType){cr=true;ct=env.lastCrashType;}
-    if(cr){
-      const t=String(ct||'').toLowerCase();
-      if(t.includes('wall')) wall++; else if(t.match(/self|tail|body/)) self++;
-      else if(t.includes('loop')) loop++; else if(r<-50) wall++; else self++;
-    }
-    fruits+=f; rewardSum+=r; stepsSum+=s;
+    totalFruit += fruitCount;
+    totalReward += rewardSum;
+    totalSteps += step;
+    if (env.selfCrashCount || env.wallCrashCount) totalCrashes++;
   }
 
-  const res={
-    episodes,
-    avgFruit:+(fruits/episodes).toFixed(4),
-    avgReward:+(rewardSum/episodes).toFixed(4),
-    avgSteps:+(stepsSum/episodes).toFixed(4),
-    wallRate:+(wall/episodes).toFixed(4),
-    selfRate:+(self/episodes).toFixed(4),
-    loopRate:+(loop/episodes).toFixed(4),
-    timestamp:new Date().toISOString().replace('T',' ').slice(0,19)
-  };
+  // Restore epsilon
+  agent.epsilon = prevEpsilon;
 
-  document.getElementById('finalWatchSummary').textContent =
-    `🍎 ${res.avgFruit}  💰 ${res.avgReward}  🪜 ${res.avgSteps}  🧱 ${res.wallRate*100}% wall  🐍 ${res.selfRate*100}% self`;
+  const avgFruit = (totalFruit / evalEpisodes).toFixed(2);
+  const avgReward = (totalReward / evalEpisodes).toFixed(2);
+  const avgSteps = (totalSteps / evalEpisodes).toFixed(0);
 
-  const blob=new Blob([JSON.stringify(res,null,2)],{type:'application/json'});
-  const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
-  a.download='final-watch-results.json'; a.click(); URL.revokeObjectURL(a.href);
-  console.log('Final Watch Result:',res);
-  return res;
+  console.log(`📊 Final Watch Summary:
+  Fruit avg: ${avgFruit}
+  Reward avg: ${avgReward}
+  Steps avg: ${avgSteps}
+  Crashes: ${totalCrashes}`);
+
+  // 🔹 Display overlay
+  let overlay = document.getElementById('finalWatchOverlay');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'finalWatchOverlay';
+    overlay.style.position = 'fixed';
+    overlay.style.bottom = '20px';
+    overlay.style.right = '20px';
+    overlay.style.background = 'rgba(0,0,0,0.75)';
+    overlay.style.color = '#0f0';
+    overlay.style.fontFamily = 'monospace';
+    overlay.style.padding = '12px 18px';
+    overlay.style.borderRadius = '8px';
+    overlay.style.zIndex = '9999';
+    document.body.appendChild(overlay);
+  }
+
+  overlay.innerHTML = `
+    <b>📈 FINAL WATCH (ε=0)</b><br>
+    🍎 Fruit avg: ${avgFruit}<br>
+    💰 Reward avg: ${avgReward}<br>
+    🐍 Steps avg: ${avgSteps}<br>
+    💥 Crashes: ${totalCrashes}
+  `;
+  setTimeout(() => overlay.remove(), 8000);
 }
+
+// 🔘 Attach to button
+document.addEventListener('DOMContentLoaded', () => {
+  const btn = document.getElementById('finalWatchBtn');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      runFinalWatch().catch(err => console.error('Final Watch error:', err));
+    });
+    console.log('✅ Final Watch ready');
+  } else {
+    console.warn('⚠️ No #finalWatchBtn found');
+  }
+});
 
 // Bind test button
 document.getElementById('runFinalWatchBtn')?.addEventListener('click',()=>runFinalWatch({
