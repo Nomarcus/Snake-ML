@@ -5290,7 +5290,7 @@ function updateBadgeMetrics(){
     ui.epsReadout.textContent='—';
   }
   ui.epsStartReadout.textContent=(+ui.epsStart.value).toFixed(2);
-  ui.epsEndReadout.textContent=(+ui.epsEnd.value).toFixed(2);
+  ui.epsEndReadout.textContent=(+ui.epsEnd.value).toFixed(4);
   ui.epsDecayReadout.textContent=`${(+ui.epsDecay.value)|0}`;
   ui.batchReadout.textContent=`${(+ui.batchSize.value)|0}`;
   ui.bufferReadout.textContent=`${(+ui.bufferSize.value)|0}`;
