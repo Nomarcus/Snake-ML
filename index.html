@@ -8328,12 +8328,12 @@ window.addEventListener('load',()=>{
   }
 
   function waitForAgentAndBindButton(){
-    const finalWatchBtn = document.getElementById('watchFinalBtn')
-      || document.getElementById('runFinalWatchBtn');
-    if(!finalWatchBtn) return;
+    const btn = document.getElementById('watchFinalBtn');
+    const btn = document.getElementById('runFinalWatchBtn');
+    if(!btn) return;
     const summaryEl = document.getElementById('finalWatchSummary');
-    finalWatchBtn.disabled = true;
-    finalWatchBtn.textContent = '⌛ Final Watch väntar på agent...';
+    btn.disabled = true;
+    btn.textContent = '⌛ Final Watch väntar på agent...';
     if(summaryEl){
       summaryEl.textContent = 'Starta träningen för att aktivera Final Watch.';
     }
@@ -8341,11 +8341,11 @@ window.addEventListener('load',()=>{
     const interval = setInterval(() => {
       if(detectAgent()){
         clearInterval(interval);
-        if(finalWatchBtn.dataset.finalWatchBound === 'true') return;
-        finalWatchBtn.dataset.finalWatchBound = 'true';
-        finalWatchBtn.disabled = false;
-        finalWatchBtn.textContent = '▶️ Final Watch · 50 episoder';
-        finalWatchBtn.addEventListener('click', () => runFinalWatch().catch(err => console.error('Final Watch fel:', err)));
+        if(btn.dataset.finalWatchBound === 'true') return;
+        btn.dataset.finalWatchBound = 'true';
+        btn.disabled = false;
+        btn.textContent = '▶️ Final Watch · 50 episoder';
+        btn.addEventListener('click', () => runFinalWatch().catch(err => console.error('Final Watch fel:', err)));
         if(summaryEl){
           summaryEl.textContent = 'Klicka för att köra 50 deterministiska tester.';
         }
