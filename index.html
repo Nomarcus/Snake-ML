@@ -1013,6 +1013,7 @@ footer{
       <button id="btnPause" class="secondary">⏸ Pause</button>
       <button id="btnStep" class="secondary">Step one episode</button>
       <button id="btnWatch" class="secondary">Watch</button>
+      <button id="watchFinalBtn" class="secondary btn accent">🏁 Final Watch</button>
       <button id="btnReset" class="secondary">Reset</button>
     </div>
     <div class="controls secondary">
@@ -1681,6 +1682,7 @@ footer{
 <script type="module">
 import {createAITuner} from './hf-tuner.js';
 import {bfsDistance, bfsPath, generateHamiltonCycle} from './src/path_helpers.js';
+import {runFinalWatch} from './final-watch.js';
 
 const DEBUG_LOG=false;
 
@@ -4082,6 +4084,7 @@ const ui={
   btnPause:document.getElementById('btnPause'),
   btnStep:document.getElementById('btnStep'),
   btnWatch:document.getElementById('btnWatch'),
+  watchFinalBtn:document.getElementById('watchFinalBtn'),
   btnReset:document.getElementById('btnReset'),
   btnCheckpointToggle:document.getElementById('btnCheckpointToggle'),
   btnSave:document.getElementById('btnSave'),
@@ -4984,6 +4987,9 @@ function bindUI(){
   ui.btnPause.addEventListener('click',stopTraining);
   ui.btnStep.addEventListener('click',async()=>{ await playSingleEpisode(); });
   ui.btnWatch.addEventListener('click',watchSmoothEpisode);
+  ui.watchFinalBtn?.addEventListener('click',()=>{
+    runFinalWatch(agent, env, 100);
+  });
   ui.btnToggleLiveView?.addEventListener('click',()=>{
     setLiveViewHidden(!liveViewHidden);
   });
