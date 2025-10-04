@@ -8042,12 +8042,10 @@ window.addEventListener('load',()=>{
 </div>
 
 <!-- === FINAL WATCH – robust ε=0 evaluator === -->
-<script type="module">
+<script>
 console.assert(typeof window.SnakeEnv==='function'||typeof window.SnakeEnvironment==='function',
   'SnakeEnv not inlined: expected window.SnakeEnv or window.SnakeEnvironment');
 
-<!-- ✅ Final Watch integrated directly into index.html -->
-<script>
 async function runFinalWatch() {
   console.log("🟢 Final Watch started...");
 
@@ -8064,7 +8062,6 @@ async function runFinalWatch() {
 
   for (let ep = 0; ep < evalEpisodes; ep++) {
     let done = false, rewardSum = 0, fruitCount = 0, step = 0;
-
     env.reset();
     while (!done && step < env.maxSteps) {
       const state = env.getState();
@@ -8072,11 +8069,9 @@ async function runFinalWatch() {
       const { reward, done: finished } = env.step(action);
       rewardSum += reward;
       step++;
-
       if (reward > 0) fruitCount++;
       done = finished;
     }
-
     totalFruit += fruitCount;
     totalReward += rewardSum;
     totalSteps += step;
@@ -8123,18 +8118,19 @@ async function runFinalWatch() {
   setTimeout(() => overlay.remove(), 8000);
 }
 
-// 🔘 Attach to button
+// 🔘 Attach to test button
 document.addEventListener('DOMContentLoaded', () => {
-  const btn = document.getElementById('finalWatchBtn');
+  const btn = document.getElementById('runFinalWatchBtn');
   if (btn) {
     btn.addEventListener('click', () => {
       runFinalWatch().catch(err => console.error('Final Watch error:', err));
     });
     console.log('✅ Final Watch ready');
   } else {
-    console.warn('⚠️ No #finalWatchBtn found');
+    console.warn('⚠️ No #runFinalWatchBtn found');
   }
 });
+</script>
 
 // Bind test button
 document.getElementById('runFinalWatchBtn')?.addEventListener('click',()=>runFinalWatch({
