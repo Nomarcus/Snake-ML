@@ -6,6 +6,7 @@ Refactored reinforcement learning playground for the Snake environment with supp
 
 - **Vectorised environments** – `VecSnakeEnv` runs multiple `SnakeEnv` instances in parallel and feeds a shared replay buffer.
 - **AutoTrain mode** – adaptive scheduler tunes ε-greedy exploration, learning rate, PER hyperparameters, and reward weights within UI slider bounds. Curriculum automatically scales the board from 10×10 up to 20×20 as performance improves.
+- **Auto-PPO controller** – browser UI ships with an inline Auto-PPO brain that stages PPO hyperparameters and reward weights automatically while persisting state and logging transitions.
 - **Manual mode** – keeps fixed hyperparameters but allows selecting the number of parallel environments.
 - **Disk guardrails** – checkpoints and logs honour interval, cooldown, retention and disk size caps with atomic writes and automatic pruning.
 - **Evaluations & rollback** – lightweight greedy evaluations every 2000 episodes, best-model retention, and rollback on catastrophic regression.
@@ -78,6 +79,14 @@ Additional knobs map directly to hyperparameters: `--batchSize`, `--bufferSize`,
 - Replay buffer is truncated by 50% of the oldest transitions when the board size increases to promote rapid adaptation.
 - Evaluations run every 2000 episodes; new best models require at least +5 fruits and +2 % improvement with a 10 minute cooldown.
 - If `maFruit100` drops 25 % beneath the best evaluation for ≥5000 episodes the trainer reloads the best checkpoint.
+
+## Auto-PPO controller
+
+- The browser UI exposes `window.autoPpo`, an instance of `AutoPPOController`, as soon as a PPO agent is instantiated.
+- Six inline stages (S1, S2, S2B, S3, S3B, S4) tweak learning rate, γ, λ, clip ratio, entropy, value coefficient, and reward weights without relying on external preset files.
+- Telemetry updates are aggregated defensively so partial episode data still advances the state machine and stagnation detection.
+- State (current stage + enabled flag) persists in `localStorage`; a dedicated toggle and readout in the dashboard lets you disable or monitor Auto-PPO in real time.
+- Stage transitions are logged to the console and, when the proxy is reachable, appended to `/api/logs/snake-history.jsonl`.
 
 ### Manual mode
 
