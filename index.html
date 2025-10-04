@@ -8328,6 +8328,7 @@ window.addEventListener('load',()=>{
   }
 
   function waitForAgentAndBindButton(){
+    const btn = document.getElementById('watchFinalBtn');
     const btn = document.getElementById('runFinalWatchBtn');
     if(!btn) return;
     const summaryEl = document.getElementById('finalWatchSummary');
