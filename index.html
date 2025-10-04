@@ -8117,19 +8117,32 @@ async function runFinalWatch() {
   setTimeout(() => overlay.remove(), 8000);
 }
 
-// 🔘 Attach to test button
-document.addEventListener('DOMContentLoaded', () => {
+// 🔘 Attach Final Watch button after env + agent are ready
+function attachFinalWatchWhenReady() {
   const btn = document.getElementById('runFinalWatchBtn');
-  if (btn) {
-    btn.addEventListener('click', () => {
-      runFinalWatch().catch(err => console.error('Final Watch error:', err));
-    });
-    console.log('✅ Final Watch ready');
-  } else {
-    console.warn('⚠️ No #runFinalWatchBtn found');
-  }
-});
-</script>
+  if (!btn) return console.warn('⚠️ No #runFinalWatchBtn found');
+
+  // gör knappen inaktiv tills klar
+  btn.disabled = true;
+  btn.style.opacity = '0.5';
+  btn.textContent = '⌛ Waiting for training...';
+
+  const check = setInterval(() => {
+    if (window.env && window.agent) {
+      clearInterval(check);
+      btn.disabled = false;
+      btn.style.opacity = '1';
+      btn.textContent = '▶️ Run Final Watch Test';
+      btn.addEventListener('click', () => {
+        runFinalWatch().catch(err => console.error('Final Watch error:', err));
+      });
+      console.log('✅ Final Watch attached after env init');
+    }
+  }, 500);
+}
+
+document.addEventListener('DOMContentLoaded', attachFinalWatchWhenReady);
+
 
 // Bind test button
 document.getElementById('runFinalWatchBtn')?.addEventListener('click',()=>runFinalWatch({
