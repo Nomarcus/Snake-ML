@@ -24,12 +24,11 @@ export class DQNAgent {
     targetSync = 2000,
     nStep = 3,
     dueling = true,
-    double = true,
+    double = false,
     layers = DEFAULT_LAYERS,
     gradientClip = 10,
     warmupSteps = 5000,
   }) {
-    this.kind = 'dqn';
     this.stateDim = stateDim;
     this.actionDim = actionDim;
     this.envCount = envCount;
@@ -61,7 +60,8 @@ export class DQNAgent {
     this.priorityEps = priorityEps;
 
     this.dueling = dueling;
-    this.double = double;
+    this.double = double ?? false;
+    this.kind = this.double ? 'double-dqn' : 'dqn';
     this.layers = layers.slice();
 
     this.nStep = nStep;
@@ -252,17 +252,19 @@ export class DQNAgent {
       const actionMask = tf.oneHot(actions, this.actionDim);
       const qPred = qPredAll.mul(actionMask).sum(1);
 
-      const nextQOnline = this.online.apply(nextStates);
-      const nextActions = this.double ? nextQOnline.argMax(1) : null;
       const nextQTargetAll = this.target.apply(nextStates);
       let nextQ;
       if (this.double) {
-        const nextMask = tf.oneHot(nextActions, this.actionDim);
-        nextQ = nextQTargetAll.mul(nextMask).sum(1);
+        const nextQOnline = this.online.apply(nextStates);
+        const nextActionIdx = nextQOnline.argMax(1);
+        const nextActionMask = tf.oneHot(nextActionIdx, this.actionDim);
+        const nextQDouble = nextQTargetAll.mul(nextActionMask).sum(1);
+        nextQ = nextQDouble;
       } else {
         nextQ = nextQTargetAll.max(1);
       }
-      const targets = rewards.add(nextQ.mul(tf.scalar(1).sub(dones)).mul(this.gamma));
+      const notDoneMask = tf.scalar(1).sub(dones);
+      const targets = rewards.add(nextQ.mul(tf.scalar(this.gamma)).mul(notDoneMask));
       tdTensor = targets.sub(qPred);
       const loss = tdTensor.square().mul(isWeights).mean();
       return loss;
@@ -335,7 +337,7 @@ export class DQNAgent {
     );
     return {
       version: 5,
-      kind: 'dqn',
+      kind: this.kind,
       stateDim: this.stateDim,
       actionDim: this.actionDim,
       config: {
@@ -386,6 +388,7 @@ export class DQNAgent {
     this.setNStep(cfg.nStep ?? this.nStep);
     this.dueling = cfg.dueling ?? this.dueling;
     this.double = cfg.double ?? this.double;
+    this.kind = this.double ? 'double-dqn' : 'dqn';
     this.layers = Array.isArray(cfg.layers) ? cfg.layers.slice() : this.layers;
     this.online.dispose();
     this.target.dispose();

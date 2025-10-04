@@ -870,6 +870,12 @@ details summary::-webkit-details-marker{display:none}
   gap:16px;
   align-items:flex-end;
 }
+.row.double-toggle-row{
+  align-items:center;
+}
+.row.double-toggle-row .hint{
+  max-width:320px;
+}
 .row label{
   display:flex;
   flex-direction:column;
@@ -1402,6 +1408,13 @@ footer{
             <input type="range" id="priorityBeta" min="0.1" max="1" step="0.05" value="0.4">
             <span class="mono" id="betaReadout">0.40</span>
           </label>
+        </div>
+        <div class="row double-toggle-row">
+          <label class="toggle" for="doubleDqnToggle">
+            <input type="checkbox" id="doubleDqnToggle" checked>
+            <span>Double Q targets</span>
+          </label>
+          <span class="hint">Use the online network for action selection while the target net evaluates the value.</span>
         </div>
       </div>
       <div class="stack hidden" data-config="policy">
@@ -2310,7 +2323,6 @@ class ReplayBuffer{
 /* ---------------- Agents ---------------- */
 class DQNAgent{
   constructor(sDim,aDim,cfg={}){
-    this.kind='dqn';
     this.sDim=sDim;
     this.aDim=aDim;
     this.envCount=Math.max(1,cfg.envCount??1);
@@ -2320,7 +2332,8 @@ class DQNAgent{
     this.priorityEps=cfg.priorityEps??0.001;
     this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():[256,256,128];
     this.dueling=cfg.dueling!==undefined?!!cfg.dueling:true;
-    this.double=cfg.double!==undefined?!!cfg.double:true;
+    this.double=cfg.double!==undefined?!!cfg.double:false;
+    this.kind=this.double?'double-dqn':'dqn';
     this.learnRepeats=cfg.learnRepeats??2;
     this.buffer=new ReplayBuffer(cfg.bufferSize??50000,{
       alpha:cfg.priorityAlpha??0.6,
@@ -2454,17 +2467,18 @@ class DQNAgent{
       const q=this.online.apply(S);
       const oneHot=tf.oneHot(A,this.aDim);
       const qPred=tf.sum(q.mul(oneHot),1);
-      const qNextTarget=this.target.apply(NS);
-      let qNext;
+      const nextQ=this.target.apply(NS);
+      let nextTarget;
       if(this.double){
-        const qNextOnline=this.online.apply(NS);
-        const aPrime=tf.argMax(qNextOnline,1);
-        const mask=tf.oneHot(aPrime,this.aDim);
-        qNext=tf.sum(qNextTarget.mul(mask),1);
+        const nextActionIdx=this.online.apply(NS).argMax(1);
+        const nextActionOneHot=tf.oneHot(nextActionIdx,this.aDim);
+        const nextQDouble=nextQ.mul(nextActionOneHot).sum(1);
+        nextTarget=nextQDouble;
       }else{
-        qNext=tf.max(qNextTarget,1);
+        nextTarget=nextQ.max(1);
       }
-      const target=R.add(qNext.mul(tf.scalar(this.gamma)).mul(tf.scalar(1).sub(D)));
+      const notDone=tf.scalar(1).sub(D);
+      const target=R.add(nextTarget.mul(tf.scalar(this.gamma)).mul(notDone));
       tdErrors=tf.keep(target.sub(qPred));
       const absErr=tdErrors.abs();
       const quadratic=tf.minimum(absErr,tf.scalar(1));
@@ -2494,7 +2508,7 @@ class DQNAgent{
     })));
     return {
       version:4,
-      kind:'dqn',
+      kind:this.kind,
       sDim:this.sDim,
       aDim:this.aDim,
       config:{
@@ -2530,6 +2544,7 @@ class DQNAgent{
     this.layers=Array.isArray(cfg.layers)?cfg.layers.slice():this.layers;
     this.dueling=cfg.dueling!==undefined?!!cfg.dueling:this.dueling;
     this.double=cfg.double!==undefined?!!cfg.double:this.double;
+    this.kind=this.double?'double-dqn':'dqn';
     this.learnRepeats=cfg.learnRepeats??this.learnRepeats;
     this.setGamma(cfg.gamma??this.gamma);
     this.setLearningRate(cfg.lr??this.lr);
@@ -3758,6 +3773,9 @@ const AGENT_PRESETS={
     create:(sDim,aDim,cfg)=>new PPOAgent(sDim,aDim,cfg),
   },
 };
+const DQN_AGENT_KINDS=new Set(['dqn','double-dqn']);
+const isDqnKind=kind=>DQN_AGENT_KINDS.has(kind);
+const isDqnAgent=agent=>agent&&isDqnKind(agent.kind);
 
 const STAGE_AGENT_ALIASES={ddqn:'dueling',rainbow:'dueling',sac:'ppo'};
 const STAGE_PRESETS={
@@ -4106,6 +4124,7 @@ const ui={
   alphaReadout:document.getElementById('alphaReadout'),
   priorityBeta:document.getElementById('priorityBeta'),
   betaReadout:document.getElementById('betaReadout'),
+  doubleToggle:document.getElementById('doubleDqnToggle'),
   pgEntropy:document.getElementById('pgEntropy'),
   pgEntropyReadout:document.getElementById('pgEntropyReadout'),
   acEntropy:document.getElementById('acEntropy'),
@@ -4536,7 +4555,7 @@ function getHyperparameterSnapshot(){
     epsilon:agent?.epsilon??null,
     agentKind:agent?.kind||null,
   };
-  if(agent?.kind==='dqn'){
+  if(isDqnAgent(agent)){
     Object.assign(snapshot,{
       epsStart:+ui.epsStart?.value||0,
       epsEnd:+ui.epsEnd?.value||0,
@@ -4547,6 +4566,7 @@ function getHyperparameterSnapshot(){
       nStep:+ui.nStep?.value||0,
       priorityAlpha:+ui.priorityAlpha?.value||0,
       priorityBeta:+ui.priorityBeta?.value||0,
+      double:!!ui.doubleToggle?.checked,
     });
   }else if(agent?.kind==='policy'){
     Object.assign(snapshot,{
@@ -4785,6 +4805,14 @@ function applyAITunerHyperparameters(updates={}){
   if(updates.nStep!==undefined) setValue('nStep',updates.nStep,'nStep');
   if(updates.priorityAlpha!==undefined) setValue('priorityAlpha',updates.priorityAlpha,'priorityAlpha');
   if(updates.priorityBeta!==undefined) setValue('priorityBeta',updates.priorityBeta,'priorityBeta');
+  if(updates.double!==undefined && ui.doubleToggle){
+    const desired=!!updates.double;
+    const current=!!ui.doubleToggle.checked;
+    if(current!==desired){
+      ui.doubleToggle.checked=desired;
+      result.changes.push({key:'double',oldValue:current,newValue:desired});
+    }
+  }
   if(updates.entropy!==undefined){
     if(agent?.kind==='policy') setValue('pgEntropy',updates.entropy,'pgEntropy');
     else if(agent?.kind==='a2c') setValue('acEntropy',updates.entropy,'acEntropy');
@@ -5030,6 +5058,9 @@ function bindUI(){
   const updateAndApply=()=>{ updateReadouts(); applyConfigToAgent(); };
   ['gamma','lr','epsStart','epsEnd','epsDecay','batchSize','bufferSize','targetSync','nStep','priorityAlpha','priorityBeta','pgEntropy','acEntropy','acValueCoef','ppoEntropy','ppoClip','ppoLambda','ppoBatch','ppoEpochs','ppoValueCoef']
     .forEach(id=>ui[id]?.addEventListener('input',updateAndApply));
+  ui.doubleToggle?.addEventListener('change',()=>{
+    applyConfigToAgent();
+  });
   ui.envCount?.addEventListener('input',()=>{
     updateReadouts();
     applyEnvCountFromUI();
@@ -5171,7 +5202,7 @@ function setTrainingMode(mode){
   let next=mode==='auto'?'auto':'manual';
   const wasTraining=training;
   const prevMode=trainingMode;
-  if(next==='auto' && agent?.kind!=='dqn'){
+  if(next==='auto' && !isDqnAgent(agent)){
     flash('Auto mode requires a DQN agent',true);
     next='manual';
   }
@@ -5213,7 +5244,7 @@ function setTrainingMode(mode){
     ui.envCount.disabled=true;
   }else{
     autoPilot=null;
-    ui.envCount.disabled=agent?.kind!=='dqn';
+    ui.envCount.disabled=!isDqnAgent(agent);
     lastAutoMetrics=null;
     lastAutoSummaryEpisode=0;
     updateAutoLogVisibility();
@@ -5268,7 +5299,12 @@ function applyConfigToAgent(){
   agent.setEnvCount?.(envCount);
   agent.setGamma(shared.gamma);
   agent.setLearningRate(shared.lr);
-  if(agent.kind==='dqn'){
+  if(isDqnAgent(agent)){
+    if(ui.doubleToggle){
+      const useDouble=!!ui.doubleToggle.checked;
+      agent.double=useDouble;
+      agent.kind=useDouble?'double-dqn':'dqn';
+    }
     agent.setEpsilonSchedule?.({
       start:+ui.epsStart.value,
       end:+ui.epsEnd.value,
@@ -5310,7 +5346,7 @@ function updateBadgeMetrics(){
   if(ui.envCountReadout){
     ui.envCountReadout.textContent=`${(+ui.envCount.value)|0}`;
   }
-  if(agent?.kind==='dqn'){
+  if(isDqnAgent(agent)){
     ui.epsReadout.textContent=(agent.epsilon??1).toFixed(2);
   }else{
     ui.epsReadout.textContent='—';
@@ -6219,7 +6255,7 @@ class BrowserAutoPilot{
       this.stageIndex++;
       adjustments.push({type:'board',size:this.boardStages[this.stageIndex].size});
     }
-    if(!actor||actor.kind!=='dqn'){
+    if(!actor||!isDqnAgent(actor)){
       return {adjustments,metrics};
     }
     if(this.episode<this.minEpisodesForAdjust){
@@ -6334,6 +6370,13 @@ function instantiateAgent(key,opts={}){
     if(overrideDefaults.dueling!==undefined) appliedDefaults.dueling=overrideDefaults.dueling;
     if(overrideDefaults.double!==undefined) appliedDefaults.double=overrideDefaults.double;
   }
+  if(useCurrentUI){
+    if(overrideDefaults?.double!==undefined && ui.doubleToggle){
+      ui.doubleToggle.checked=!!overrideDefaults.double;
+    }else if(overrideDefaults?.double===undefined && ui.doubleToggle){
+      appliedDefaults.double=ui.doubleToggle.checked;
+    }
+  }
   if(!useCurrentUI){
     applyPresetToUI(appliedDefaults);
   }
@@ -6361,7 +6404,7 @@ function instantiateAgent(key,opts={}){
     double:appliedDefaults.double,
   });
   agent.learnRepeats=(appliedDefaults.learnRepeats??preset.defaults.learnRepeats)??agent.learnRepeats??1;
-  targetSyncSteps=agent.kind==='dqn'? (+ui.targetSync.value||2000):Infinity;
+  targetSyncSteps=isDqnAgent(agent)? (+ui.targetSync.value||2000):Infinity;
   updateAdvancedVisibility();
   if(agent.kind==='ppo'){
     if(!window.autoPpo){
@@ -6381,10 +6424,10 @@ function instantiateAgent(key,opts={}){
   currentStagePresetKey='';
   refreshStagePresetOptions(currentAlgoKey,{preserveSelection:false});
   resetTrainingStats();
-  if(agent.kind!=='dqn' && trainingMode==='auto'){
+  if(!isDqnAgent(agent) && trainingMode==='auto'){
     setTrainingMode('manual');
   }
-  if(agent.kind!=='dqn'){
+  if(!isDqnAgent(agent)){
     ui.envCount.value='1';
     ui.envCount.disabled=true;
     reconfigureEnvironment({count:1,size:+ui.gridSize.value,force:true});
@@ -6411,6 +6454,9 @@ function applyPresetToUI(config){
   if(config.nStep!==undefined) ui.nStep.value=config.nStep;
   if(config.priorityAlpha!==undefined) ui.priorityAlpha.value=config.priorityAlpha;
   if(config.priorityBeta!==undefined) ui.priorityBeta.value=config.priorityBeta;
+  if(config.double!==undefined && ui.doubleToggle){
+    ui.doubleToggle.checked=!!config.double;
+  }
   if(config.entropy!==undefined){
     ui.pgEntropy.value=config.entropy;
     ui.acEntropy.value=config.entropy;
@@ -6948,7 +6994,7 @@ async function applyAutoAdjustments(adjustments){
     const cfg=autoPilot?.getRewardConfig?.()||{...rewardConfig};
     applyRewardConfigToUI(cfg);
   }
-  if(agent?.kind==='dqn'){
+  if(isDqnAgent(agent)){
     ui.epsStart.value=agent.epsStart.toFixed(2);
     ui.epsEnd.value=agent.epsEnd.toFixed(2);
     ui.epsDecay.value=`${Math.round(agent.epsDecay)}`;
@@ -7057,7 +7103,7 @@ async function performVectorStep(mode){
     const nextState=nextStates[i];
     const done=dones[i];
     const ate=ateFruit[i];
-    if(agent.kind==='dqn'){
+    if(isDqnAgent(agent)){
       agent.recordTransition(i,ctx.state,actions[i],reward,nextState,done);
     }else{
       agent.recordTransition(ctx.state,actions[i],reward,nextState,done);
@@ -7080,12 +7126,12 @@ async function performVectorStep(mode){
       if(lossHist.length>1000) lossHist.shift();
     }
   }
-  if(agent.kind==='dqn' && targetSyncSteps>0 && totalSteps%targetSyncSteps===0){
+  if(isDqnAgent(agent) && targetSyncSteps>0 && totalSteps%targetSyncSteps===0){
     agent.syncTarget();
   }
   if(agent.updateEpsilon){
     const eps=agent.updateEpsilon(totalSteps);
-    if(agent.kind==='dqn' && eps!==undefined){
+    if(isDqnAgent(agent) && eps!==undefined){
       ui.epsReadout.textContent=eps.toFixed(2);
     }
   }
@@ -7179,7 +7225,7 @@ function previewDeath(env,action){
 }
 function captureExplorationState(){
   if(!agent) return null;
-  if(agent.kind==='dqn'&&typeof agent.epsilon==='number'){
+  if(isDqnAgent(agent)&&typeof agent.epsilon==='number'){
     return {
       type:'dqn',
       epsilon:agent.epsilon,
@@ -7526,7 +7572,7 @@ async function readLatestCheckpoint(){
 }
 async function applyCheckpointData(data){
   if(!data||!data.agent) throw new Error('Invalid checkpoint');
-  const kind=(data.agent.kind==='dqn')?'dueling':(AGENT_PRESETS[data.agent.kind]?data.agent.kind:'dueling');
+  const kind=isDqnKind(data.agent.kind)?'dueling':(AGENT_PRESETS[data.agent.kind]?data.agent.kind:'dueling');
   const preset=AGENT_PRESETS[kind];
   if(preset){
     applyPresetToUI({...preset.defaults,...(data.agent.config||{})});
