@@ -2743,43 +2743,153 @@ class A2CAgent{
     }
   }
 }
+
+class RunningMeanStd{
+  constructor(shape){
+    this.shape=Array.isArray(shape)?shape:[shape];
+    this.mean=tf.zeros(this.shape);
+    this.variance=tf.ones(this.shape);
+    this.count=1e-4;
+  }
+  update(x){
+    let tensor=x;
+    let created=false;
+    if(!(tensor instanceof tf.Tensor)){
+      tensor=tf.tensor2d(x,[1,this.shape[0]]);
+      created=true;
+    }
+    const batchCount=tensor.shape[0]??1;
+    const batchMean=tensor.mean(0);
+    const batchVar=tensor.sub(batchMean).square().mean(0);
+    const delta=batchMean.sub(this.mean);
+    const totalCount=this.count+batchCount;
+    const newMean=this.mean.add(delta.mul(batchCount/totalCount));
+    const mA=this.variance.mul(this.count);
+    const mB=batchVar.mul(batchCount);
+    const delta2=delta.square().mul(this.count*batchCount/totalCount);
+    const M2=mA.add(mB).add(delta2);
+    const newVar=M2.div(totalCount);
+    this.mean.dispose();
+    this.variance.dispose();
+    this.mean=newMean;
+    this.variance=newVar;
+    this.count=totalCount;
+    if(created) tensor.dispose();
+    batchMean.dispose();
+    batchVar.dispose();
+    delta.dispose();
+    mA.dispose();
+    mB.dispose();
+    delta2.dispose();
+    M2.dispose();
+  }
+  normalize(x){
+    return x.sub(this.mean).div(this.variance.sqrt().add(1e-8));
+  }
+  async toJSON(){
+    return {
+      count:this.count,
+      mean:typedArrayToBase64(await this.mean.data()),
+      variance:typedArrayToBase64(await this.variance.data()),
+    };
+  }
+  fromJSON(data){
+    if(!data) return;
+    if(data.mean){
+      this.mean.dispose();
+      this.mean=tf.tensor(base64ToTypedArray(data.mean,'float32'),this.shape,'float32');
+    }
+    if(data.variance){
+      this.variance.dispose();
+      this.variance=tf.tensor(base64ToTypedArray(data.variance,'float32'),this.shape,'float32');
+    }
+    this.count=data.count??this.count;
+  }
+}
+
 class PPOAgent{
-  constructor(sDim,aDim,cfg={}){
+  constructor(sDim,aDim,config={}){
     this.kind='ppo';
     this.sDim=sDim;
     this.aDim=aDim;
-    this.gamma=cfg.gamma??0.99;
-    this.lam=cfg.lambda??0.95;
-    this.lr=cfg.lr??0.0003;
-    this.entropyCoef=cfg.entropy??0.003;
-    this.valueCoef=cfg.valueCoef??0.5;
-    this.clip=cfg.clip??0.2;
-    this.batchSize=cfg.batch??256;
-    this.epochs=cfg.epochs??4;
-    this.optimizer=tf.train.adam(this.lr);
-    this.model=this.build();
+    this.gamma=config.gamma??0.99;
+    this.lam=config.lambda??0.95;
+    this.entropyCoef=config.entropy??0.01;
+    this.valueCoef=config.valueCoef??0.5;
+    this.maxGradNorm=config.maxGradNorm??0.5;
+    this.clipRange=config.clip??0.2;
+    this.clipRangeVf=config.clipRangeVf??null;
+    this.batchSize=config.batch??256;
+    this.minibatchSize=config.minibatchSize??64;
+    this.epochs=config.epochs??10;
+    this.targetKL=config.targetKL??0.01;
+    this.learningRate=config.lr??3e-4;
+    this.initialLearningRate=this.learningRate;
+    this.currentLearningRate=this.learningRate;
+    this.lrSchedule=config.lrSchedule??'linear';
+    this.maxUpdates=config.maxUpdates??100000;
+    this.currentUpdate=config.currentUpdate??0;
+    this.warmupSteps=config.warmupSteps??0;
+    this.normalizeAdvantages=config.normalizeAdvantages??true;
+    this.normalizeObservations=config.normalizeObservations??false;
+    this.initialEntropy=this.entropyCoef;
+    this.obsRunningStats=this.normalizeObservations?new RunningMeanStd(this.sDim):null;
+    this.optimizer=tf.train.adam(this.learningRate);
+    this.model=this.buildModel();
     this.trajectory=[];
-    this.learnRepeats=0;
     this.lastActInfo=null;
+    this.diagnostics={
+      policyLoss:[],
+      valueLoss:[],
+      entropy:[],
+      klDivergence:[],
+      clipFraction:[],
+      gradNorm:[],
+      explainedVariance:[],
+    };
   }
-  build(){
+  buildModel(){
     const input=tf.input({shape:[this.sDim]});
-    let x=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(input);
-    x=tf.layers.dense({units:256,activation:'relu',kernelInitializer:'heNormal'}).apply(x);
-    const policy=tf.layers.dense({units:this.aDim,activation:'softmax'}).apply(x);
-    const value=tf.layers.dense({units:1,activation:'linear'}).apply(x);
+    let x=tf.layers.dense({units:64,activation:'tanh',kernelInitializer:'orthogonal',name:'shared_fc1'}).apply(input);
+    x=tf.layers.dense({units:64,activation:'tanh',kernelInitializer:'orthogonal',name:'shared_fc2'}).apply(x);
+    const policyHidden=tf.layers.dense({units:64,activation:'tanh',kernelInitializer:'orthogonal',name:'policy_fc'}).apply(x);
+    const policy=tf.layers.dense({units:this.aDim,activation:'softmax',kernelInitializer:tf.initializers.orthogonal({gain:0.01}),name:'policy_out'}).apply(policyHidden);
+    const valueHidden=tf.layers.dense({units:64,activation:'tanh',kernelInitializer:'orthogonal',name:'value_fc'}).apply(x);
+    const value=tf.layers.dense({units:1,activation:'linear',kernelInitializer:'orthogonal',name:'value_out'}).apply(valueHidden);
     return tf.model({inputs:input,outputs:[policy,value]});
   }
   setGamma(val){ this.gamma=val; }
-  setLearningRate(val){ this.lr=val; this.optimizer=tf.train.adam(this.lr); }
-  setEntropy(val){ this.entropyCoef=val; }
+  setLearningRate(val){
+    this.learningRate=val;
+    this.initialLearningRate=val;
+    this.currentLearningRate=val;
+    this.optimizer=tf.train.adam(this.learningRate);
+  }
+  setEntropy(val){
+    this.entropyCoef=val;
+    this.initialEntropy=val;
+  }
   setValueCoef(val){ this.valueCoef=val; }
-  setClip(val){ this.clip=val; }
+  setClip(val){ this.clipRange=val; }
   setLambda(val){ this.lam=val; }
-  setBatch(val){ this.batchSize=Math.max(16,val|0); }
+  setBatch(val){
+    this.batchSize=Math.max(16,val|0);
+    this.minibatchSize=Math.min(this.minibatchSize,this.batchSize);
+  }
   setEpochs(val){ this.epochs=Math.max(1,val|0); }
+  normalizeObservation(state,update=true){
+    if(!this.normalizeObservations||!this.obsRunningStats) return state;
+    const tensor=tf.tensor2d([state],[1,this.sDim]);
+    if(update) this.obsRunningStats.update(tensor);
+    const normalized=this.obsRunningStats.normalize(tensor);
+    const out=Array.from(normalized.dataSync());
+    normalized.dispose();
+    tensor.dispose();
+    return out;
+  }
   act(s){
-    const input=tf.tensor2d([s],[1,this.sDim]);
+    const state=this.normalizeObservation(s,false);
+    const input=tf.tensor2d([state],[1,this.sDim]);
     const [policy,value]=this.model.predict(input);
     const probs=policy.dataSync();
     const val=value.dataSync()[0];
@@ -2790,33 +2900,34 @@ class PPOAgent{
       if(r<=0){ action=i; break; }
     }
     const prob=Math.max(probs[action]??0,1e-8);
-    this.lastActInfo={
-      logProb:Math.log(prob),
-      value:val,
-    };
+    this.lastActInfo={logProb:Math.log(prob),value:val};
     policy.dispose();
     value.dispose();
     input.dispose();
     return action;
   }
   greedyAction(s){
-    const input=tf.tensor2d([s],[1,this.sDim]);
+    const state=this.normalizeObservation(s,false);
+    const input=tf.tensor2d([state],[1,this.sDim]);
     const [policy,value]=this.model.predict(input);
     value.dispose();
     const probs=policy.dataSync();
-    let best=0,max=-Infinity;
-    probs.forEach((p,i)=>{ if(p>max){max=p;best=i;} });
+    let best=0;
+    let max=-Infinity;
+    probs.forEach((p,i)=>{ if(p>max){ max=p; best=i; } });
     policy.dispose();
     input.dispose();
     return best;
   }
   recordTransition(s,a,r,ns,d){
-    const info=this.lastActInfo||this.evaluateAction(s,a);
+    const normalizedState=this.normalizeObservation(s,true);
+    const normalizedNext=ns!=null?this.normalizeObservation(ns,!d):normalizedState;
+    const info=this.lastActInfo??this.evaluateAction(normalizedState,a);
     this.trajectory.push({
-      s:Float32Array.from(s),
+      s:Float32Array.from(normalizedState),
       a,
       r,
-      ns:Float32Array.from(ns),
+      ns:Float32Array.from(normalizedNext),
       d,
       value:info.value,
       logProb:info.logProb,
@@ -2839,80 +2950,248 @@ class PPOAgent{
     const prob=Math.max(probs[action]??0,1e-8);
     return {logProb:Math.log(prob),value:val};
   }
-  predictValue(state){
-    const input=tf.tensor2d([state],[1,this.sDim]);
+  predictValue(state,normalized=false){
+    const inputState=normalized?state:this.normalizeObservation(state,false);
+    const input=tf.tensor2d([inputState],[1,this.sDim]);
     const [,value]=this.model.predict(input);
     const val=value.dataSync()[0];
     value.dispose();
     input.dispose();
     return val;
   }
+  computeGAE(rewards,values,dones,lastValue){
+    const len=rewards.length;
+    const advantages=new Float32Array(len);
+    const returns=new Float32Array(len);
+    let gae=0;
+    let nextValue=lastValue;
+    for(let i=len-1;i>=0;i--){
+      const nonTerminal=dones[i]?0:1;
+      const delta=rewards[i]+this.gamma*nextValue*nonTerminal-values[i];
+      gae=delta+this.gamma*this.lam*nonTerminal*gae;
+      gae=Math.max(-10,Math.min(10,gae));
+      advantages[i]=gae;
+      returns[i]=gae+values[i];
+      nextValue=values[i];
+    }
+    return {advantages,returns};
+  }
+  normalizeTensor(tensor){
+    const mean=tensor.mean();
+    const variance=tensor.sub(mean).square().mean();
+    const std=variance.sqrt().add(1e-8);
+    const normalized=tensor.sub(mean).div(std);
+    mean.dispose();
+    variance.dispose();
+    std.dispose();
+    return normalized;
+  }
   async finishEpisode(){
     const len=this.trajectory.length;
     if(!len) return null;
+    const rewards=this.trajectory.map(t=>t.r);
     const values=this.trajectory.map(t=>t.value);
-    let nextValue=0;
+    const dones=this.trajectory.map(t=>t.d);
+    let lastValue=0;
     if(!this.trajectory[len-1].d){
-      nextValue=this.predictValue(this.trajectory[len-1].ns);
+      lastValue=this.predictValue(this.trajectory[len-1].ns,true);
     }
-    const advantages=new Array(len);
-    const returns=new Array(len);
-    let gae=0;
-    for(let i=len-1;i>=0;i--){
-      const step=this.trajectory[i];
-      const value=values[i];
-      const nextVal=(i===len-1)?nextValue:values[i+1];
-      const nonTerminal=step.d?0:1;
-      const delta=step.r+this.gamma*nextVal*nonTerminal-value;
-      gae=delta+this.gamma*this.lam*nonTerminal*gae;
-      advantages[i]=gae;
-      returns[i]=gae+value;
-    }
+    const {advantages,returns}=this.computeGAE(rewards,values,dones,lastValue);
     const states=tf.tensor2d(this.trajectory.map(t=>t.s),[len,this.sDim]);
     const actions=tf.tensor1d(this.trajectory.map(t=>t.a),'int32');
-    const oldLog=tf.tensor1d(this.trajectory.map(t=>t.logProb));
+    const oldLogProbs=tf.tensor1d(this.trajectory.map(t=>t.logProb));
+    const oldValues=tf.tensor1d(values);
     const returnsTensor=tf.tensor1d(returns);
-    const advRaw=tf.tensor1d(advantages);
-    const advantagesTensor=standardize1D(advRaw);
-    advRaw.dispose();
-    const idxs=[...Array(len).keys()];
-    let lastLoss=null;
+    const advantagesTensor=tf.tensor1d(advantages);
+    let totalPolicyLoss=0;
+    let totalValueLoss=0;
+    let totalEntropy=0;
+    let totalKL=0;
+    let totalClipFrac=0;
+    let totalGradNorm=0;
+    let updateCount=0;
     for(let epoch=0;epoch<this.epochs;epoch++){
-      shuffleInPlace(idxs);
-      for(let start=0;start<len;start+=this.batchSize){
-        const slice=idxs.slice(start,Math.min(len,start+this.batchSize));
-        if(!slice.length) continue;
-        const batchIdx=tf.tensor1d(slice,'int32');
-        const lossTensor=await this.optimizer.minimize(()=>tf.tidy(()=>{
+      const indices=Array.from({length:len},(_,i)=>i);
+      this.shuffleArray(indices);
+      for(let start=0;start<len;start+=this.minibatchSize){
+        const end=Math.min(len,start+this.minibatchSize);
+        const batchIndices=indices.slice(start,end);
+        if(batchIndices.length<2) continue;
+        const batchIdx=tf.tensor1d(batchIndices,'int32');
+        let policyLossTensor;
+        let valueLossTensor;
+        let entropyTensor;
+        let approxKLTensor;
+        let clipFracTensor;
+        const gradsAndLoss=tf.variableGrads(()=>tf.tidy(()=>{
           const batchStates=tf.gather(states,batchIdx);
           const batchActions=tf.gather(actions,batchIdx);
+          const batchOldLogProbs=tf.gather(oldLogProbs,batchIdx);
           const batchReturns=tf.gather(returnsTensor,batchIdx);
-          const batchOldLog=tf.gather(oldLog,batchIdx);
-          const batchAdv=tf.gather(advantagesTensor,batchIdx);
+          const batchAdvantages=tf.gather(advantagesTensor,batchIdx);
+          const batchOldValues=tf.gather(oldValues,batchIdx);
+          let adv=batchAdvantages;
+          if(this.normalizeAdvantages){
+            adv=tf.keep(this.normalizeTensor(batchAdvantages));
+          }
           const [policy,value]=this.model.apply(batchStates);
-          const probs=policy.mul(tf.oneHot(batchActions,this.aDim)).sum(1).add(1e-8);
-          const logProbs=tf.log(probs);
-          const ratio=tf.exp(logProbs.sub(batchOldLog));
-          const clipped=ratio.clipByValue(1-this.clip,1+this.clip);
-          const actor=tf.minimum(ratio.mul(batchAdv),clipped.mul(batchAdv)).neg();
-          const values=value.reshape([slice.length]);
-          const critic=batchReturns.sub(values).square().mul(0.5*this.valueCoef);
-          const entropy=policy.mul(tf.log(policy.add(1e-8))).sum(1).neg();
-          return actor.add(critic).sub(entropy.mul(this.entropyCoef)).mean();
-        }),true);
-        lastLoss=lossTensor.dataSync()[0];
+          const actionMask=tf.oneHot(batchActions,this.aDim);
+          const actionProbs=policy.mul(actionMask).sum(1).add(1e-8);
+          const newLogProbs=tf.log(actionProbs);
+          const ratio=tf.exp(newLogProbs.sub(batchOldLogProbs));
+          const clippedRatio=tf.clipByValue(ratio,1-this.clipRange,1+this.clipRange);
+          const surr1=ratio.mul(adv);
+          const surr2=clippedRatio.mul(adv);
+          const policyLoss=tf.minimum(surr1,surr2).mean().neg();
+          const valuesTensor=value.squeeze();
+          let valueLoss;
+          if(this.clipRangeVf!==null&&this.clipRangeVf!==undefined){
+            const valueClipped=batchOldValues.add(tf.clipByValue(valuesTensor.sub(batchOldValues),-this.clipRangeVf,this.clipRangeVf));
+            const vLoss1=batchReturns.sub(valuesTensor).square();
+            const vLoss2=batchReturns.sub(valueClipped).square();
+            valueLoss=tf.maximum(vLoss1,vLoss2).mean().mul(0.5);
+            valueClipped.dispose();
+            vLoss1.dispose();
+            vLoss2.dispose();
+          }else{
+            valueLoss=batchReturns.sub(valuesTensor).square().mean().mul(0.5);
+          }
+          const entropy=policy.mul(tf.log(policy.add(1e-8))).sum(1).neg().mean();
+          const totalLoss=policyLoss.add(valueLoss.mul(this.valueCoef)).sub(entropy.mul(this.entropyCoef));
+          policyLossTensor=tf.keep(policyLoss);
+          valueLossTensor=tf.keep(valueLoss);
+          entropyTensor=tf.keep(entropy);
+          approxKLTensor=tf.keep(batchOldLogProbs.sub(newLogProbs).mean());
+          clipFracTensor=tf.keep(tf.greater(tf.abs(ratio.sub(1)),this.clipRange).cast('float32').mean());
+          if(this.normalizeAdvantages){ adv.dispose(); }
+          return totalLoss;
+        }));
+        const lossTensor=gradsAndLoss.value;
+        const grads=gradsAndLoss.grads;
+        const gradValues=Object.values(grads);
+        const gradNormTensor=tf.tidy(()=>{
+          const norms=gradValues.map(g=>g.square().sum());
+          const total=tf.addN(norms);
+          const norm=total.sqrt();
+          norms.forEach(n=>n.dispose());
+          total.dispose();
+          return norm;
+        });
+        const gradNorm=gradNormTensor.dataSync()[0];
+        gradNormTensor.dispose();
+        if(this.maxGradNorm&&gradNorm>this.maxGradNorm){
+          const scale=this.maxGradNorm/(gradNorm+1e-8);
+          Object.keys(grads).forEach((key,idx)=>{
+            const clipped=gradValues[idx].mul(scale);
+            gradValues[idx].dispose();
+            grads[key]=clipped;
+          });
+        }
+        this.optimizer.applyGradients(grads);
+        Object.values(grads).forEach(g=>g.dispose());
+        const policyLossVal=policyLossTensor.dataSync()[0];
+        const valueLossVal=valueLossTensor.dataSync()[0];
+        const entropyVal=entropyTensor.dataSync()[0];
+        const klVal=approxKLTensor.dataSync()[0];
+        const clipFracVal=clipFracTensor.dataSync()[0];
+        policyLossTensor.dispose();
+        valueLossTensor.dispose();
+        entropyTensor.dispose();
+        approxKLTensor.dispose();
+        clipFracTensor.dispose();
         lossTensor.dispose();
         batchIdx.dispose();
+        totalPolicyLoss+=policyLossVal;
+        totalValueLoss+=valueLossVal;
+        totalEntropy+=entropyVal;
+        totalKL+=klVal;
+        totalClipFrac+=clipFracVal;
+        totalGradNorm+=gradNorm;
+        updateCount++;
+        if(klVal>this.targetKL*1.5){
+          console.log(`Early stopping: KL=${klVal.toFixed(4)} > ${(this.targetKL*1.5).toFixed(4)}`);
+          epoch=this.epochs;
+          break;
+        }
         await tf.nextFrame();
       }
     }
+    const explainedVarTensor=tf.tidy(()=>{
+      const varY=returnsTensor.sub(returnsTensor.mean()).square().mean();
+      const varErr=returnsTensor.sub(oldValues).square().mean();
+      const ev=tf.scalar(1).sub(varErr.div(varY.add(1e-8)));
+      varY.dispose();
+      varErr.dispose();
+      return ev;
+    });
+    const explainedVariance=explainedVarTensor.dataSync()[0];
+    explainedVarTensor.dispose();
     states.dispose();
     actions.dispose();
-    oldLog.dispose();
+    oldLogProbs.dispose();
+    oldValues.dispose();
     returnsTensor.dispose();
     advantagesTensor.dispose();
+    this.currentUpdate++;
+    this.updateLearningRate();
+    if(updateCount>0){
+      this.diagnostics.policyLoss.push(totalPolicyLoss/updateCount);
+      this.diagnostics.valueLoss.push(totalValueLoss/updateCount);
+      this.diagnostics.entropy.push(totalEntropy/updateCount);
+      this.diagnostics.klDivergence.push(totalKL/updateCount);
+      this.diagnostics.clipFraction.push(totalClipFrac/updateCount);
+      this.diagnostics.gradNorm.push(totalGradNorm/updateCount);
+      this.diagnostics.explainedVariance.push(explainedVariance);
+      const maxLen=1000;
+      Object.keys(this.diagnostics).forEach(key=>{
+        if(this.diagnostics[key].length>maxLen){
+          this.diagnostics[key].shift();
+        }
+      });
+    }
     this.trajectory.length=0;
-    return lastLoss;
+    return updateCount>0?totalPolicyLoss/updateCount:null;
+  }
+  updateLearningRate(){
+    const totalUpdates=Math.max(1,this.maxUpdates);
+    let lrFactor=1;
+    if(this.warmupSteps>0&&this.currentUpdate<=this.warmupSteps){
+      lrFactor=Math.min(1,(this.currentUpdate+1)/this.warmupSteps);
+    }else if(this.lrSchedule&&this.lrSchedule!=='none'){
+      const adjusted=Math.max(0,this.currentUpdate-this.warmupSteps);
+      const denom=Math.max(1,this.maxUpdates-this.warmupSteps);
+      const progress=Math.min(1,adjusted/denom);
+      if(this.lrSchedule==='linear'){
+        lrFactor=Math.max(0,1-progress);
+      }else if(this.lrSchedule==='cosine'){
+        lrFactor=0.5*(1+Math.cos(Math.PI*progress));
+      }
+    }
+    const newLR=Math.max(1e-6,this.initialLearningRate*lrFactor);
+    this.currentLearningRate=newLR;
+    if(this.optimizer) this.optimizer.learningRate=newLR;
+    const progress=Math.min(1,this.currentUpdate/totalUpdates);
+    this.entropyCoef=this.initialEntropy*Math.max(0.1,1-progress);
+  }
+  shuffleArray(array){
+    for(let i=array.length-1;i>0;i--){
+      const j=Math.floor(Math.random()*(i+1));
+      [array[i],array[j]]=[array[j],array[i]];
+    }
+  }
+  getDiagnostics(){
+    const recent=100;
+    const avg=arr=>arr.length?arr.slice(-recent).reduce((a,b)=>a+b,0)/Math.min(recent,arr.length):0;
+    return {
+      policyLoss:avg(this.diagnostics.policyLoss),
+      valueLoss:avg(this.diagnostics.valueLoss),
+      entropy:avg(this.diagnostics.entropy),
+      klDivergence:avg(this.diagnostics.klDivergence),
+      clipFraction:avg(this.diagnostics.clipFraction),
+      gradNorm:avg(this.diagnostics.gradNorm),
+      explainedVariance:avg(this.diagnostics.explainedVariance),
+      learningRate:this.currentLearningRate,
+    };
   }
   async exportState(){
     const weights=await Promise.all(this.model.getWeights().map(async w=>({
@@ -2920,6 +3199,10 @@ class PPOAgent{
       dtype:w.dtype,
       data:typedArrayToBase64(await w.data()),
     })));
+    let obsStats=null;
+    if(this.normalizeObservations&&this.obsRunningStats){
+      obsStats=await this.obsRunningStats.toJSON();
+    }
     return {
       version:4,
       kind:'ppo',
@@ -2927,52 +3210,73 @@ class PPOAgent{
       aDim:this.aDim,
       config:{
         gamma:this.gamma,
-        lr:this.lr,
-        entropy:this.entropyCoef,
+        lr:this.initialLearningRate,
+        entropy:this.initialEntropy,
         valueCoef:this.valueCoef,
-        clip:this.clip,
+        clip:this.clipRange,
+        clipRangeVf:this.clipRangeVf,
         lambda:this.lam,
         batch:this.batchSize,
+        minibatchSize:this.minibatchSize,
         epochs:this.epochs,
+        targetKL:this.targetKL,
+        maxGradNorm:this.maxGradNorm,
+        lrSchedule:this.lrSchedule,
+        maxUpdates:this.maxUpdates,
+        normalizeAdvantages:this.normalizeAdvantages,
+        normalizeObservations:this.normalizeObservations,
+        warmupSteps:this.warmupSteps,
       },
+      currentUpdate:this.currentUpdate,
       weights,
+      diagnostics:this.diagnostics,
+      obsStats,
     };
   }
   async importState(state){
     if(!state) throw new Error('Invalid state');
-    if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
-    if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
+    if(state.sDim&&state.sDim!==this.sDim) throw new Error('State dimension mismatch');
+    if(state.aDim&&state.aDim!==this.aDim) throw new Error('Action dimension mismatch');
     const cfg=state.config??{};
     this.setGamma(cfg.gamma??this.gamma);
-    this.setLearningRate(cfg.lr??this.lr);
+    this.setLearningRate(cfg.lr??this.learningRate);
     this.setEntropy(cfg.entropy??this.entropyCoef);
     this.setValueCoef(cfg.valueCoef??this.valueCoef);
-    this.setClip(cfg.clip??this.clip);
+    this.setClip(cfg.clip??this.clipRange);
+    this.clipRangeVf=cfg.clipRangeVf??this.clipRangeVf;
     this.setLambda(cfg.lambda??this.lam);
     this.setBatch(cfg.batch??this.batchSize);
+    this.minibatchSize=cfg.minibatchSize??this.minibatchSize;
     this.setEpochs(cfg.epochs??this.epochs);
+    this.targetKL=cfg.targetKL??this.targetKL;
+    this.maxGradNorm=cfg.maxGradNorm??this.maxGradNorm;
+    this.lrSchedule=cfg.lrSchedule??this.lrSchedule;
+    this.maxUpdates=cfg.maxUpdates??this.maxUpdates;
+    this.normalizeAdvantages=cfg.normalizeAdvantages??this.normalizeAdvantages;
+    this.normalizeObservations=cfg.normalizeObservations??this.normalizeObservations;
+    this.warmupSteps=cfg.warmupSteps??this.warmupSteps;
+    this.currentUpdate=state.currentUpdate??0;
+    this.optimizer=tf.train.adam(this.learningRate);
     this.model.dispose();
-    this.model=this.build();
+    this.model=this.buildModel();
     if(Array.isArray(state.weights)){
       const tensors=state.weights.map(w=>tf.tensor(base64ToTypedArray(w.data,w.dtype),w.shape,w.dtype));
       this.model.setWeights(tensors);
       tensors.forEach(t=>t.dispose());
     }
+    if(state.diagnostics) this.diagnostics=state.diagnostics;
+    if(this.normalizeObservations){
+      if(!this.obsRunningStats) this.obsRunningStats=new RunningMeanStd(this.sDim);
+      if(state.obsStats) this.obsRunningStats.fromJSON(state.obsStats);
+    }else if(this.obsRunningStats){
+      this.obsRunningStats.mean.dispose();
+      this.obsRunningStats.variance.dispose();
+      this.obsRunningStats=null;
+    }
+    this.currentLearningRate=this.learningRate;
+    this.initialLearningRate=this.learningRate;
+    this.initialEntropy=this.entropyCoef;
   }
-}
-function shuffleInPlace(arr){
-  for(let i=arr.length-1;i>0;i--){
-    const j=(Math.random()*(i+1))|0;
-    [arr[i],arr[j]]=[arr[j],arr[i]];
-  }
-}
-function standardize1D(t){
-  return tf.tidy(()=>{
-    const mean=t.mean();
-    const variance=t.sub(mean).square().mean();
-    const std=variance.sqrt().add(1e-6);
-    return t.sub(mean).div(std);
-  });
 }
 
 function createRewardTelemetry(max=1200){
