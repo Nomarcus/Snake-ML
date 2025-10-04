@@ -356,6 +356,19 @@ button:focus-visible{
   font-size:12px;
   font-weight:600;
 }
+.auto-ppo-field{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:12px;
+}
+.auto-ppo-field .mono{
+  font-size:12px;
+  color:var(--muted);
+}
+.auto-ppo-field .toggle{
+  margin:0;
+}
 .ai-interval-field .field-header{
   display:flex;
   align-items:center;
@@ -1020,6 +1033,13 @@ footer{
       <label for="stagePresetSelect">Stage preset</label>
       <select id="stagePresetSelect"></select>
     </div>
+    <div class="field block auto-ppo-field hidden" id="autoPpoField">
+      <label class="toggle" for="autoPpoToggle">
+        <input type="checkbox" id="autoPpoToggle" aria-label="Toggle Auto-PPO">
+        <span>Auto-PPO</span>
+      </label>
+      <span class="mono" id="autoPpoStage">—</span>
+    </div>
 
     <div class="kpi">
       <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
@@ -1595,7 +1615,6 @@ footer{
   // Viktigt: ange Render-basen här
   window.API_BASE_URL = "https://snake-ml.onrender.com";
 </script>
-<script defer src="presets.js"></script>
 <script type="module" src="hf-tuner.js"></script>
 <script type="module">
 import {createAITuner} from './hf-tuner.js';
@@ -3950,6 +3969,9 @@ const ui={
   modeButtons:Array.from(document.querySelectorAll('#modeGroup .pill')),
   algoSelect:document.getElementById('algoSelect'),
   algoDescription:document.getElementById('algoDescription'),
+  autoPpoField:document.getElementById('autoPpoField'),
+  autoPpoToggle:document.getElementById('autoPpoToggle'),
+  autoPpoStage:document.getElementById('autoPpoStage'),
   aiAutoTuneToggle:document.getElementById('aiAutoTuneToggle'),
   aiAutoAdjustToggle:document.getElementById('aiAutoAdjustToggle'),
   aiIntervalSlider:document.getElementById('aiIntervalSlider'),
@@ -5213,6 +5235,655 @@ function applyRewardConfigToUI(config={}){
   updateRewardReadouts();
   applyRewardsToEnv();
 }
+
+class AutoPPOController{
+  constructor({agent=null,onStageChange=null}={}){
+    this.agent=agent||null;
+    this.onStageChange=typeof onStageChange==='function'?onStageChange:()=>{};
+    this.configMap=this.buildConfigs();
+    this.enabled=this.loadEnabled();
+    this.stage=this.loadStage();
+    if(!this.configMap[this.stage]) this.stage='stage1';
+    this.points=[];
+    this.maxPoints=1600;
+    this.lastEpisode=null;
+    this.lastSwitchEpisode=null;
+    this.lastStats=null;
+    this.lastAverages={reward100:null,reward500:null,fruit100:null,fruit500:null};
+    this.historyUrl=null;
+    this.applyOnInit();
+  }
+  buildConfigs(){
+    return {
+      stage1:{
+        label:'PPO Stage 1 – Stable Explorer',
+        gamma:0.965,
+        lr:0.0003,
+        lam:0.92,
+        clipRatio:0.30,
+        entropy:0.014,
+        valueCoef:0.45,
+        rewardConfig:{
+          stepPenalty:0.0105,
+          turnPenalty:0.0009,
+          approachBonus:0.028,
+          retreatPenalty:0.024,
+          loopPenalty:0.30,
+          revisitPenalty:0.045,
+          wallPenalty:9.5,
+          selfPenalty:24.5,
+          timeoutPenalty:6.0,
+          trapPenalty:0.35,
+          spaceGainBonus:0.12,
+          deadEndPenalty:0.35,
+          fruitReward:14,
+          growthBonus:1.0,
+          compactWeight:0.05,
+        },
+      },
+      stage2:{
+        label:'PPO Stage 2 – Adaptive Growth',
+        gamma:0.975,
+        lr:0.00026,
+        lam:0.94,
+        clipRatio:0.24,
+        entropy:0.012,
+        valueCoef:0.46,
+        rewardConfig:{
+          stepPenalty:0.0100,
+          turnPenalty:0.0009,
+          approachBonus:0.032,
+          retreatPenalty:0.025,
+          loopPenalty:0.28,
+          revisitPenalty:0.05,
+          wallPenalty:9.2,
+          selfPenalty:24.0,
+          timeoutPenalty:5.8,
+          trapPenalty:0.38,
+          spaceGainBonus:0.16,
+          deadEndPenalty:0.36,
+          fruitReward:16,
+          growthBonus:1.25,
+          compactWeight:0.08,
+        },
+      },
+      stage2b:{
+        label:'PPO Stage 2B – Reignite',
+        gamma:0.975,
+        lr:0.00035,
+        lam:0.93,
+        clipRatio:0.28,
+        entropy:0.018,
+        valueCoef:0.45,
+        rewardConfig:{
+          stepPenalty:0.0105,
+          turnPenalty:0.00085,
+          approachBonus:0.036,
+          retreatPenalty:0.022,
+          loopPenalty:0.26,
+          revisitPenalty:0.048,
+          wallPenalty:9.0,
+          selfPenalty:23.5,
+          timeoutPenalty:5.8,
+          trapPenalty:0.42,
+          spaceGainBonus:0.2,
+          deadEndPenalty:0.36,
+          fruitReward:18,
+          growthBonus:1.4,
+          compactWeight:0.1,
+        },
+      },
+      stage3:{
+        label:'PPO Stage 3 – Efficiency & Safety',
+        gamma:0.977,
+        lr:0.00018,
+        lam:0.93,
+        clipRatio:0.22,
+        entropy:0.009,
+        valueCoef:0.5,
+        rewardConfig:{
+          stepPenalty:0.0095,
+          turnPenalty:0.0008,
+          approachBonus:0.035,
+          retreatPenalty:0.024,
+          loopPenalty:0.24,
+          revisitPenalty:0.045,
+          wallPenalty:8.8,
+          selfPenalty:23.0,
+          timeoutPenalty:5.4,
+          trapPenalty:0.45,
+          spaceGainBonus:0.24,
+          deadEndPenalty:0.34,
+          fruitReward:17.5,
+          growthBonus:1.5,
+          compactWeight:0.14,
+        },
+      },
+      stage3b:{
+        label:'PPO Stage 3B – Recovery Boost',
+        gamma:0.975,
+        lr:0.00032,
+        lam:0.93,
+        clipRatio:0.28,
+        entropy:0.016,
+        valueCoef:0.45,
+        rewardConfig:{
+          stepPenalty:0.0102,
+          turnPenalty:0.00085,
+          approachBonus:0.037,
+          retreatPenalty:0.024,
+          loopPenalty:0.26,
+          revisitPenalty:0.049,
+          wallPenalty:9.1,
+          selfPenalty:23.2,
+          timeoutPenalty:5.6,
+          trapPenalty:0.44,
+          spaceGainBonus:0.2,
+          deadEndPenalty:0.36,
+          fruitReward:18.2,
+          growthBonus:1.55,
+          compactWeight:0.12,
+        },
+      },
+      stage4:{
+        label:'PPO Stage 4 – Mastering',
+        gamma:0.985,
+        lr:0.00014,
+        lam:0.94,
+        clipRatio:0.20,
+        entropy:0.006,
+        valueCoef:0.55,
+        rewardConfig:{
+          stepPenalty:0.0090,
+          turnPenalty:0.0007,
+          approachBonus:0.04,
+          retreatPenalty:0.022,
+          loopPenalty:0.22,
+          revisitPenalty:0.043,
+          wallPenalty:8.2,
+          selfPenalty:22.5,
+          timeoutPenalty:5.0,
+          trapPenalty:0.48,
+          spaceGainBonus:0.3,
+          deadEndPenalty:0.32,
+          fruitReward:19,
+          growthBonus:1.65,
+          compactWeight:0.16,
+        },
+      },
+    };
+  }
+  formatStageCode(id){
+    if(!id) return '';
+    const match=/^stage(\d+)([a-z]*)$/i.exec(id);
+    if(!match) return String(id).toUpperCase();
+    const suffix=match[2]?match[2].toUpperCase():'';
+    return `S${match[1]}${suffix}`;
+  }
+  loadEnabled(){
+    try{
+      const raw=localStorage.getItem('autoPpo.enabled');
+      if(raw===null) return true;
+      return raw==='1'||raw==='true';
+    }catch(err){
+      return true;
+    }
+  }
+  loadStage(){
+    try{
+      const raw=localStorage.getItem('autoPpo.stage');
+      if(!raw) return 'stage1';
+      return raw;
+    }catch(err){
+      return 'stage1';
+    }
+  }
+  persistEnabled(){
+    try{
+      localStorage.setItem('autoPpo.enabled',this.enabled?'1':'0');
+    }catch(err){/* ignore */}
+  }
+  persistStage(){
+    try{
+      localStorage.setItem('autoPpo.stage',this.stage);
+    }catch(err){/* ignore */}
+  }
+  getStageInfo(){
+    const cfg=this.configMap[this.stage]||{};
+    return {
+      stage:this.stage,
+      label:cfg.label??this.stage,
+      code:this.formatStageCode(this.stage),
+      enabled:this.enabled,
+    };
+  }
+  getStageLabel(){
+    return this.getStageInfo().label;
+  }
+  getStageCode(){
+    return this.getStageInfo().code;
+  }
+  notifyStageChange(){
+    const info=this.getStageInfo();
+    try{
+      this.onStageChange(info);
+    }catch(err){
+      console.warn('[AUTO-PPO] stage change callback failed',err);
+    }
+  }
+  setAgent(agent){
+    this.agent=agent||null;
+    if(this.enabled && this.agent){
+      this.applyTo(this.agent,{force:true,reason:'agent'});
+    }else{
+      this.notifyStageChange();
+    }
+  }
+  enable(value){
+    const next=!!value;
+    if(next===this.enabled){
+      this.notifyStageChange();
+      return;
+    }
+    this.enabled=next;
+    this.persistEnabled();
+    if(this.enabled && this.agent){
+      this.applyTo(this.agent,{force:true,reason:'enabled'});
+    }else{
+      this.notifyStageChange();
+    }
+  }
+  applyOnInit(){
+    if(this.enabled && this.agent){
+      this.applyTo(this.agent,{force:true,reason:'init'});
+    }else{
+      this.notifyStageChange();
+    }
+  }
+  applyTo(agent,{force=false,reason=null}={}){
+    if(agent) this.agent=agent;
+    if(!this.agent){
+      this.notifyStageChange();
+      return;
+    }
+    if(!this.configMap[this.stage]) this.stage='stage1';
+    this.persistStage();
+    if(!this.enabled && !force){
+      this.notifyStageChange();
+      return;
+    }
+    this.applyStage({previous:null,reason,stats:this.lastStats,log:false});
+  }
+  applyStage({previous=null,reason=null,stats=null,log=false}={}){
+    const cfg=this.configMap[this.stage];
+    if(!cfg||!this.agent){
+      this.notifyStageChange();
+      return;
+    }
+    const gamma=cfg.gamma;
+    if(gamma!==undefined){
+      if(typeof this.agent.setGamma==='function') this.agent.setGamma(gamma);
+      else this.agent.gamma=gamma;
+      if(ui.gamma) ui.gamma.value=gamma;
+    }
+    const lr=cfg.lr;
+    if(lr!==undefined){
+      if(typeof this.agent.setLearningRate==='function') this.agent.setLearningRate(lr);
+      else this.agent.lr=lr;
+      if(ui.lr) ui.lr.value=lr;
+    }
+    const lambdaVal=cfg.lam??cfg.lambda;
+    if(lambdaVal!==undefined){
+      if(typeof this.agent.setLambda==='function') this.agent.setLambda(lambdaVal);
+      else this.agent.lam=lambdaVal;
+      if(ui.ppoLambda) ui.ppoLambda.value=lambdaVal;
+    }
+    const clipVal=cfg.clipRatio??cfg.clip;
+    if(clipVal!==undefined){
+      if(typeof this.agent.setClip==='function') this.agent.setClip(clipVal);
+      else this.agent.clipRatio=clipVal;
+      if(ui.ppoClip) ui.ppoClip.value=clipVal;
+    }
+    const entropy=cfg.entropy;
+    if(entropy!==undefined){
+      if(typeof this.agent.setEntropy==='function') this.agent.setEntropy(entropy);
+      else this.agent.entropyCoef=entropy;
+      if(ui.ppoEntropy) ui.ppoEntropy.value=entropy;
+      if(ui.pgEntropy) ui.pgEntropy.value=entropy;
+      if(ui.acEntropy) ui.acEntropy.value=entropy;
+    }
+    const valueCoef=cfg.valueCoef;
+    if(valueCoef!==undefined){
+      if(typeof this.agent.setValueCoef==='function') this.agent.setValueCoef(valueCoef);
+      else this.agent.valueCoef=valueCoef;
+      if(ui.ppoValueCoef) ui.ppoValueCoef.value=valueCoef;
+      if(ui.acValueCoef) ui.acValueCoef.value=valueCoef;
+    }
+    if(cfg.rewardConfig){
+      applyRewardConfigToUI({...cfg.rewardConfig});
+    }
+    updateReadouts();
+    updateBadgeMetrics();
+    this.notifyStageChange();
+    if(log&&reason){
+      this.logStageTransition(previous,this.stage,reason,stats);
+    }
+  }
+  changeStage(nextStage,reason,stats){
+    if(!this.configMap[nextStage]||nextStage===this.stage) return;
+    const previous=this.stage;
+    this.stage=nextStage;
+    this.persistStage();
+    this.lastSwitchEpisode=this.lastEpisode;
+    this.lastAverages={reward100:null,reward500:null,fruit100:null,fruit500:null};
+    this.applyStage({previous,reason,stats,log:true});
+  }
+  toNumber(value){
+    if(value===null||value===undefined) return null;
+    const num=Number(value);
+    return Number.isFinite(num)?num:null;
+  }
+  pushPoint(payload={}){
+    const last=this.points.length?this.points[this.points.length-1]:null;
+    const epRaw=this.toNumber(payload.episode);
+    const episode=epRaw??((last?.episode??0)+1);
+    const entry={
+      episode,
+      reward:this.toNumber(payload.reward),
+      fruits:this.toNumber(payload.fruits??payload.fruitPerEp),
+      avgReward100:this.toNumber(payload.avgReward100),
+      avgReward500:this.toNumber(payload.avgReward500),
+      avgFruit100:this.toNumber(payload.avgFruit100),
+      avgFruit500:this.toNumber(payload.avgFruit500),
+      entropy:this.toNumber(payload.entropy??payload.diagnostics?.entropy),
+      loss:this.toNumber(payload.loss),
+      crash:payload.crash??null,
+    };
+    this.points.push(entry);
+    if(this.points.length>this.maxPoints) this.points.shift();
+    this.lastEpisode=episode;
+    if(Number.isFinite(entry.avgReward100)) this.lastAverages.reward100=entry.avgReward100;
+    if(Number.isFinite(entry.avgReward500)) this.lastAverages.reward500=entry.avgReward500;
+    if(Number.isFinite(entry.avgFruit100)) this.lastAverages.fruit100=entry.avgFruit100;
+    if(Number.isFinite(entry.avgFruit500)) this.lastAverages.fruit500=entry.avgFruit500;
+  }
+  computeStats(windowSize=400){
+    if(!this.points.length) return null;
+    let recent=this.points.slice(-windowSize);
+    if(Number.isFinite(this.lastSwitchEpisode)){
+      recent=recent.filter(entry=>{
+        if(!entry) return false;
+        const ep=entry.episode;
+        return !Number.isFinite(ep)||ep>this.lastSwitchEpisode;
+      });
+    }
+    const count=recent.length;
+    const rewards=recent.map(p=>p.reward).filter(Number.isFinite);
+    const fruits=recent.map(p=>p.fruits).filter(Number.isFinite);
+    const entropyVals=recent.map(p=>p.entropy).filter(Number.isFinite);
+    const meanReward=rewards.length?rewards.reduce((a,b)=>a+b,0)/rewards.length:null;
+    const meanFruit=fruits.length?fruits.reduce((a,b)=>a+b,0)/fruits.length:null;
+    const entropy=entropyVals.length?entropyVals.reduce((a,b)=>a+b,0)/entropyVals.length:null;
+    const firstRewardAvg=this.findFirst(recent,'avgReward100');
+    const lastRewardAvg=this.findLast(recent,'avgReward100');
+    const firstFruitAvg=this.findFirst(recent,'avgFruit100');
+    const lastFruitAvg=this.findLast(recent,'avgFruit100');
+    const crashes=recent.filter(p=>p.crash&&p.crash!=='none');
+    const wallCrashes=crashes.filter(p=>p.crash==='wall').length;
+    const wallRate=crashes.length?wallCrashes/crashes.length:0;
+    const stats={
+      count,
+      meanReward:meanReward??0,
+      meanFruit:meanFruit??0,
+      avgReward100:this.lastAverages.reward100??(meanReward??0),
+      avgReward500:this.lastAverages.reward500??(meanReward??0),
+      avgFruit100:this.lastAverages.fruit100??(meanFruit??0),
+      avgFruit500:this.lastAverages.fruit500??(meanFruit??0),
+      deltaReward:this.diff(firstRewardAvg,lastRewardAvg),
+      deltaFruit:this.diff(firstFruitAvg,lastFruitAvg),
+      rewardTrend:this.halfTrend(recent,'reward'),
+      fruitTrend:this.halfTrend(recent,'fruits'),
+      entropy,
+      wallRate,
+      episodesSinceSwitch:this.episodesSinceSwitch(),
+    };
+    stats.stagnating=this.isStagnating(stats);
+    return stats;
+  }
+  findFirst(entries,key){
+    for(const item of entries){
+      const value=item?.[key];
+      if(Number.isFinite(value)) return value;
+    }
+    return null;
+  }
+  findLast(entries,key){
+    for(let i=entries.length-1;i>=0;i-=1){
+      const value=entries[i]?.[key];
+      if(Number.isFinite(value)) return value;
+    }
+    return null;
+  }
+  diff(a,b){
+    if(!Number.isFinite(a)||!Number.isFinite(b)) return 0;
+    return b-a;
+  }
+  halfTrend(entries,key){
+    const values=entries.map(p=>p?.[key]).filter(Number.isFinite);
+    if(values.length<6) return 0;
+    const mid=Math.floor(values.length/2);
+    if(mid<=0||mid>=values.length) return 0;
+    const first=values.slice(0,mid);
+    const second=values.slice(mid);
+    const avgArr=arr=>arr.reduce((a,b)=>a+b,0)/arr.length;
+    return avgArr(second)-avgArr(first);
+  }
+  episodesSinceSwitch(){
+    if(this.lastEpisode==null) return this.points.length;
+    if(this.lastSwitchEpisode==null) return this.lastEpisode;
+    return Math.max(0,this.lastEpisode-this.lastSwitchEpisode);
+  }
+  isStagnating(stats){
+    if(!stats) return false;
+    const dr=Math.abs(stats.deltaReward??0);
+    const df=Math.abs(stats.deltaFruit??0);
+    const rt=Math.abs(stats.rewardTrend??0);
+    const ft=Math.abs(stats.fruitTrend??0);
+    return dr<0.25&&df<0.06&&rt<0.2&&ft<0.05;
+  }
+  maybeSwitch(stats){
+    if(!stats) return;
+    if(stats.count<150) return;
+    const since=stats.episodesSinceSwitch??0;
+    const reward100=Number.isFinite(stats.avgReward100)?stats.avgReward100:stats.meanReward;
+    const fruit100=Number.isFinite(stats.avgFruit100)?stats.avgFruit100:stats.meanFruit;
+    const stagnating=stats.stagnating;
+    if(this.stage==='stage1'){
+      if(since>=200&&((reward100>-7&&fruit100>0.18)||(since>1500))){
+        this.changeStage('stage2','baseline stable',stats);
+        return;
+      }
+    }else if(this.stage==='stage2'){
+      if(since>=250&&stagnating&&reward100<-5.5){
+        this.changeStage('stage2b','stagnation',stats);
+        return;
+      }
+      if(since>=350&&reward100>-3&&fruit100>0.32&&(stats.fruitTrend??0)>=0){
+        this.changeStage('stage3','growth ready',stats);
+        return;
+      }
+    }else if(this.stage==='stage2b'){
+      if(since>=220&&(reward100>-4.5||fruit100>0.3)){
+        this.changeStage('stage3','reignite complete',stats);
+        return;
+      }
+    }else if(this.stage==='stage3'){
+      if(since>=280&&stagnating&&reward100<-2.5){
+        this.changeStage('stage3b','flatline',stats);
+        return;
+      }
+      if(since>=420&&reward100>-0.8&&fruit100>0.45&&(stats.wallRate??1)<0.45){
+        this.changeStage('stage4','mastering',stats);
+        return;
+      }
+    }else if(this.stage==='stage3b'){
+      if(since>=200&&(reward100>-2.8||fruit100>0.3)){
+        this.changeStage('stage3','recovered',stats);
+        return;
+      }
+    }else if(this.stage==='stage4'){
+      if(since>=260&&(reward100<-1.5||fruit100<0.22)){
+        this.changeStage('stage3b','regression',stats);
+      }
+    }
+  }
+  update(payload={}){
+    this.pushPoint(payload);
+    const stats=this.computeStats();
+    if(stats) this.lastStats=stats;
+    if(!this.enabled||!this.agent||!stats) return;
+    this.maybeSwitch(stats);
+  }
+  reset(){
+    this.points.length=0;
+    this.lastStats=null;
+    this.lastEpisode=null;
+    this.lastAverages={reward100:null,reward500:null,fruit100:null,fruit500:null};
+    this.lastSwitchEpisode=null;
+  }
+  logStageTransition(previous,next,reason,stats){
+    const cfg=this.configMap[next]||{};
+    const codeNext=this.formatStageCode(next);
+    const codePrev=previous?this.formatStageCode(previous):null;
+    const parts=[];
+    if(stats){
+      if(Number.isFinite(stats.avgReward100)) parts.push(`avg100=${stats.avgReward100.toFixed(2)}`);
+      if(Number.isFinite(stats.avgFruit100)) parts.push(`fruit100=${stats.avgFruit100.toFixed(2)}`);
+      if(Number.isFinite(stats.wallRate)) parts.push(`wall=${(stats.wallRate*100).toFixed(1)}%`);
+    }
+    const suffix=parts.length?` | ${parts.join(' • ')}`:'';
+    if(previous){
+      console.log(`[AUTO-PPO] ${codePrev} → ${codeNext} (${reason})${suffix}`);
+    }else{
+      console.log(`[AUTO-PPO] ${codeNext} (${reason})${suffix}`);
+    }
+    const metrics=stats?{
+      avgReward100:this.round(stats.avgReward100,3),
+      avgReward500:this.round(stats.avgReward500,3),
+      avgFruit100:this.round(stats.avgFruit100,3),
+      avgFruit500:this.round(stats.avgFruit500,3),
+      rewardTrend:this.round(stats.rewardTrend,3),
+      fruitTrend:this.round(stats.fruitTrend,3),
+      wallRate:this.round(stats.wallRate,3),
+      episodesSinceSwitch:stats.episodesSinceSwitch??null,
+    }:null;
+    if(metrics){
+      Object.keys(metrics).forEach(key=>{ if(!Number.isFinite(metrics[key])) delete metrics[key]; });
+    }
+    this.appendHistory({
+      type:'autoPpoStage',
+      ts:new Date().toISOString(),
+      from:previous,
+      to:next,
+      stage:next,
+      label:cfg.label??next,
+      reason,
+      enabled:this.enabled,
+      metrics:metrics&&Object.keys(metrics).length?metrics:undefined,
+    });
+  }
+  round(value,decimals=3){
+    if(!Number.isFinite(value)) return null;
+    const factor=10**decimals;
+    return Math.round(value*factor)/factor;
+  }
+  appendHistory(entry){
+    if(!entry||typeof fetch!=='function') return;
+    const url=this.historyUrl||(this.historyUrl=this.buildHistoryUrl());
+    if(!url) return;
+    fetch(url,{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({entry}),
+    }).catch(err=>console.warn('[AUTO-PPO] failed to log stage',err));
+  }
+  resolveApiBase(){
+    if(typeof globalThis==='undefined') return '';
+    const candidates=[globalThis.API_BASE_URL,globalThis.__API_BASE_URL];
+    for(const candidate of candidates){
+      if(typeof candidate!=='string') continue;
+      const trimmed=candidate.trim();
+      if(trimmed) return trimmed.replace(/\/+$/,'');
+    }
+    return '';
+  }
+  joinPath(base,path){
+    if(!base) return path;
+    if(!path) return base;
+    const trailing=base.endsWith('/');
+    const leading=path.startsWith('/');
+    if(trailing&&leading) return base+path.slice(1);
+    if(!trailing&&!leading) return `${base}/${path}`;
+    return base+path;
+  }
+  buildHistoryUrl(){
+    const base=this.resolveApiBase();
+    const path='/api/logs/snake-history.jsonl';
+    if(!base) return path;
+    if(/^https?:\/\//i.test(base)) return this.joinPath(base,path);
+    if(base.startsWith('/')) return this.joinPath(base,path);
+    return this.joinPath(`/${base}`,path);
+  }
+}
+
+function describeAutoPpoStage(info){
+  if(!info) return '—';
+  const code=info.code||'';
+  const label=info.label||'';
+  if(info.enabled){
+    return label?`${code} • ${label}`:(code||'Auto');
+  }
+  if(label){
+    return `${code} • ${label} (manual)`;
+  }
+  return 'Manual control';
+}
+
+function handleAutoPpoStageChange(info){
+  const isPpo=agent?.kind==='ppo';
+  if(ui.autoPpoToggle){
+    ui.autoPpoToggle.disabled=!isPpo||!window.autoPpo;
+    ui.autoPpoToggle.checked=!!(info?.enabled&&isPpo);
+  }
+  if(ui.autoPpoStage){
+    ui.autoPpoStage.textContent=isPpo?describeAutoPpoStage(info):'—';
+  }
+}
+
+function refreshAutoPpoUI(){
+  const controller=window.autoPpo;
+  handleAutoPpoStageChange(controller?controller.getStageInfo():null);
+}
+
+function updateAutoPpoVisibility(){
+  if(!ui.autoPpoField) return;
+  const isPpo=agent?.kind==='ppo';
+  ui.autoPpoField.classList.toggle('hidden',!isPpo);
+  if(!isPpo){
+    if(ui.autoPpoToggle){
+      ui.autoPpoToggle.checked=false;
+      ui.autoPpoToggle.disabled=true;
+    }
+    if(ui.autoPpoStage) ui.autoPpoStage.textContent='—';
+    return;
+  }
+  refreshAutoPpoUI();
+}
+
+if(typeof window!=='undefined'){
+  window.AutoPPOController=AutoPPOController;
+}
+
 class BrowserAutoPilot{
   constructor({rewardConfig={}}={}){
     this.history=[];
@@ -5518,6 +6189,15 @@ function instantiateAgent(key,opts={}){
   agent.learnRepeats=(appliedDefaults.learnRepeats??preset.defaults.learnRepeats)??agent.learnRepeats??1;
   targetSyncSteps=agent.kind==='dqn'? (+ui.targetSync.value||2000):Infinity;
   updateAdvancedVisibility();
+  if(agent.kind==='ppo'){
+    if(!window.autoPpo){
+      window.autoPpo=new AutoPPOController({agent,onStageChange:handleAutoPpoStageChange});
+    }else{
+      window.autoPpo.setAgent(agent);
+    }
+  }else if(window.autoPpo){
+    window.autoPpo.setAgent(null);
+  }
   ui.algoBadge.textContent=preset.badge||preset.label;
   ui.algoDescription.textContent=preset.description;
   if(typeof presetSelectEl!=='undefined'&&presetSelectEl&&presetSelectEl.value!==currentAlgoKey){
@@ -5539,6 +6219,7 @@ function instantiateAgent(key,opts={}){
     const desiredCount=Math.max(1,+ui.envCount.value||envCount);
     reconfigureEnvironment({count:desiredCount,size:+ui.gridSize.value,force:true});
   }
+  updateAutoPpoVisibility();
   autoPilot?.setAgent?.(agent);
   updateControlAvailability();
   updateReadouts();
@@ -5699,6 +6380,7 @@ function resetTrainingStats(){
   greedyFruitHist.length=0;
   greedyRewardHist.length=0;
   greedyEpisodeHist.length=0;
+  window.autoPpo?.reset();
   rewardTelemetry.reset();
   updateStatsUI();
   updateRewardTelemetryUI();
@@ -6010,6 +6692,26 @@ async function finalizeContextEpisode(ctx,envIndex){
     }else if(autoRunStopEpisode){
       updateAiRunLimitHint();
     }
+  }
+  if(agent?.kind==='ppo'){
+    const diag=typeof agent.getDiagnostics==='function'?agent.getDiagnostics():null;
+    const avgReward100=rwHist.length?avg(rwHist,Math.max(1,Math.min(100,rwHist.length))):null;
+    const avgReward500=rwHist.length?avg(rwHist,Math.max(1,Math.min(500,rwHist.length))):null;
+    const avgFruit100=fruitHist.length?avg(fruitHist,Math.max(1,Math.min(100,fruitHist.length))):null;
+    const avgFruit500=fruitHist.length?avg(fruitHist,Math.max(1,Math.min(500,fruitHist.length))):null;
+    window.autoPpo?.update({
+      episode,
+      reward:ctx.totalReward,
+      fruits:ctx.fruits,
+      avgReward100,
+      avgReward500,
+      avgFruit100,
+      avgFruit500,
+      entropy:diag?.entropy,
+      diagnostics:diag||undefined,
+      loss:latestLoss,
+      crash:crashType,
+    });
   }
   aiEpisodeHistory.push({
     episode,
@@ -6708,6 +7410,20 @@ if(stageSelect){
       stageSelect.value=presetKey;
 
     }
+  });
+}
+
+if(ui.autoPpoToggle){
+  ui.autoPpoToggle.addEventListener('change',()=>{
+    if(agent?.kind!=='ppo'){
+      ui.autoPpoToggle.checked=false;
+      return;
+    }
+    if(!window.autoPpo){
+      window.autoPpo=new AutoPPOController({agent,onStageChange:handleAutoPpoStageChange});
+    }
+    window.autoPpo.enable(ui.autoPpoToggle.checked);
+    refreshAutoPpoUI();
   });
 }
 
