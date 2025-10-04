@@ -177,6 +177,26 @@ canvas#board{
   border:1px solid rgba(128,138,206,0.2);
   box-shadow:0 16px 34px rgba(6,10,30,0.38);
 }
+.path-visual-overlay{
+  display:flex;
+  justify-content:flex-end;
+  align-items:center;
+  margin-top:8px;
+  color:var(--muted);
+  font-size:12px;
+}
+.path-visual-overlay label{
+  display:flex;
+  align-items:center;
+  gap:8px;
+  font-weight:600;
+  color:#e7ebff;
+}
+.path-visual-overlay input[type="checkbox"]{
+  width:18px;
+  height:18px;
+  accent-color:var(--accent-a);
+}
 .controls.tertiary{
   width:100%;
   justify-content:space-between;
@@ -995,6 +1015,9 @@ footer{
         <span class="mono" id="gridLabel">20×20</span>
       </div>
     </div>
+    <section class="path-visual-overlay" aria-label="Path Visualisation">
+      <label><input type="checkbox" id="showPathOverlay"> Show BFS / Hamilton Overlay</label>
+    </section>
   </section>
 
   <section class="card control-card">
@@ -1618,6 +1641,7 @@ footer{
 <script type="module" src="hf-tuner.js"></script>
 <script type="module">
 import {createAITuner} from './hf-tuner.js';
+import {bfsDistance, bfsPath, generateHamiltonCycle} from './src/path_helpers.js';
 
 const DEBUG_LOG=false;
 
@@ -3368,6 +3392,8 @@ let envCount=1;
 let vecEnv=new VecSnakeEnv(envCount,{cols:COLS,rows:ROWS,rewardConfig});
 let renderIndex=0;
 let env=vecEnv.getEnv(renderIndex);
+let hamiltonCycle=generateHamiltonCycle(COLS);
+window.overlayVisible=Boolean(window.overlayVisible);
 
 function snapshotEnv(environment){
   return {
@@ -3498,6 +3524,7 @@ function drawFrame(from,to,t){
     return {x:sx+(seg.x-sx)*t,y:sy+(seg.y-sy)*t};
   });
   drawSnakeSegments(segments);
+  drawOverlay(to);
 }
 function drawGrid(){
   bctx.save();
@@ -3564,6 +3591,42 @@ function drawSnakeSegments(segments){
     drawRoundedRect(x,y,size,size,radius);
   });
   bctx.restore();
+}
+function drawOverlay(state){
+  if(!window.overlayVisible) return;
+  const ctx=bctx;
+  const cell=CELL;
+  ctx.save();
+  if(hamiltonCycle.length>1){
+    ctx.strokeStyle='rgba(0,255,0,0.2)';
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    for(let i=0;i<hamiltonCycle.length;i++){
+      const current=hamiltonCycle[i];
+      const next=hamiltonCycle[(i+1)%hamiltonCycle.length];
+      ctx.moveTo((current.x+0.5)*cell,(current.y+0.5)*cell);
+      ctx.lineTo((next.x+0.5)*cell,(next.y+0.5)*cell);
+    }
+    ctx.stroke();
+  }
+  const snake=state?.snake||[];
+  const fruit=state?.fruit;
+  if(fruit&&snake.length){
+    const path=bfsPath(COLS,snake,fruit);
+    if(path.length>1){
+      ctx.strokeStyle='rgba(0,128,255,0.6)';
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      for(let i=0;i<path.length-1;i++){
+        const a=path[i];
+        const b=path[i+1];
+        ctx.moveTo((a.x+0.5)*cell,(a.y+0.5)*cell);
+        ctx.lineTo((b.x+0.5)*cell,(b.y+0.5)*cell);
+      }
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
 }
 function drawRoundedRect(x,y,w,h,r){
   const radius=Math.max(2,Math.min(r,Math.min(w,h)/2));
@@ -3956,6 +4019,7 @@ const ui={
   playbackButtons:Array.from(document.querySelectorAll('#playbackGroup .pill')),
   gridSize:document.getElementById('gridSize'),
   gridLabel:document.getElementById('gridLabel'),
+  showPathOverlay:document.getElementById('showPathOverlay'),
   btnToggleLiveView:document.getElementById('btnToggleLiveView'),
   btnTrain:document.getElementById('btnTrain'),
   btnPause:document.getElementById('btnPause'),
@@ -4820,6 +4884,15 @@ function bindUI(){
       resetEnvironment(desiredSize,true);
     }
   });
+  if(ui.showPathOverlay){
+    window.overlayVisible=ui.showPathOverlay.checked;
+    ui.showPathOverlay.addEventListener('change',()=>{
+      window.overlayVisible=ui.showPathOverlay.checked;
+      if(lastDrawnState){
+        drawFrame(lastDrawnState,lastDrawnState,1);
+      }
+    });
+  }
   ui.btnReset.addEventListener('click',()=>resetEnvironment(+ui.gridSize.value,true));
   ui.btnTrain.addEventListener('click',startTraining);
   ui.btnPause.addEventListener('click',stopTraining);
@@ -4982,6 +5055,7 @@ function reconfigureEnvironment({count=envCount,size=COLS,force=false}={}){
   COLS=desiredSize;
   ROWS=desiredSize;
   CELL=board.width/COLS;
+  hamiltonCycle=generateHamiltonCycle(COLS);
   stateDim=env?.getState()?.length||stateDim;
   seedContexts(true);
   agent?.setEnvCount?.(envCount);
