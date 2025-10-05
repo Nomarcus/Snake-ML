@@ -1,8 +1,13 @@
-import { runEpisode } from './snake-env.js';
+import { runEpisode, SnakeEnv } from './snake-env.js';
 
-export async function runFinalWatch(agent, env, episodes = 100) {
+/**
+ * Run a zero-epsilon evaluation phase that freezes training and
+ * collects metrics for fruit, reward, steps, and crash types.
+ */
+export async function runFinalWatch(agent, envManager, episodes = 100) {
   console.log('🟢 Starting Final Watch Mode...');
-  // Save current state to restore after test
+
+  // Save state to restore after test
   const savedState = {
     epsilon: agent.epsilon,
     epsilonStart: agent.epsilonStart,
@@ -12,11 +17,19 @@ export async function runFinalWatch(agent, env, episodes = 100) {
     aiAutoTuneEnabled: window.aiAutoTuneEnabled ?? false,
   };
 
-  // Disable all training activity
+  // Disable exploration and training
   agent.training = false;
   agent.epsilon = 0;
   window.autoActive = false;
   window.aiAutoTuneEnabled = false;
+
+  // --- Get grid and reward config from current environment ---
+  const cols = envManager?.cols ?? 15;
+  const rows = envManager?.rows ?? 15;
+  const rewardConfig = envManager?.rewardConfig ?? {};
+
+  // --- Create isolated eval environment ---
+  const evalEnv = new SnakeEnv(cols, rows, rewardConfig);
 
   const results = {
     fruit: [],
@@ -29,7 +42,7 @@ export async function runFinalWatch(agent, env, episodes = 100) {
 
   for (let i = 0; i < episodes; i++) {
     const { totalReward, fruitEaten, steps, crashType } =
-      await runEpisode(env, agent, { train: false, render: true });
+      await runEpisode(evalEnv, agent, { train: false, render: true });
 
     results.fruit.push(fruitEaten);
     results.reward.push(totalReward);
@@ -56,13 +69,18 @@ export async function runFinalWatch(agent, env, episodes = 100) {
   };
 
   console.log('🏁 Final Watch Summary:', summary);
+
   renderFinalStats(summary, savedState);
   exportResults(summary);
   renderMiniSummary(summary);
+
   return summary;
 }
 
-function avg(a) { return a.reduce((x, y) => x + y, 0) / a.length; }
+// --- Helpers ---
+function avg(a) {
+  return a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+}
 
 // --- Floating overlay after test ---
 function renderFinalStats(s, savedState) {
@@ -126,9 +144,7 @@ function renderMiniSummary(s) {
 
 // --- JSON export helper ---
 function exportResults(data) {
-  const blob = new Blob([JSON.stringify(data, null, 2)], {
-    type: 'application/json',
-  });
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -138,7 +154,7 @@ function exportResults(data) {
   console.log('💾 Exported final-watch-results.json');
 }
 
-// --- Restore all parameters and continue training ---
+// --- Restore training and continue ---
 function restoreTraining(state) {
   const agent = window.agent;
   if (!agent) return;
