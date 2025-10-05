@@ -8068,14 +8068,36 @@ window.addEventListener('load',()=>{
     return snapshot;
   }
 
-  function createEvalEnv(){
-    const cols = Number.isFinite(COLS) ? COLS : (window.env?.cols ?? 20);
-    const rows = Number.isFinite(ROWS) ? ROWS : (window.env?.rows ?? cols);
-    const cfg = detectRewardConfig();
-    const env = new SnakeEnv(cols, rows, cfg);
+function createEvalEnv() {
+  // Hämta aktuell storlek och belöningskonfiguration
+  const cols =
+    window.envManager?.cols ??
+    window.env?.cols ??
+    20;
+  const rows =
+    window.envManager?.rows ??
+    window.env?.rows ??
+    cols;
+  const cfg =
+    typeof detectRewardConfig === 'function'
+      ? detectRewardConfig()
+      : window.envManager?.rewardConfig ?? {};
+
+  // Skapa en ny isolerad testmiljö
+  const env = new SnakeEnv(cols, rows, cfg);
+
+  if (typeof env.setRewardConfig === 'function') {
     env.setRewardConfig(cfg);
-    return env;
   }
+
+  console.log(
+    `🧩 Final Watch: created eval env ${cols}×${rows}`,
+    cfg
+  );
+
+  return env;
+}
+
 
   function previewMove(env, action){
     const dir = normalizeDirection(env?.dir ?? { x: 1, y: 0 });
