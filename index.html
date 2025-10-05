@@ -7594,7 +7594,13 @@ function chooseTestAction(environment,state){
   addCandidate(selectGreedyAction(state),'model');
 
   const gridSize=environment.cols??COLS;
-  const bfs=bfsPath(gridSize,environment.snake,environment.fruit);
+  const bfs = bfsPath(
+  { cols: environment.cols ?? COLS, rows: environment.rows ?? ROWS }, // grid
+  environment.snake[0],  // 🟢 start (ormens huvud)
+  environment.fruit,     // 🍎 mål (frukten)
+  environment.snake      // 🐍 hela kroppen
+);
+
   if(bfs&&bfs.length>=2){
     const bfsAction=determineActionFromPoint(environment,bfs[1]);
     addCandidate(bfsAction,'bfs');
