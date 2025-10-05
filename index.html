@@ -8052,6 +8052,14 @@ window.addEventListener('load',()=>{
 (function(){
   const EPISODES = 50;
 
+  // --- Helper to normalize direction vectors (fix for Final Watch) ---
+  function normalizeDirection(dir) {
+    if (!dir || typeof dir.x !== 'number' || typeof dir.y !== 'number')
+      return { x: 0, y: 0 };
+    const len = Math.hypot(dir.x, dir.y);
+    return len === 0 ? { x: 0, y: 0 } : { x: dir.x / len, y: dir.y / len };
+  }
+
   function detectAgent(){
     return window.agent || window.trainingAgent || window.aiAgent || null;
   }
@@ -8068,35 +8076,31 @@ window.addEventListener('load',()=>{
     return snapshot;
   }
 
-function createEvalEnv() {
-  // Hämta aktuell storlek och belöningskonfiguration
-  const cols =
-    window.envManager?.cols ??
-    window.env?.cols ??
-    20;
-  const rows =
-    window.envManager?.rows ??
-    window.env?.rows ??
-    cols;
-  const cfg =
-    typeof detectRewardConfig === 'function'
-      ? detectRewardConfig()
-      : window.envManager?.rewardConfig ?? {};
+  function createEvalEnv() {
+    // Hämta aktuell storlek och belöningskonfiguration
+    const cols =
+      window.envManager?.cols ??
+      window.env?.cols ??
+      20;
+    const rows =
+      window.envManager?.rows ??
+      window.env?.rows ??
+      cols;
+    const cfg =
+      typeof detectRewardConfig === 'function'
+        ? detectRewardConfig()
+        : window.envManager?.rewardConfig ?? {};
 
-  // Skapa en ny isolerad testmiljö
-  const env = new SnakeEnv(cols, rows, cfg);
+    // Skapa en ny isolerad testmiljö
+    const env = new SnakeEnv(cols, rows, cfg);
 
-  if (typeof env.setRewardConfig === 'function') {
-    env.setRewardConfig(cfg);
+    if (typeof env.setRewardConfig === 'function') {
+      env.setRewardConfig(cfg);
+    }
+
+    console.log(`🧩 Final Watch: created eval env ${cols}×${rows}`, cfg);
+    return env;
   }
-
-  console.log(
-    `🧩 Final Watch: created eval env ${cols}×${rows}`,
-    cfg
-  );
-
-  return env;
-}
 
 
   function previewMove(env, action){
