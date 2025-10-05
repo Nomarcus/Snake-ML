@@ -1332,7 +1332,6 @@ footer{
       <button id="btnPause" class="secondary">⏸ Pause</button>
       <button id="btnStep" class="secondary">Step one episode</button>
       <button id="btnWatch" class="secondary">Watch</button>
-      <button id="watchFinalBtn" class="secondary btn accent">🏁 Final Watch</button>
       <button id="btnReset" class="secondary">Reset</button>
     </div>
     <div class="controls secondary">
@@ -8036,357 +8035,55 @@ window.addEventListener('load',()=>{
 });
 </script>
 
-<!-- === FINAL WATCH TEST BUTTON === -->
-<div id="finalWatchUI" style="text-align:center;margin:1em 0;">
-  <button id="runFinalWatchBtn"
+<!-- === WATCH TEST BUTTON (ε=0 deterministic preview) === -->
+<div id="watchUI" style="text-align:center;margin:1em 0;">
+  <button id="runWatchBtn"
           style="padding:0.6em 1.2em;font-size:1em;border-radius:8px;
                  background:#0a84ff;color:#fff;border:none;cursor:pointer;">
-    ▶️ Final Watch · 50 episoder
+    👁️ Watch · ε=0 testkörning
   </button>
-  <div id="finalWatchSummary"
-       style="margin-top:0.5em;font-family:monospace;"></div>
 </div>
 
-<!-- === FINAL WATCH – ε=0 deterministic evaluator with BFS & Hamilton fallbacks === -->
-<script>
-(function(){
-  const EPISODES = 50;
+<script type="module">
+import { runEpisode } from './snake-env.js';
+import { bfsPath, generateHamiltonCycle } from './src/path_helpers.js';
 
-  // --- Helper to normalize direction vectors (fix for Final Watch) ---
-  function normalizeDirection(dir) {
-    if (!dir || typeof dir.x !== 'number' || typeof dir.y !== 'number')
-      return { x: 0, y: 0 };
-    const len = Math.hypot(dir.x, dir.y);
-    return len === 0 ? { x: 0, y: 0 } : { x: dir.x / len, y: dir.y / len };
+document.getElementById('runWatchBtn').addEventListener('click', async () => {
+  const agent = window.agent || window.trainingAgent;
+  const envManager = window.envManager;
+  if (!agent || !envManager) {
+    console.warn('⚠️ Ingen aktiv agent eller miljö');
+    return;
   }
 
-  function detectAgent(){
-    return window.agent || window.trainingAgent || window.aiAgent || null;
+  // Fryser träningen
+  const prevTrain = agent.training;
+  const prevEps = agent.epsilon;
+  agent.training = false;
+  agent.epsilon = 0;
+
+  const env = envManager.getEnv ? envManager.getEnv(0) : envManager;
+  const rewardConfig = env.rewardConfig ?? {};
+
+  console.log('👁️ Watch-mode startar – deterministisk körning med BFS/Hamilton');
+  console.log('Reward config:', rewardConfig);
+
+  // Förbereder hjälpvägar
+  if (!env.bfsPath && typeof bfsPath === 'function') env.bfsPath = bfsPath;
+  if (!env.hamiltonCycle && typeof generateHamiltonCycle === 'function') {
+    env.hamiltonCycle = generateHamiltonCycle(env.cols, env.rows);
   }
 
-  function detectRewardConfig(){
-    const snapshot = typeof rewardConfig === 'object' && rewardConfig !== null ? { ...rewardConfig } : {};
-    const agent = detectAgent();
-    if(agent?.rewardConfig){
-      Object.assign(snapshot, agent.rewardConfig);
-    }
-    if(snapshot.usePathHelpers === undefined){
-      snapshot.usePathHelpers = true;
-    }
-    return snapshot;
-  }
+  // Kör en episod med render påslaget
+  await runEpisode(env, agent, { train: false, render: true });
 
-  function createEvalEnv() {
-    // Hämta aktuell storlek och belöningskonfiguration
-    const cols =
-      window.envManager?.cols ??
-      window.env?.cols ??
-      20;
-    const rows =
-      window.envManager?.rows ??
-      window.env?.rows ??
-      cols;
-    const cfg =
-      typeof detectRewardConfig === 'function'
-        ? detectRewardConfig()
-        : window.envManager?.rewardConfig ?? {};
+  console.log('🏁 Watch-run klar – återgår till träning');
 
-    // Skapa en ny isolerad testmiljö
-    const env = new SnakeEnv(cols, rows, cfg);
-
-    if (typeof env.setRewardConfig === 'function') {
-      env.setRewardConfig(cfg);
-    }
-
-    console.log(`🧩 Final Watch: created eval env ${cols}×${rows}`, cfg);
-    return env;
-  }
-
-
-  function previewMove(env, action){
-    const dir = normalizeDirection(env?.dir ?? { x: 1, y: 0 });
-    let nextDir = dir;
-    if(action === 1){
-      nextDir = { x: -dir.y, y: dir.x };
-    }else if(action === 2){
-      nextDir = { x: dir.y, y: -dir.x };
-    }
-    const head = env?.snake?.[0] ?? { x: 0, y: 0 };
-    const nx = head.x + nextDir.x;
-    const ny = head.y + nextDir.y;
-    const cols = env?.cols ?? 0;
-    const rows = env?.rows ?? 0;
-    const hitsWall = nx < 0 || ny < 0 || nx >= cols || ny >= rows;
-    const fruit = env?.fruit;
-    const willGrow = fruit && nx === fruit.x && ny === fruit.y;
-    const body = Array.isArray(env?.snake)
-      ? (willGrow ? env.snake : env.snake.slice(0, -1))
-      : [];
-    const hitsBody = body.some(seg => seg?.x === nx && seg?.y === ny);
-    return { crash: hitsWall || hitsBody, hitsWall, hitsBody, nextDir, nx, ny, willGrow };
-  }
-
-  function computeHamiltonAction(env){
-    const size = boardSize(env);
-    if(!size || size % 2 !== 0) return null;
-    const cycle = generateHamiltonCycle(size);
-    if(!Array.isArray(cycle) || !cycle.length) return null;
-    const head = env?.snake?.[0];
-    if(!head) return null;
-    const dir = normalizeDirection(env?.dir);
-    const index = cycle.findIndex(pt => pt.x === head.x && pt.y === head.y);
-    if(index === -1) return null;
-    const next = cycle[(index + 1) % cycle.length];
-    const dx = next.x - head.x;
-    const dy = next.y - head.y;
-    const left = { x: -dir.y, y: dir.x };
-    const right = { x: dir.y, y: -dir.x };
-    if(dx === dir.x && dy === dir.y) return 0;
-    if(dx === left.x && dy === left.y) return 1;
-    if(dx === right.x && dy === right.y) return 2;
-    return null;
-  }
-
-  function chooseDeterministicAction(env, agent){
-    const state = env?.getState?.() ?? null;
-    let action = 0;
-    if(agent){
-      try{
-        if(typeof agent.greedyAction === 'function'){
-          action = agent.greedyAction(state);
-        }else if(typeof agent.act === 'function'){
-          action = agent.act(state);
-        }
-      }catch(err){
-        console.warn('Final Watch: kunde inte hämta agentens aktion, använder 0', err);
-        action = 0;
-      }
-    }
-    if(!Number.isFinite(action)) action = 0;
-
-    const preview = previewMove(env, action);
-    if(!preview.crash){
-      return { action: action | 0, source: 'agent' };
-    }
-
-    const fallback = planTailFollowAction(env);
-    if(fallback && fallback.action !== null){
-      const fbPreview = previewMove(env, fallback.action);
-      if(!fbPreview.crash){
-        const label = fallback.type === 'fruit' ? 'bfs:fruit' : 'bfs:tail';
-        return { action: fallback.action | 0, source: label };
-      }
-    }
-
-    const hamAction = computeHamiltonAction(env);
-    if(hamAction !== null){
-      const hamPreview = previewMove(env, hamAction);
-      if(!hamPreview.crash){
-        return { action: hamAction | 0, source: 'hamilton' };
-      }
-    }
-
-    return { action: action | 0, source: 'agent-crash' };
-  }
-
-  async function runFinalWatch({ episodes = EPISODES } = {}){
-    const agent = detectAgent();
-    if(!agent){
-      alert('❌ Hittade ingen tränad agent. Kör träningen först.');
-      console.error('Final Watch: agent saknas. Globals:', Object.keys(window));
-      return;
-    }
-    const button = document.getElementById('watchFinalBtn') ?? document.getElementById('runFinalWatchBtn');
-    const summaryEl = document.getElementById('finalWatchSummary');
-    if(button){
-      button.disabled = true;
-      button.textContent = '⏳ Final Watch körs...';
-    }
-    if(summaryEl){
-      summaryEl.textContent = 'Kör 50 deterministiska episoder...';
-    }
-
-    const rewardSnapshot = detectRewardConfig();
-    const prevEpsilon = typeof agent.epsilon === 'number' ? agent.epsilon : undefined;
-
-    const env = createEvalEnv();
-    const loopFactor = typeof LOOP_FACTOR === 'number' ? LOOP_FACTOR : 6;
-    const maxSteps = Math.max(50, (env.cols ?? 20) * (env.rows ?? 20) * loopFactor);
-
-    const episodeStats = [];
-    const crashCounts = { wall: 0, self: 0, timeout: 0, loop: 0, none: 0 };
-    const heuristicTotals = { agent: 0, 'bfs:fruit': 0, 'bfs:tail': 0, hamilton: 0, 'agent-crash': 0 };
-
-    console.group('🟢 Final Watch — ε=0 utvärdering');
-    console.log('Inställningar', { episodes, bfsFallback: true, hamiltonFallback: true });
-    console.log('Reward-konfiguration vid test', rewardSnapshot);
-
-    let runError = null;
-    try{
-      agent.epsilon = 0;
-      for(let ep = 0; ep < episodes; ep++){
-        env.reset();
-        let rewardSum = 0;
-        let fruitCount = 0;
-        let steps = 0;
-        let done = false;
-        let crashType = 'none';
-        const usage = { agent: 0, 'bfs:fruit': 0, 'bfs:tail': 0, hamilton: 0, 'agent-crash': 0 };
-
-        while(!done && steps < maxSteps){
-          const choice = chooseDeterministicAction(env, agent);
-          usage[choice.source] = (usage[choice.source] ?? 0) + 1;
-          heuristicTotals[choice.source] = (heuristicTotals[choice.source] ?? 0) + 1;
-
-          const result = env.step(choice.action);
-          rewardSum += Number(result?.reward ?? 0);
-          if(result?.ateFruit) fruitCount += 1;
-          steps += 1;
-
-          if(result?.done){
-            done = true;
-            crashType = env.lastCrash ?? 'none';
-          }
-        }
-
-        if(!done){
-          crashType = 'loop';
-        }
-        crashCounts[crashType] = (crashCounts[crashType] ?? 0) + 1;
-
-        const boardFilled = env?.snake?.length >= (env.cols ?? 0) * (env.rows ?? 0);
-        episodeStats.push({
-          episode: ep + 1,
-          reward: rewardSum,
-          fruit: fruitCount,
-          steps,
-          crash: crashType,
-          completed: boardFilled && crashType === 'none',
-          heuristicUsage: usage,
-        });
-
-        console.log(`🎯 Episod ${ep + 1}: belöning ${rewardSum.toFixed(2)}, frukt ${fruitCount}, steg ${steps}, krasch: ${crashType}`, usage);
-      }
-    }catch(err){
-      runError = err;
-      console.error('Final Watch avbröts med fel', err);
-    }finally{
-      if(prevEpsilon !== undefined){
-        agent.epsilon = prevEpsilon;
-      }
-    }
-
-    if(runError){
-      console.groupEnd();
-      if(button){
-        button.disabled = false;
-        button.textContent = '▶️ Final Watch · 50 episoder';
-      }
-      throw runError;
-    }
-
-    const avg = values => values.reduce((sum, val) => sum + val, 0) / Math.max(1, values.length);
-    const rewards = episodeStats.map(s => s.reward);
-    const fruits = episodeStats.map(s => s.fruit);
-    const stepsArr = episodeStats.map(s => s.steps);
-    const avgReward = avg(rewards);
-    const avgFruit = avg(fruits);
-    const avgSteps = avg(stepsArr);
-    const wins = episodeStats.filter(s => s.completed).length;
-
-    console.table(episodeStats.map(s => ({
-      Episod: s.episode,
-      Belöning: s.reward.toFixed(2),
-      Frukt: s.fruit,
-      Steg: s.steps,
-      Krasch: s.crash,
-      Heuristik: Object.entries(s.heuristicUsage)
-        .filter(([, count]) => count > 0)
-        .map(([key, count]) => `${key}×${count}`)
-        .join(', ') || 'agent',
-    })));
-
-    console.log('Sammanfattning', {
-      episodes,
-      avgReward: avgReward.toFixed(2),
-      avgFruit: avgFruit.toFixed(2),
-      avgSteps: avgSteps.toFixed(1),
-      wins,
-      crashCounts,
-      heuristicTotals,
-    });
-    console.groupEnd();
-
-    if(summaryEl){
-      summaryEl.innerHTML = `
-        <div>ε=0 · ${episodes} episoder</div>
-        <div>Medelbelöning: ${avgReward.toFixed(2)}</div>
-        <div>Medelfrukt: ${avgFruit.toFixed(2)}</div>
-        <div>Medelsteg: ${Math.round(avgSteps)}</div>
-        <div>Fullbordade banor: ${wins}</div>
-      `;
-    }
-
-    if(button){
-      button.disabled = false;
-      button.textContent = '▶️ Final Watch · 50 episoder';
-    }
-
-    let overlay = document.getElementById('finalWatchOverlay');
-    if(!overlay){
-      overlay = document.createElement('div');
-      overlay.id = 'finalWatchOverlay';
-      overlay.style.position = 'fixed';
-      overlay.style.bottom = '20px';
-      overlay.style.right = '20px';
-      overlay.style.background = 'rgba(9,13,31,0.88)';
-      overlay.style.color = '#cfe3ff';
-      overlay.style.fontFamily = 'monospace';
-      overlay.style.padding = '14px 18px';
-      overlay.style.borderRadius = '10px';
-      overlay.style.boxShadow = '0 14px 32px rgba(0,0,0,0.35)';
-      overlay.style.zIndex = '9999';
-      document.body.appendChild(overlay);
-    }
-    overlay.innerHTML = `
-      <strong>Final Watch</strong><br>
-      ε=0 · ${episodes} episoder<br>
-      Avg reward: ${avgReward.toFixed(2)}<br>
-      Avg fruit: ${avgFruit.toFixed(2)}<br>
-      Avg steps: ${Math.round(avgSteps)}<br>
-      Fullbordade: ${wins}
-    `;
-    setTimeout(() => overlay && overlay.remove(), 12000);
-  }
-
-  function waitForAgentAndBindButton(){
-    const btn = document.getElementById('watchFinalBtn') ?? document.getElementById('runFinalWatchBtn');
-    if(!btn) return;
-    const summaryEl = document.getElementById('finalWatchSummary');
-    btn.disabled = true;
-    btn.textContent = '⌛ Final Watch väntar på agent...';
-    if(summaryEl){
-      summaryEl.textContent = 'Starta träningen för att aktivera Final Watch.';
-    }
-
-    const interval = setInterval(() => {
-      if(detectAgent()){
-        clearInterval(interval);
-        if(btn.dataset.finalWatchBound === 'true') return;
-        btn.dataset.finalWatchBound = 'true';
-        btn.disabled = false;
-        btn.textContent = '▶️ Final Watch · 50 episoder';
-        btn.addEventListener('click', () => runFinalWatch().catch(err => console.error('Final Watch fel:', err)));
-        if(summaryEl){
-          summaryEl.textContent = 'Klicka för att köra 50 deterministiska tester.';
-        }
-      }
-    }, 500);
-  }
-
-  document.addEventListener('DOMContentLoaded', waitForAgentAndBindButton);
-  window.runFinalWatch = runFinalWatch;
-})();
+  // Återställ träning
+  agent.training = prevTrain;
+  agent.epsilon = prevEps;
+});
 </script>
+
 </body>
 </html>
