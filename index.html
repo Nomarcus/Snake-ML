@@ -8176,7 +8176,6 @@ function planTailFollowAction(snake, fruit, grid) {
 
   if (typeof window !== 'undefined') {
     window.planTailFollowAction = planTailFollowAction;
-    window.snakeEnv = { ...(window.snakeEnv ?? {}), planTailFollowAction };
   }
 
   function selectAction(agent, state, train) {
@@ -8311,7 +8310,6 @@ function planTailFollowAction(snake, fruit, grid) {
   }
 
   window.runEpisode = runEpisode;
-  window.snakeEnv = { ...(window.snakeEnv ?? {}), runEpisode };
 </script>
 
 </body>
