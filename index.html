@@ -7565,17 +7565,18 @@ async function startFullWatchMode(){
   if(typeof training!=='undefined') training=false;
   setTestModeActive(true);
   const explorationState=captureExplorationState();
+  const hadUpdateWeights=!!agent&&Object.prototype.hasOwnProperty.call(agent,'updateWeights');
   fullWatchContext={
     explorationState,
     previousAgentTraining:agent?.training,
-    previousUpdateWeights:typeof agent?.updateWeights==='function'?agent.updateWeights:null,
+    previousUpdateWeights:agent?.updateWeights,
+    hadUpdateWeights,
+    previousEpsilon:typeof agent?.epsilon==='number'?agent.epsilon:null,
   };
   if(agent){
     agent.training=false;
-    agent.epsilon=0;
-    if(fullWatchContext.previousUpdateWeights){
-      agent.updateWeights=()=>{};
-    }
+    if(typeof agent.epsilon==='number') agent.epsilon=0;
+    agent.updateWeights=()=>{};
   }
   if(liveViewHidden) setLiveViewHidden(false);
   env.reset();
@@ -7628,17 +7629,21 @@ async function startFullWatchMode(){
       console.log('🟥 Full Watch stopped.');
       restoreExplorationState(fullWatchContext?.explorationState);
       if(agent&&fullWatchContext){
-        if(fullWatchContext.previousUpdateWeights){
+        if(fullWatchContext.hadUpdateWeights){
           agent.updateWeights=fullWatchContext.previousUpdateWeights;
+        }else{
+          delete agent.updateWeights;
         }
         if(fullWatchContext.previousAgentTraining!==undefined){
           agent.training=fullWatchContext.previousAgentTraining;
+        }
+        if(fullWatchContext.previousEpsilon!==null&&typeof agent.epsilon==='number'){
+          agent.epsilon=fullWatchContext.previousEpsilon;
         }
       }
       updateReadouts();
       watching=false;
       fullWatchLoopPromise=null;
-      window.fullWatchActive=false;
       ui.btnWatch.classList.remove('active');
       ui.btnWatch.textContent='Watch';
       ui.btnWatch.setAttribute('aria-pressed','false');
