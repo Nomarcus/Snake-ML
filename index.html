@@ -378,14 +378,6 @@ function decodeTensor(entry){
   return { shape: entry.shape.slice(), data };
 }
 
-function unitsFromTensor(t){
-  if(!t) return null;
-  if(Array.isArray(t.shape) && t.shape.length){
-    return t.shape[t.shape.length-1];
-  }
-  return typeof t.data?.length === "number" ? t.data.length : null;
-}
-
 class LoadedModelAgent{
   constructor(opts={}){
     this.name = opts.name ?? "CheckpointAgent";
@@ -397,73 +389,22 @@ class LoadedModelAgent{
 
   loadFromState(state){
     if(!state || !Array.isArray(state.weights)) throw new Error("Saknar viktdata i checkpoint");
+    if(state.stateDim===undefined || state.actionDim===undefined){
+      throw new Error("Checkpoint saknar dimensionsdata");
+    }
     const version = state.version ?? 0;
     if(version && version < 5){
       throw new Error(`Checkpoint-version ${version} stöds inte (kräver ≥5)`);
     }
+    this.stateDim = state.stateDim;
+    this.actionDim = state.actionDim;
     const cfg = state.config ?? {};
+    this.dueling = cfg.dueling !== false;
+    this.layers = Array.isArray(cfg.layers) && cfg.layers.length ? cfg.layers.slice() : [256,256,128];
     const weights = state.weights.map(decodeTensor);
-    const densePairs = [];
-    for(let i=0;i+1<weights.length;i+=2){
-      const kernel = weights[i];
-      const bias = weights[i+1];
-      if(!kernel || !bias || !Array.isArray(kernel.shape) || kernel.shape.length!==2) break;
-      densePairs.push({ kernel, bias });
-    }
-    if(!densePairs.length){
-      throw new Error("Kunde inte tolka nätverkets vikter");
-    }
-
-    let dueling = cfg.dueling;
-    if(dueling === undefined){
-      const lastBiasUnits = unitsFromTensor(densePairs[densePairs.length-1]?.bias);
-      const prevBiasUnits = unitsFromTensor(densePairs[densePairs.length-2]?.bias);
-      dueling = lastBiasUnits === 1 && prevBiasUnits && prevBiasUnits !== 1;
-    }
-    this.dueling = dueling !== false;
-    const tailPairs = this.dueling ? 4 : 1;
-    if(densePairs.length < tailPairs){
-      throw new Error("Ofullständig viktdata (saknar utgångslager)");
-    }
-    const trunkPairs = Math.max(0, densePairs.length - tailPairs);
-
-    let stateDim = state.stateDim;
-    if(stateDim === undefined){
-      const inferred = densePairs[0]?.kernel?.shape?.[0];
-      if(typeof inferred === "number") stateDim = inferred;
-    }
-    if(!Number.isFinite(Number(stateDim))) throw new Error("Checkpoint saknar dimensionsdata (state)");
-    stateDim = Number(stateDim);
-
-    let actionDim = state.actionDim;
-    if(actionDim === undefined){
-      if(this.dueling){
-        const advKernel = densePairs[trunkPairs+1]?.kernel;
-        if(Array.isArray(advKernel?.shape) && advKernel.shape.length===2){
-          actionDim = advKernel.shape[1];
-        }
-      }else{
-        const outKernel = densePairs[trunkPairs]?.kernel;
-        if(Array.isArray(outKernel?.shape) && outKernel.shape.length===2){
-          actionDim = outKernel.shape[1];
-        }
-      }
-    }
-    if(!Number.isFinite(Number(actionDim))) throw new Error("Checkpoint saknar dimensionsdata (action)");
-    actionDim = Number(actionDim);
-
-    this.stateDim = stateDim;
-    this.actionDim = actionDim;
-
-    let layers = Array.isArray(cfg.layers) && cfg.layers.length ? cfg.layers.slice() : null;
-    if(!layers || layers.length !== trunkPairs){
-      layers = densePairs.slice(0,trunkPairs).map(pair=>pair.kernel.shape?.[1] ?? unitsFromTensor(pair.bias)).filter((n)=>typeof n==="number");
-    }
-    this.layers = layers.length ? layers : [];
-
     let cursor = 0;
     const trunk=[];
-    for(let i=0;i<trunkPairs;i++){
+    for(const units of this.layers){
       const kernel = weights[cursor++];
       const bias = weights[cursor++];
       if(!kernel || !bias) throw new Error("Ofullständig viktdata (trunk)");
