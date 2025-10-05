@@ -8094,6 +8094,11 @@ window.addEventListener('load',()=>{
     return null;
   }
 
+  if (typeof window !== 'undefined') {
+    window.planTailFollowAction = planTailFollowAction;
+    window.snakeEnv = { ...(window.snakeEnv ?? {}), planTailFollowAction };
+  }
+
   function selectAction(agent, state, train) {
     if (!agent) return 0;
     try {
@@ -8226,7 +8231,7 @@ window.addEventListener('load',()=>{
   }
 
   window.runEpisode = runEpisode;
-  window.snakeEnv = { runEpisode };
+  window.snakeEnv = { ...(window.snakeEnv ?? {}), runEpisode };
 </script>
 
 </body>
