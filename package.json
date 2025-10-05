@@ -4,11 +4,9 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "start": "node api/proxy.js",
-    "train": "node train.js"
+    "start": "node api/proxy.js"
   },
   "dependencies": {
-    "@tensorflow/tfjs-node": "^4.20.0",
     "express": "^4.19.2",
     "node-fetch": "^3.3.2"
   }
