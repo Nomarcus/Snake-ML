@@ -66,6 +66,16 @@
         <button id="btnRLonly" title="Inaktiverar BFS/Hamilton">RL only</button>
         <button id="btnSafe" title="BFS+Hamilton utan RL">Safe mode</button>
       </div>
+
+      <h3 style="margin:14px 0 6px">Ladda tränad RL-modell</h3>
+      <div class="row" style="align-items:stretch">
+        <input type="file" id="modelFile" accept=".json,application/json" style="flex:1;min-width:140px" />
+        <button id="btnLoadModel">Ladda</button>
+        <span id="modelStatus" class="pill" style="white-space:nowrap">Ingen modell</span>
+      </div>
+      <p style="margin:4px 0 0;font-size:12px;color:var(--muted)">
+        Välj en <code>checkpoint.json</code> från <code>train.js</code> (version&nbsp;5). Q-nätet används direkt som RL-agent.
+      </p>
     </div>
 
     <h3 style="margin-top:12px">Statistik</h3>
@@ -82,7 +92,7 @@
 
 <footer class="panel pad">
   Tips: Kör <b>Max mode</b> (ε=0) och låt RL → BFS → Hamilton ta dig “hela vägen”.<br/>
-  Vill du köra din tränade agent? Sätt <code>window.rlAgent = { chooseAction(state){ … } }</code> – se markering i koden.
+  Vill du köra din tränade agent? Ladda <code>checkpoint.json</code> under ”Ladda tränad RL-modell” eller sätt manuellt <code>window.rlAgent = { chooseAction(state){ … } }</code>.
 </footer>
 
 <script>
@@ -101,7 +111,19 @@ function manhattan(a,b){ return Math.abs(a.x-b.x)+Math.abs(a.y-b.y); }
 class SnakeEnv{
   constructor(cols=15, rows=15){
     this.cols=cols|0; this.rows=rows|0;
+    this._visitDecay = 0.995;
+    this._visitIncrement = 0.3;
     this.reset();
+  }
+  _key(x,y){ return `${x},${y}`; }
+  _idx(x,y){ return y*this.cols + x; }
+  _ensureVisit(){
+    const size = this.cols*this.rows;
+    if(!this.visit || this.visit.length!==size){
+      this.visit = new Float32Array(size);
+    }else{
+      this.visit.fill(0);
+    }
   }
   reset(){
     this.alive = true;
@@ -114,15 +136,17 @@ class SnakeEnv{
     const cx = (this.cols/2|0), cy=(this.rows/2|0);
     this.dir = "RIGHT";
     this.snake = [{x:cx,y:cy},{x:cx-1,y:cy},{x:cx-2,y:cy}];
+    this.snakeSet = new Set(this.snake.map(seg=>this._key(seg.x,seg.y)));
+    this._ensureVisit();
     this.placeFruit();
     return this.getState();
   }
   placeFruit(){
     const free=[];
-    const occ = new Set(this.snake.map(p=>`${p.x},${p.y}`));
+    const occ = this.snakeSet || new Set(this.snake.map(p=>this._key(p.x,p.y)));
     for(let y=0;y<this.rows;y++){
       for(let x=0;x<this.cols;x++){
-        const k=`${x},${y}`;
+        const k=this._key(x,y);
         if(!occ.has(k)) free.push({x,y});
       }
     }
@@ -130,6 +154,51 @@ class SnakeEnv{
   }
   opposite(a,b){
     return (a==="UP"&&b==="DOWN")||(a==="DOWN"&&b==="UP")||(a==="LEFT"&&b==="RIGHT")||(a==="RIGHT"&&b==="LEFT");
+  }
+  getVisit(x,y){
+    if(x<0||y<0||x>=this.cols||y>=this.rows) return 1;
+    return this.visit ? this.visit[this._idx(x,y)]||0 : 0;
+  }
+  _dirVec(){ return DIRS[this.dir] || DIRS.RIGHT; }
+  _computeRLState(){
+    const head=this.snake[0];
+    const dirVec=this._dirVec();
+    const left={x:-dirVec.y,y:dirVec.x};
+    const right={x:dirVec.y,y:-dirVec.x};
+    const block=(dx,dy)=>{
+      const x=head.x+dx, y=head.y+dy;
+      if(!inside(x,y,this.cols,this.rows)) return 1;
+      return this.snakeSet && this.snakeSet.has(this._key(x,y)) ? 1 : 0;
+    };
+    const danger=[block(dirVec.x,dirVec.y),block(left.x,left.y),block(right.x,right.y)];
+    const dir=[dirVec.y===-1?1:0, dirVec.y===1?1:0, dirVec.x===-1?1:0, dirVec.x===1?1:0];
+    const fruit=[
+      this.fruit.y<head.y?1:0,
+      this.fruit.y>head.y?1:0,
+      this.fruit.x<head.x?1:0,
+      this.fruit.x>head.x?1:0
+    ];
+    const denomY=Math.max(1,this.rows-1);
+    const denomX=Math.max(1,this.cols-1);
+    const dists=[head.y/denomY,(this.rows-1-head.y)/denomY,head.x/denomX,(this.cols-1-head.x)/denomX];
+    const dx=this.fruit.x-head.x;
+    const dy=this.fruit.y-head.y;
+    const len=Math.hypot(dx,dy)||1;
+    const crowd=[
+      this.getVisit(head.x,head.y-1),
+      this.getVisit(head.x,head.y+1),
+      this.getVisit(head.x-1,head.y),
+      this.getVisit(head.x+1,head.y)
+    ];
+    return Float32Array.from([
+      ...danger,
+      ...dir,
+      ...fruit,
+      ...dists,
+      dy/len,
+      dx/len,
+      ...crowd
+    ]);
   }
   getState(){
     const head=this.snake[0];
@@ -147,6 +216,7 @@ class SnakeEnv{
       dx, dy, nearWall,
       steps:this.steps, fruits:this.fruits,
       stepsSinceFruit:this.stepsSinceFruit,
+      rlState:this._computeRLState(),
     };
   }
   step(action){
@@ -176,8 +246,14 @@ class SnakeEnv{
       return {done:true, reason:"SELF", reward:-4, state:this.getState()};
     }
 
-    // Flytta
-    this.snake.unshift({x:nx,y:ny});
+    if(this.visit){
+      for(let i=0;i<this.visit.length;i++) this.visit[i]*=this._visitDecay;
+    }
+
+    const newHead = {x:nx,y:ny};
+    this.snake.unshift(newHead);
+    if(!this.snakeSet) this.snakeSet = new Set();
+    this.snakeSet.add(this._key(nx,ny));
     let reward = -0.01; // liten stepp-kostnad
     if(nextIsFruit){
       this.fruits++;
@@ -185,15 +261,20 @@ class SnakeEnv{
       reward += 2.0;
       this.placeFruit();
     }else{
-      this.snake.pop();
+      const tail = this.snake.pop();
+      if(tail) this.snakeSet.delete(this._key(tail.x,tail.y));
       this.stepsSinceFruit++;
+      if(this.visit){
+        const idx = this._idx(nx,ny);
+        this.visit[idx] = Math.min(1, (this.visit[idx]||0) + this._visitIncrement);
+      }
     }
 
     this.steps++;
     this.totalReward += reward;
 
     // Loopdetektor (spara senaste 16 huvudpositioner)
-    const key=`${nx},${ny}`;
+    const key=this._key(nx,ny);
     this.loopWindow.push(key);
     if(this.loopWindow.length>16) this.loopWindow.shift();
 
@@ -273,38 +354,247 @@ function dirToAction(from,to){
 }
 
 ///////////////////////////////////////////////
+// RL-checkpoint → agent (frontend inference)
+///////////////////////////////////////////////
+function decodeTensor(entry){
+  if(!entry || typeof entry.data!=="string" || !Array.isArray(entry.shape)){
+    throw new Error("Ogiltig viktpost i checkpoint");
+  }
+  const raw = atob(entry.data);
+  const bytes = new Uint8Array(raw.length);
+  for(let i=0;i<raw.length;i++) bytes[i]=raw.charCodeAt(i);
+  const length = entry.shape.reduce((a,b)=>a*b,1);
+  const dtype = entry.dtype || "float32";
+  let data;
+  if(dtype==="float32"){
+    data = new Float32Array(bytes.buffer, 0, length);
+  }else if(dtype==="int32"){
+    const ints = new Int32Array(bytes.buffer, 0, length);
+    data = new Float32Array(length);
+    for(let i=0;i<length;i++) data[i]=ints[i];
+  }else{
+    throw new Error(`Stöder inte dtype ${dtype}`);
+  }
+  return { shape: entry.shape.slice(), data };
+}
+
+function unitsFromTensor(t){
+  if(!t) return null;
+  if(Array.isArray(t.shape) && t.shape.length){
+    return t.shape[t.shape.length-1];
+  }
+  return typeof t.data?.length === "number" ? t.data.length : null;
+}
+
+class LoadedModelAgent{
+  constructor(opts={}){
+    this.name = opts.name ?? "CheckpointAgent";
+    this.meta = opts.meta ?? null;
+    this.loaded = false;
+    this.dueling = true;
+    this.network = null;
+  }
+
+  loadFromState(state){
+    if(!state || !Array.isArray(state.weights)) throw new Error("Saknar viktdata i checkpoint");
+    const version = state.version ?? 0;
+    if(version && version < 5){
+      throw new Error(`Checkpoint-version ${version} stöds inte (kräver ≥5)`);
+    }
+    const cfg = state.config ?? {};
+    const weights = state.weights.map(decodeTensor);
+    const densePairs = [];
+    for(let i=0;i+1<weights.length;i+=2){
+      const kernel = weights[i];
+      const bias = weights[i+1];
+      if(!kernel || !bias || !Array.isArray(kernel.shape) || kernel.shape.length!==2) break;
+      densePairs.push({ kernel, bias });
+    }
+    if(!densePairs.length){
+      throw new Error("Kunde inte tolka nätverkets vikter");
+    }
+
+    let dueling = cfg.dueling;
+    if(dueling === undefined){
+      const lastBiasUnits = unitsFromTensor(densePairs[densePairs.length-1]?.bias);
+      const prevBiasUnits = unitsFromTensor(densePairs[densePairs.length-2]?.bias);
+      dueling = lastBiasUnits === 1 && prevBiasUnits && prevBiasUnits !== 1;
+    }
+    this.dueling = dueling !== false;
+    const tailPairs = this.dueling ? 4 : 1;
+    if(densePairs.length < tailPairs){
+      throw new Error("Ofullständig viktdata (saknar utgångslager)");
+    }
+    const trunkPairs = Math.max(0, densePairs.length - tailPairs);
+
+    let stateDim = state.stateDim;
+    if(stateDim === undefined){
+      const inferred = densePairs[0]?.kernel?.shape?.[0];
+      if(typeof inferred === "number") stateDim = inferred;
+    }
+    if(!Number.isFinite(Number(stateDim))) throw new Error("Checkpoint saknar dimensionsdata (state)");
+    stateDim = Number(stateDim);
+
+    let actionDim = state.actionDim;
+    if(actionDim === undefined){
+      if(this.dueling){
+        const advKernel = densePairs[trunkPairs+1]?.kernel;
+        if(Array.isArray(advKernel?.shape) && advKernel.shape.length===2){
+          actionDim = advKernel.shape[1];
+        }
+      }else{
+        const outKernel = densePairs[trunkPairs]?.kernel;
+        if(Array.isArray(outKernel?.shape) && outKernel.shape.length===2){
+          actionDim = outKernel.shape[1];
+        }
+      }
+    }
+    if(!Number.isFinite(Number(actionDim))) throw new Error("Checkpoint saknar dimensionsdata (action)");
+    actionDim = Number(actionDim);
+
+    this.stateDim = stateDim;
+    this.actionDim = actionDim;
+
+    let layers = Array.isArray(cfg.layers) && cfg.layers.length ? cfg.layers.slice() : null;
+    if(!layers || layers.length !== trunkPairs){
+      layers = densePairs.slice(0,trunkPairs).map(pair=>pair.kernel.shape?.[1] ?? unitsFromTensor(pair.bias)).filter((n)=>typeof n==="number");
+    }
+    this.layers = layers.length ? layers : [];
+
+    let cursor = 0;
+    const trunk=[];
+    for(let i=0;i<trunkPairs;i++){
+      const kernel = weights[cursor++];
+      const bias = weights[cursor++];
+      if(!kernel || !bias) throw new Error("Ofullständig viktdata (trunk)");
+      trunk.push({ kernel, bias, activation:"relu" });
+    }
+    if(this.dueling){
+      const advHidden = { kernel: weights[cursor++], bias: weights[cursor++], activation:"relu" };
+      const advOut = { kernel: weights[cursor++], bias: weights[cursor++], activation:"linear" };
+      const valHidden = { kernel: weights[cursor++], bias: weights[cursor++], activation:"relu" };
+      const valOut = { kernel: weights[cursor++], bias: weights[cursor++], activation:"linear" };
+      if([advHidden,advOut,valHidden,valOut].some(layer=>!layer.kernel || !layer.bias)){
+        throw new Error("Ofullständig viktdata (dueling)");
+      }
+      this.network = { trunk, advantage:{ hidden:advHidden, output:advOut }, value:{ hidden:valHidden, output:valOut } };
+    }else{
+      const output = { kernel: weights[cursor++], bias: weights[cursor++], activation:"linear" };
+      if(!output.kernel || !output.bias) throw new Error("Ofullständig viktdata (output)");
+      this.network = { trunk, output };
+    }
+    if(cursor !== weights.length){
+      console.warn("[MODEL] Överflödiga vikter i checkpoint, ignorerar", weights.length - cursor);
+    }
+    this.loaded = true;
+    return this;
+  }
+
+  _dense(input, layer){
+    const { kernel, bias, activation } = layer;
+    const [inDim, outDim] = kernel.shape;
+    const out = new Float32Array(outDim);
+    const weights = kernel.data;
+    const biasData = bias?.data;
+    for(let o=0;o<outDim;o++){
+      let sum = biasData ? biasData[o] : 0;
+      for(let i=0;i<inDim;i++){
+        sum += input[i] * weights[i*outDim + o];
+      }
+      if(activation === "relu") sum = sum > 0 ? sum : 0;
+      out[o] = sum;
+    }
+    return out;
+  }
+
+  _forward(obs){
+    let x = obs;
+    for(const layer of this.network.trunk){
+      x = this._dense(x, layer);
+    }
+    if(this.dueling){
+      const advHidden = this._dense(x, this.network.advantage.hidden);
+      const adv = this._dense(advHidden, this.network.advantage.output);
+      const valHidden = this._dense(x, this.network.value.hidden);
+      const val = this._dense(valHidden, this.network.value.output);
+      const out = new Float32Array(this.actionDim);
+      const base = val[0] ?? 0;
+      for(let i=0;i<out.length;i++) out[i] = adv[i] + base;
+      return out;
+    }
+    return this._dense(x, this.network.output);
+  }
+
+  _turn(currentDir, actionIdx){
+    const order = ["UP","RIGHT","DOWN","LEFT"];
+    let idx = order.indexOf(currentDir);
+    if(idx===-1) idx = 1; // default RIGHT
+    if(this.actionDim === 3){
+      if(actionIdx === 1) return order[(idx + 3) % 4];
+      if(actionIdx === 2) return order[(idx + 1) % 4];
+      return order[idx];
+    }
+    return order[actionIdx % order.length];
+  }
+
+  chooseAction(state){
+    if(!this.loaded) throw new Error("Ingen modell laddad");
+    const obs = state.rlState instanceof Float32Array ? state.rlState : Float32Array.from(state.rlState ?? []);
+    if(obs.length !== this.stateDim){
+      throw new Error(`Felaktig observationsdim (${obs.length} ≠ ${this.stateDim})`);
+    }
+    const q = this._forward(obs);
+    let best = 0;
+    for(let i=1;i<q.length;i++) if(q[i] > q[best]) best = i;
+    return this._turn(state.dir, best);
+  }
+}
+
+function parseCheckpointPayload(payload){
+  const data = typeof payload === "string" ? JSON.parse(payload) : payload;
+  if(!data || typeof data !== "object") throw new Error("Ogiltigt checkpoint-format");
+  const agentState = data.agent ?? data;
+  const agent = new LoadedModelAgent({ name: agentState.kind ?? "RL-agent", meta: data.meta ?? null });
+  agent.loadFromState(agentState);
+  return { agent, meta: data.meta ?? null, rewardConfig: data.rewardConfig ?? null };
+}
+
+window.LoadedModelAgent = LoadedModelAgent;
+window.parseCheckpointPayload = parseCheckpointPayload;
+
+///////////////////////////////////////////////
 //
 // RL-agent (stub) — BYT till din tränade agent här:
 // Sätt window.rlAgent = { chooseAction(state){ ... } } före start.
 //
 ///////////////////////////////////////////////
-if(typeof window.rlAgent!=="object"){
-  window.rlAgent = {
-    // Enkel heuristik: gå mot frukten, försök undvika väggar/180°, fallback till säkra moves
-    chooseAction(state){
-      const {head,fruit,cols,rows,dir} = state;
-      const prefs=[];
-      if(fruit.x>head.x) prefs.push("RIGHT");
-      if(fruit.x<head.x) prefs.push("LEFT");
-      if(fruit.y>head.y) prefs.push("DOWN");
-      if(fruit.y<head.y) prefs.push("UP");
-      // fyll på med andra riktningar som backup
-      for(const d of DIR_KEYS) if(!prefs.includes(d)) prefs.push(d);
+const defaultRLAgent = {
+  // Enkel heuristik: gå mot frukten, försök undvika väggar/180°, fallback till säkra moves
+  chooseAction(state){
+    const {head,fruit,cols,rows,dir} = state;
+    const prefs=[];
+    if(fruit.x>head.x) prefs.push("RIGHT");
+    if(fruit.x<head.x) prefs.push("LEFT");
+    if(fruit.y>head.y) prefs.push("DOWN");
+    if(fruit.y<head.y) prefs.push("UP");
+    for(const d of DIR_KEYS) if(!prefs.includes(d)) prefs.push(d);
 
-      // undvik 180°
-      const opposite = {UP:"DOWN",DOWN:"UP",LEFT:"RIGHT",RIGHT:"LEFT"}[dir];
-      const snakeSet = new Set(state.snake.slice(0,-1).map(p=>`${p.x},${p.y}`));
-      for(const a of prefs){
-        if(a===opposite) continue;
-        const v=DIRS[a];
-        const nx=head.x+v.x, ny=head.y+v.y;
-        if(!inside(nx,ny,cols,rows)) continue;
-        if(snakeSet.has(`${nx},${ny}`)) continue;
-        return a;
-      }
-      return dir; // sista utväg
+    const opposite = {UP:"DOWN",DOWN:"UP",LEFT:"RIGHT",RIGHT:"LEFT"}[dir];
+    const snakeSet = new Set(state.snake.slice(0,-1).map(p=>`${p.x},${p.y}`));
+    for(const a of prefs){
+      if(a===opposite) continue;
+      const v=DIRS[a];
+      const nx=head.x+v.x, ny=head.y+v.y;
+      if(!inside(nx,ny,cols,rows)) continue;
+      if(snakeSet.has(`${nx},${ny}`)) continue;
+      return a;
     }
-  };
+    return dir;
+  }
+};
+
+if(typeof window.rlAgent!=="object" || typeof window.rlAgent.chooseAction!=="function"){
+  window.rlAgent = defaultRLAgent;
 }
 
 ///////////////////////////////////////////////
@@ -479,6 +769,9 @@ const ui = {
   btnMax: document.getElementById('btnMax'),
   btnRLonly: document.getElementById('btnRLonly'),
   btnSafe: document.getElementById('btnSafe'),
+  btnLoadModel: document.getElementById('btnLoadModel'),
+  modelFile: document.getElementById('modelFile'),
+  modelStatus: document.getElementById('modelStatus'),
   speed: document.getElementById('speed'),
   eps: document.getElementById('eps'),
   chkHybrid: document.getElementById('chkHybrid'),
@@ -490,11 +783,17 @@ const ui = {
   spdLbl: document.getElementById('spdLbl'),
   gridLbl: document.getElementById('gridLbl')
 };
+function setModelStatus(text, tone){
+  ui.modelStatus.textContent = text;
+  ui.modelStatus.classList.remove('ok','err','warn');
+  if(tone) ui.modelStatus.classList.add(tone);
+}
 function appendLog(msg){
   const t = new Date().toLocaleTimeString();
   ui.log.textContent += `[${t}] ${msg}\n`;
   ui.log.scrollTop = ui.log.scrollHeight;
 }
+setModelStatus('Ingen modell','warn');
 function setStats(){
   const s = env.getState();
   const fill = (s.len/(s.cols*s.rows))*100;
@@ -513,6 +812,39 @@ ui.gridLbl.textContent = `${env.cols}×${env.rows}`;
 
 let running=false, rafId=null, acc=0, fps=+ui.speed.value;
 ui.spdLbl.textContent = `${fps} fps`;
+
+async function loadSelectedModel(){
+  const file = ui.modelFile.files && ui.modelFile.files[0];
+  if(!file){
+    setModelStatus('Ingen fil vald','warn');
+    return;
+  }
+  setModelStatus('Laddar…','warn');
+  ui.btnLoadModel.disabled = true;
+  try{
+    const text = await file.text();
+    const { agent, meta } = parseCheckpointPayload(text);
+    agent.meta = meta;
+    agent.name = file.name;
+    window.rlAgent = agent;
+    const details=[];
+    if(meta?.episode) details.push(`episod ${meta.episode}`);
+    if(meta?.boardSize) details.push(`${meta.boardSize}×${meta.boardSize}`);
+    const status = details.length ? `Laddad: ${details.join(', ')}` : 'Modell laddad';
+    setModelStatus(status,'ok');
+    appendLog(`✅ Modell laddad: ${file.name}${details.length?` (${details.join(', ')})`:''}`);
+    env.reset();
+    draw(env);
+    setStats();
+  }catch(err){
+    console.error('[MODEL]', err);
+    const msg = err?.message ?? String(err);
+    setModelStatus(`Fel: ${msg}`,'err');
+    appendLog(`❌ Modellfel: ${msg}`);
+  }finally{
+    ui.btnLoadModel.disabled = false;
+  }
+}
 
 function tick(dt){
   if(!running) return;
@@ -549,6 +881,17 @@ function stepOnce(){
 ///////////////////////////////////////////////
 // Event handlers
 ///////////////////////////////////////////////
+ui.modelFile.addEventListener('change', ()=>{
+  const file = ui.modelFile.files && ui.modelFile.files[0];
+  if(file){
+    setModelStatus(`Vald: ${file.name}`);
+  }else{
+    setModelStatus('Ingen modell','warn');
+  }
+});
+ui.btnLoadModel.onclick=()=>{
+  loadSelectedModel();
+};
 ui.btnStart.onclick=()=>{
   if(running) return;
   running=true; loop.last=undefined;
