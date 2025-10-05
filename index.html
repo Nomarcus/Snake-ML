@@ -3751,18 +3751,38 @@ function drawOverlay(state){
   const snake=state?.snake||[];
   const fruit=state?.fruit;
   if(fruit&&snake.length){
-    const path=bfsPath(COLS,snake,fruit);
-    if(path.length>1){
-      ctx.strokeStyle='rgba(0,128,255,0.6)';
-      ctx.lineWidth=2;
-      ctx.beginPath();
-      for(let i=0;i<path.length-1;i++){
-        const a=path[i];
-        const b=path[i+1];
-        ctx.moveTo((a.x+0.5)*cell,(a.y+0.5)*cell);
-        ctx.lineTo((b.x+0.5)*cell,(b.y+0.5)*cell);
+    const path = bfsPath(
+      { cols: COLS, rows: ROWS },
+      snake?.[0],
+      fruit,
+      snake
+    ) || [];
+    if(path.length>0){
+      const points=[snake[0]];
+      let current={...snake[0]};
+      const dirs=[
+        {x:0,y:-1},
+        {x:1,y:0},
+        {x:0,y:1},
+        {x:-1,y:0}
+      ];
+      for(const action of path){
+        const dir=dirs[action]||{x:0,y:0};
+        current={x:current.x+dir.x,y:current.y+dir.y};
+        points.push({...current});
       }
-      ctx.stroke();
+      if(points.length>1){
+        ctx.strokeStyle='rgba(0,128,255,0.6)';
+        ctx.lineWidth=2;
+        ctx.beginPath();
+        for(let i=0;i<points.length-1;i++){
+          const a=points[i];
+          const b=points[i+1];
+          ctx.moveTo((a.x+0.5)*cell,(a.y+0.5)*cell);
+          ctx.lineTo((b.x+0.5)*cell,(b.y+0.5)*cell);
+        }
+        ctx.stroke();
+      }
     }
   }
   ctx.restore();
@@ -7499,72 +7519,12 @@ function scoreActionOutcome(outcome,strategy,{preferModel=false,nearEndgame=fals
   if(nearEndgame) score+=ratio*40;
   return score;
 }
-function planTailFollowAction(snake, fruit, grid) {
-  // En enkel fallback-funktion för "tail follow" när Hamilton eller BFS inte används
-  const head = snake[0];
-  const dirs = [
-    { x: 0, y: -1, action: 0 }, // up
-    { x: 1, y: 0, action: 1 },  // right
-    { x: 0, y: 1, action: 2 },  // down
-    { x: -1, y: 0, action: 3 }  // left
-  ];
+// ======== BEGIN: PATH HELPERS (single source of truth) ========
 
-  // Försök undvika krock med vägg eller kropp
-  for (let d of dirs) {
-    const nx = head.x + d.x;
-    const ny = head.y + d.y;
-    const safe = nx >= 0 && ny >= 0 && nx < grid.cols && ny < grid.rows &&
-      !snake.some(seg => seg.x === nx && seg.y === ny);
-    if (safe) return d.action;
-  }
-
-  // Om inget säkert drag hittas, välj slumpmässigt (failsafe)
-  return Math.floor(Math.random() * 4);
-}
-function bfsPath(grid, start, goal, snake) {
-  const rows = grid.rows, cols = grid.cols;
-  const queue = [start];
-  const visited = new Set([`${start.x},${start.y}`]);
-  const parent = {};
-  const dirs = [
-    { x: 0, y: -1, a: 0 },
-    { x: 1, y: 0, a: 1 },
-    { x: 0, y: 1, a: 2 },
-    { x: -1, y: 0, a: 3 }
-  ];
-
-  while (queue.length > 0) {
-    const cur = queue.shift();
-    if (cur.x === goal.x && cur.y === goal.y) {
-      const path = [];
-      let key = `${cur.x},${cur.y}`;
-      while (parent[key]) {
-        const p = parent[key];
-        path.push(p.a);
-        key = `${p.x},${p.y}`;
-      }
-      return path.reverse();
-    }
-
-    for (let d of dirs) {
-      const nx = cur.x + d.x;
-      const ny = cur.y + d.y;
-      const key = `${nx},${ny}`;
-      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
-      if (visited.has(key)) continue;
-      if (snake.some(seg => seg.x === nx && seg.y === ny)) continue;
-
-      visited.add(key);
-      parent[key] = { x: cur.x, y: cur.y, a: d.a };
-      queue.push({ x: nx, y: ny });
-    }
-  }
-
-  return null; // no path found
-} // ✅ denna måste finnas!
-
-// === Hamilton Cycle fallback (very simple heuristic) ===
-function generateHamiltonCycle(cols, rows) {
+// Hamilton-cycle (serpentin) för fallback & overlay
+function generateHamiltonCycle(sizeOrCols, maybeRows){
+  const cols = Number.isFinite(maybeRows) ? sizeOrCols|0 : (sizeOrCols?.cols|0) || sizeOrCols|0;
+  const rows = Number.isFinite(maybeRows) ? maybeRows|0 : (sizeOrCols?.rows|0) || cols;
   const path = [];
   for (let y = 0; y < rows; y++) {
     if (y % 2 === 0) {
@@ -7575,6 +7535,94 @@ function generateHamiltonCycle(cols, rows) {
   }
   return path;
 }
+
+// BFS vägplanerare: bfsPath(grid:{cols,rows}, start:{x,y}, goal:{x,y}, snake:Array<{x,y}>)
+function bfsPath(grid, start, goal, snake) {
+  // 🛡 input-guards för att undvika runtime-fel i Watch
+  if (!grid || !Number.isFinite(grid.cols) || !Number.isFinite(grid.rows)) return null;
+  if (!start || !Number.isFinite(start.x) || !Number.isFinite(start.y)) return null;
+  if (!goal  || !Number.isFinite(goal.x)  || !Number.isFinite(goal.y))  return null;
+  if (!Array.isArray(snake)) return null;
+
+  const rows = grid.rows | 0, cols = grid.cols | 0;
+  const queue = [{ x: start.x|0, y: start.y|0 }];
+  const visited = new Set([`${start.x|0},${start.y|0}`]);
+  const parent = {};
+  const dirs = [
+    { x: 0, y: -1, a: 0 }, // up
+    { x: 1, y:  0, a: 1 }, // right
+    { x: 0, y:  1, a: 2 }, // down
+    { x:-1, y:  0, a: 3 }  // left
+  ];
+  const occupied = new Set(snake.map(s => `${s.x|0},${s.y|0}`));
+
+  while (queue.length) {
+    const cur = queue.shift();
+    if (cur.x === (goal.x|0) && cur.y === (goal.y|0)) {
+      // rekonstruera actions (0/1/2/3) från parent-länkar
+      const actions = [];
+      let key = `${cur.x},${cur.y}`;
+      while (parent[key]) {
+        const p = parent[key];
+        actions.push(p.a);
+        key = `${p.x},${p.y}`;
+      }
+      return actions.reverse();
+    }
+    for (const d of dirs) {
+      const nx = cur.x + d.x, ny = cur.y + d.y;
+      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+      const k = `${nx},${ny}`;
+      if (visited.has(k)) continue;
+      if (occupied.has(k)) continue;
+      visited.add(k);
+      parent[k] = { x: cur.x, y: cur.y, a: d.a };
+      queue.push({ x: nx, y: ny });
+    }
+  }
+  return null;
+}
+
+// Tail-follow action med BFS-försök mot frukten och säkra fallbacks
+function planTailFollowAction(snake, fruit, grid) {
+  // 🛡 robusta guards mot tomt snake/fruit/grid i Watch
+  if (!Array.isArray(snake) || snake.length === 0) return Math.floor(Math.random() * 4);
+  if (!grid || !Number.isFinite(grid.cols) || !Number.isFinite(grid.rows)) return Math.floor(Math.random() * 4);
+  if (!fruit || !Number.isFinite(fruit.x) || !Number.isFinite(fruit.y)) return Math.floor(Math.random() * 4);
+
+  const head = snake[0];
+  if (!head || !Number.isFinite(head.x) || !Number.isFinite(head.y)) return Math.floor(Math.random() * 4);
+
+  // 1) BFS direkt mot frukten
+  const path = bfsPath(grid, head, fruit, snake);
+  if (path && path.length > 0) return path[0];
+
+  // 2) Annars välj ett säkert drag nära huvudet
+  const dirs = [
+    { x: 0, y: -1, action: 0 }, // up
+    { x: 1, y:  0, action: 1 }, // right
+    { x: 0, y:  1, action: 2 }, // down
+    { x:-1, y:  0, action: 3 }  // left
+  ];
+  for (const d of dirs) {
+    const nx = head.x + d.x, ny = head.y + d.y;
+    const safe = nx >= 0 && ny >= 0 && nx < grid.cols && ny < grid.rows &&
+                 !snake.some(seg => seg.x === nx && seg.y === ny);
+    if (safe) return d.action;
+  }
+
+  // 3) Sista utväg – slump
+  return Math.floor(Math.random() * 4);
+}
+
+// Exponera vid behov (frivilligt)
+if (typeof window !== 'undefined') {
+  window.bfsPath = bfsPath;
+  window.generateHamiltonCycle = generateHamiltonCycle;
+  window.planTailFollowAction = planTailFollowAction;
+  window.snakeEnv = { ...(window.snakeEnv ?? {}), bfsPath, generateHamiltonCycle, planTailFollowAction };
+}
+// ======== END: PATH HELPERS ========
 
 function chooseTestAction(environment,state){
   const candidates=[];
@@ -7593,22 +7641,24 @@ function chooseTestAction(environment,state){
 
   addCandidate(selectGreedyAction(state),'model');
 
-  const gridSize=environment.cols??COLS;
   const bfs = bfsPath(
-  { cols: environment.cols ?? COLS, rows: environment.rows ?? ROWS }, // grid
-  environment.snake[0],  // 🟢 start (ormens huvud)
-  environment.fruit,     // 🍎 mål (frukten)
-  environment.snake      // 🐍 hela kroppen
-);
+    { cols: environment.cols ?? COLS, rows: environment.rows ?? ROWS },
+    environment.snake?.[0],
+    environment.fruit,
+    environment.snake
+  );
 
-  if(bfs&&bfs.length>=2){
-    const bfsAction=determineActionFromPoint(environment,bfs[1]);
-    addCandidate(bfsAction,'bfs');
+  if(Array.isArray(bfs) && bfs.length>0){
+    addCandidate(bfs[0],'bfs');
   }
 
-  const tailPlan=planTailFollowAction(environment);
-  if(tailPlan?.type==='tail'&&tailPlan.action!==null){
-    addCandidate(tailPlan.action,'tail');
+  const tailAction=planTailFollowAction(
+    environment.snake,
+    environment.fruit,
+    { cols: environment.cols ?? COLS, rows: environment.rows ?? ROWS }
+  );
+  if(Number.isFinite(tailAction)){
+    addCandidate(tailAction,'tail');
   }
 
   const hamAction=getHamiltonianAction(environment);
@@ -7661,6 +7711,39 @@ async function startFullWatchMode(){
   }
   if(liveViewHidden) setLiveViewHidden(false);
   env.reset();
+  // ======== BEGIN: SELF TEST ========
+  (function runPathHelperSelfTest(){
+    try {
+      const grid = { cols: env.cols ?? COLS, rows: env.rows ?? ROWS };
+      const head = env.snake?.[0] || { x: 0, y: 0 };
+      const fruit = env.fruit || { x: grid.cols-1, y: grid.rows-1 };
+      const snake = Array.isArray(env.snake) ? env.snake : [{x:0,y:0}];
+
+      const testBfs = bfsPath(grid, head, fruit, snake);
+      if (testBfs && Array.isArray(testBfs)) {
+        console.log('✅ BFS self-test OK, steps:', testBfs.length);
+      } else {
+        console.warn('⚠️ BFS self-test returned null/empty');
+      }
+
+      const action = planTailFollowAction(snake, fruit, grid);
+      if (Number.isFinite(action)) {
+        console.log('✅ TailFollow self-test OK, action:', action);
+      } else {
+        console.warn('⚠️ TailFollow self-test invalid action');
+      }
+
+      const ham = generateHamiltonCycle(grid.cols, grid.rows);
+      if (Array.isArray(ham) && ham.length === grid.cols * grid.rows) {
+        console.log('✅ Hamilton self-test OK, length:', ham.length);
+      } else {
+        console.warn('⚠️ Hamilton self-test unexpected length:', ham?.length);
+      }
+    } catch (e) {
+      console.error('❌ Path helper self-test failed:', e);
+    }
+  })();
+  // ======== END: SELF TEST ========
   setImmediateState(env);
   currentTestLen=env.snake?.length??0;
   bestTestLen=Math.max(bestTestLen,currentTestLen);
@@ -8143,41 +8226,6 @@ window.addEventListener('load',()=>{
     return null;
   }
 
-// === SAFE TAIL-FOLLOW ACTION ===
-function planTailFollowAction(snake, fruit, grid) {
-  if (!Array.isArray(snake) || snake.length === 0 || !grid) return 0;
-  const head = snake[0];
-
-  // 🧠 Försök hitta väg till frukten via BFS
-  const path = bfsPath(grid, head, fruit, snake);
-  if (path && path.length > 0) {
-    return path[0]; // första draget mot frukten
-  }
-
-  // 🌀 Annars försök följa svansen säkert (fallback)
-  const dirs = [
-    { x: 0, y: -1, action: 0 }, // up
-    { x: 1, y: 0, action: 1 },  // right
-    { x: 0, y: 1, action: 2 },  // down
-    { x: -1, y: 0, action: 3 }  // left
-  ];
-
-  for (let d of dirs) {
-    const nx = head.x + d.x;
-    const ny = head.y + d.y;
-    const safe = nx >= 0 && ny >= 0 && nx < grid.cols && ny < grid.rows &&
-      !snake.some(seg => seg.x === nx && seg.y === ny);
-    if (safe) return d.action;
-  }
-
-  // 🎲 Om inget säkert drag hittas – slumpa
-  return Math.floor(Math.random() * 4);
-}
-
-  if (typeof window !== 'undefined') {
-    window.planTailFollowAction = planTailFollowAction;
-  }
-
   function selectAction(agent, state, train) {
     if (!agent) return 0;
     try {
@@ -8267,9 +8315,13 @@ function planTailFollowAction(snake, fruit, grid) {
 
       let action = selectAction(agent, state, train);
       if (tailFollowFallback) {
-        const fallback = planTailFollowAction(env, { debug: debugTailFallback });
-        if (fallback?.type === 'tail' && fallback.action !== null) {
-          action = fallback.action;
+        const fallback = planTailFollowAction(
+          env.snake,
+          env.fruit,
+          { cols: env.cols ?? 20, rows: env.rows ?? 20 }
+        );
+        if (Number.isFinite(fallback)) {
+          action = fallback;
         }
       }
       const result = env.step(action) ?? {};
