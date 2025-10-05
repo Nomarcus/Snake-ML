@@ -7522,6 +7522,63 @@ function planTailFollowAction(snake, fruit, grid) {
   // Om inget säkert drag hittas, välj slumpmässigt (failsafe)
   return Math.floor(Math.random() * 4);
 }
+// === BFS Path Helper (inline version) ===
+function bfsPath(grid, start, goal, snake) {
+  const rows = grid.rows, cols = grid.cols;
+  const queue = [start];
+  const visited = new Set([`${start.x},${start.y}`]);
+  const parent = {};
+
+  const dirs = [
+    { x: 0, y: -1, a: 0 }, // up
+    { x: 1, y: 0, a: 1 },  // right
+    { x: 0, y: 1, a: 2 },  // down
+    { x: -1, y: 0, a: 3 }  // left
+  ];
+
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    if (cur.x === goal.x && cur.y === goal.y) {
+      // reconstruct path
+      const path = [];
+      let key = `${cur.x},${cur.y}`;
+      while (parent[key]) {
+        const p = parent[key];
+        path.push(p.a);
+        key = `${p.x},${p.y}`;
+      }
+      return path.reverse(); // directions to follow
+    }
+
+    for (let d of dirs) {
+      const nx = cur.x + d.x;
+      const ny = cur.y + d.y;
+      const key = `${nx},${ny}`;
+      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+      if (visited.has(key)) continue;
+      if (snake.some(seg => seg.x === nx && seg.y === ny)) continue;
+
+      visited.add(key);
+      parent[key] = { x: cur.x, y: cur.y, a: d.a };
+      queue.push({ x: nx, y: ny });
+    }
+  }
+
+  return null; // no path found
+}
+
+// === Hamilton Cycle fallback (very simple heuristic) ===
+function generateHamiltonCycle(cols, rows) {
+  const path = [];
+  for (let y = 0; y < rows; y++) {
+    if (y % 2 === 0) {
+      for (let x = 0; x < cols; x++) path.push({ x, y });
+    } else {
+      for (let x = cols - 1; x >= 0; x--) path.push({ x, y });
+    }
+  }
+  return path;
+}
 
 function chooseTestAction(environment,state){
   const candidates=[];
@@ -8084,24 +8141,37 @@ window.addEventListener('load',()=>{
     return null;
   }
 
-  function planTailFollowAction(env, { debug = false } = {}) {
-    const snake = Array.isArray(env?.snake) ? env.snake : null;
-    if (!snake || snake.length === 0) return null;
-    const size = boardSize(env);
-    if (!size) return null;
-    const head = snake[0];
-    if (!head) return null;
-    const dir = normalizeDirection(env?.dir);
+// === SAFE TAIL-FOLLOW ACTION ===
+function planTailFollowAction(snake, fruit, grid) {
+  if (!Array.isArray(snake) || snake.length === 0 || !grid) return 0;
+  const head = snake[0];
 
-    const fruit = env?.fruit;
-    const hasFruit = fruit && Number.isFinite(fruit.x) && Number.isFinite(fruit.y);
-    if (hasFruit) {
-      const pathToFruit = bfsPath(size, snake, fruit);
-      const fruitAction = nextStepAction(dir, head, pathToFruit);
-      if (fruitAction !== null) {
-        return { type: 'fruit', action: fruitAction, path: pathToFruit };
-      }
-    }
+  // 🧠 Försök hitta väg till frukten via BFS
+  const path = bfsPath(grid, head, fruit, snake);
+  if (path && path.length > 0) {
+    return path[0]; // första draget mot frukten
+  }
+
+  // 🌀 Annars försök följa svansen säkert (fallback)
+  const dirs = [
+    { x: 0, y: -1, action: 0 }, // up
+    { x: 1, y: 0, action: 1 },  // right
+    { x: 0, y: 1, action: 2 },  // down
+    { x: -1, y: 0, action: 3 }  // left
+  ];
+
+  for (let d of dirs) {
+    const nx = head.x + d.x;
+    const ny = head.y + d.y;
+    const safe = nx >= 0 && ny >= 0 && nx < grid.cols && ny < grid.rows &&
+      !snake.some(seg => seg.x === nx && seg.y === ny);
+    if (safe) return d.action;
+  }
+
+  // 🎲 Om inget säkert drag hittas – slumpa
+  return Math.floor(Math.random() * 4);
+}
+
 
     const tail = snake[snake.length - 1];
     if (!tail || !Number.isFinite(tail.x) || !Number.isFinite(tail.y)) return null;
