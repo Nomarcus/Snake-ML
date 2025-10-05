@@ -4554,6 +4554,9 @@ let stagePresetField=null;
 
 
 let agent=null;
+if(typeof window!=='undefined'){
+  window.agent=agent;
+}
 let stateDim=env?.getState()?.length||0;
 let actionDim=3;
 let currentAlgoKey='dueling';
@@ -6733,6 +6736,9 @@ function instantiateAgent(key,opts={}){
     dueling:appliedDefaults.dueling,
     double:appliedDefaults.double,
   });
+  if(typeof window!=='undefined'){
+    window.agent=agent;
+  }
   agent.learnRepeats=(appliedDefaults.learnRepeats??preset.defaults.learnRepeats)??agent.learnRepeats??1;
   targetSyncSteps=isDqnAgent(agent)? (+ui.targetSync.value||2000):Infinity;
   updateAdvancedVisibility();
@@ -8164,7 +8170,7 @@ window.addEventListener('load',()=>{
       console.error('Final Watch: agent saknas. Globals:', Object.keys(window));
       return;
     }
-    const button = document.getElementById('runFinalWatchBtn');
+    const button = document.getElementById('watchFinalBtn') ?? document.getElementById('runFinalWatchBtn');
     const summaryEl = document.getElementById('finalWatchSummary');
     if(button){
       button.disabled = true;
@@ -8328,8 +8334,7 @@ window.addEventListener('load',()=>{
   }
 
   function waitForAgentAndBindButton(){
-    const btn = document.getElementById('watchFinalBtn');
-    //const btn = document.getElementById('runFinalWatchBtn');
+    const btn = document.getElementById('watchFinalBtn') ?? document.getElementById('runFinalWatchBtn');
     if(!btn) return;
     const summaryEl = document.getElementById('finalWatchSummary');
     btn.disabled = true;
