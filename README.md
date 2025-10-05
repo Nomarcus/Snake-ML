@@ -108,6 +108,7 @@ In browsers that support the File System Access API, the “Titta” button can 
 - Source is written in modern ES modules (`package.json` sets `"type": "module"`).
 - TensorFlow.js Node bindings (`@tensorflow/tfjs-node`) are used for training.
 - All heavy file operations (checkpoint pruning, log rotation) run through the shared `DiskGuard` helper which rate-limits work to once every 30 seconds.
+- Legacy `presets.js` (which exposed the global `SNAKE_PRESETS` registry and `applySnakePreset` helper) has been removed; UI customization now flows through the current module entry points.
 
 ## Example workflows
 
