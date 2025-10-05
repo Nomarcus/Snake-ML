@@ -1082,7 +1082,7 @@ footer{
       <button id="btnReset" class="secondary">Reset</button>
     </div>
     <div class="test-panel" id="testPanel">
-      <span id="testIndicator" class="test-indicator" style="display:none;color:#0f0;font-weight:bold;">🟢 Test Mode Active</span>
+      <span id="testIndicator" class="test-indicator hidden">🟢 Test Mode Active</span>
       <div class="test-metrics hidden" id="testMetrics" aria-live="polite">
         <div class="test-metric">
           <span class="test-metric__label">Length</span>
@@ -4598,7 +4598,7 @@ function syncTestLengthDisplays(){
 
 function setTestModeActive(active){
   if(ui.testIndicator){
-    ui.testIndicator.style.display=active?'inline':'none';
+    ui.testIndicator.classList.toggle('hidden',!active);
   }
   if(ui.testMetrics){
     ui.testMetrics.classList.toggle('hidden',!active);
@@ -7478,6 +7478,86 @@ function projectActionOutcome(environment,action){
   return {action,nx,ny,willGrow,hitsWall,hitsBody,freeSpace,freeRatio,distanceToFruit};
 }
 
+function scoreActionOutcome(outcome,strategy,{preferModel=false,nearEndgame=false}={}){
+  if(!outcome) return -Infinity;
+  if(outcome.hitsWall) return -1000;
+  if(outcome.hitsBody) return -950;
+  let score=0;
+  const ratio=Number.isFinite(outcome.freeRatio)?outcome.freeRatio:0;
+  score+=ratio*120;
+  if(ratio<0.12){
+    score-=(0.12-ratio)*220;
+  }
+  if(outcome.willGrow) score+=120;
+  if(Number.isFinite(outcome.distanceToFruit)){
+    const closeness=Math.max(0,18-Math.min(18,outcome.distanceToFruit));
+    score+=closeness*6;
+  }
+  if(preferModel) score+=6;
+  if(strategy==='bfs') score+=8;
+  if(strategy==='tail') score+=5;
+  if(strategy==='hamilton') score+=nearEndgame?15:-10;
+  if(nearEndgame) score+=ratio*40;
+  return score;
+}
+
+function chooseTestAction(environment,state){
+  const candidates=[];
+  const seen=new Set();
+  const boardArea=Math.max(1,(environment.cols??COLS)*(environment.rows??ROWS));
+  const nearEndgame=(environment.snake?.length||0)>=boardArea*0.65;
+  const addCandidate=(action,strategy)=>{
+    if(action===null||action===undefined) return;
+    const key=`${strategy}-${action}`;
+    if(seen.has(key)) return;
+    seen.add(key);
+    const outcome=projectActionOutcome(environment,action);
+    const score=scoreActionOutcome(outcome,strategy,{preferModel:strategy==='model',nearEndgame});
+    candidates.push({action,strategy,outcome,score});
+  };
+
+  addCandidate(selectGreedyAction(state),'model');
+
+  const gridSize=environment.cols??COLS;
+  const bfs=bfsPath(gridSize,environment.snake,environment.fruit);
+  if(bfs&&bfs.length>=2){
+    const bfsAction=determineActionFromPoint(environment,bfs[1]);
+    addCandidate(bfsAction,'bfs');
+  }
+
+  const tailPlan=planTailFollowAction(environment);
+  if(tailPlan?.type==='tail'&&tailPlan.action!==null){
+    addCandidate(tailPlan.action,'tail');
+  }
+
+  const hamAction=getHamiltonianAction(environment);
+  addCandidate(hamAction,'hamilton');
+
+  const safeCandidates=candidates.filter(c=>c.outcome&&!c.outcome.hitsWall&&!c.outcome.hitsBody);
+  const safeModel=safeCandidates.find(c=>c.strategy==='model');
+  const bestNonModel=safeCandidates
+    .filter(c=>c.strategy!=='model')
+    .reduce((best,c)=>!best||c.score>best.score?c:best,null);
+
+  if(safeModel){
+    const penalty=safeModel.outcome.freeRatio<0.16?(0.16-safeModel.outcome.freeRatio)*180:0;
+    const adjustedModelScore=safeModel.score-penalty;
+    if(bestNonModel&&bestNonModel.score>adjustedModelScore+8){
+      return bestNonModel.action;
+    }
+    return safeModel.action;
+  }
+
+  if(safeCandidates.length){
+    const best=safeCandidates.reduce((best,c)=>!best||c.score>best.score?c:best,null);
+    if(best) return best.action;
+  }
+
+  const modelCandidate=candidates.find(c=>c.strategy==='model');
+  if(modelCandidate) return modelCandidate.action;
+  if(candidates.length) return candidates[0].action;
+  return 0;
+}
 async function startFullWatchMode(){
   if(watching||!agent||!env) return;
   console.log('🟢 Full Watch Test started (ε=0, frozen weights)');
@@ -7512,44 +7592,28 @@ async function startFullWatchMode(){
   ui.btnWatch.setAttribute('aria-pressed','true');
   updateReadouts();
   const runLoop=async()=>{
-    while(window.fullWatchActive){
-      const state=env.getState?.();
-      let action=selectGreedyAction(state);
-      const predictedOutcome=projectActionOutcome(env,action);
-      const cramped=Number.isFinite(predictedOutcome?.freeRatio)&&predictedOutcome.freeRatio<0.08;
-      const needsFallback=!predictedOutcome||predictedOutcome.hitsWall||predictedOutcome.hitsBody||cramped;
-      if(needsFallback){
-        const size=env.cols??COLS;
-        const path=bfsPath(size,env.snake,env.fruit);
-        let fallbackAction=null;
-        if(path&&path.length>=2){
-          fallbackAction=determineActionFromPoint(env,path[1]);
-        }
-        if(fallbackAction===null||fallbackAction===undefined){
-          fallbackAction=getHamiltonianAction(env);
-        }
-        if(fallbackAction!==null&&fallbackAction!==undefined){
-          action=fallbackAction;
-        }
-      }
+    let running=true;
+    while(running){
+      const state=env.getState();
+      const action=chooseTestAction(env,state);
       const before=snapshotEnv(env);
-      const result=env.step(action)||{};
+      const {done,info}=env.step(action);
       const after=snapshotEnv(env);
       drawFrame(before,after,1);
       lastDrawnState=cloneState(after);
       currentTestLen=env.snake?.length??0;
-      if(result.info?.ateFruit||currentTestLen>bestTestLen){
+      if(info?.ateFruit||currentTestLen>bestTestLen){
         bestTestLen=Math.max(bestTestLen,currentTestLen);
       }
       syncTestLengthDisplays();
-      if(result.done){
+      if(done){
         env.reset();
         setImmediateState(env);
         currentTestLen=env.snake?.length??0;
         syncTestLengthDisplays();
       }
-      const delay=Math.max(10,Math.round(testPlaybackDelay||40));
-      await new Promise(r=>setTimeout(r,delay));
+      await new Promise(r=>setTimeout(r,testPlaybackDelay));
+      if(!window.fullWatchActive) running=false;
     }
   };
   fullWatchLoopPromise=runLoop();
@@ -7559,7 +7623,6 @@ async function startFullWatchMode(){
       flash?.('Watch mode encountered an error',true);
     })
     .finally(()=>{
-      window.fullWatchActive=false;
       setTestModeActive(false);
       currentTestLen=0;
       syncTestLengthDisplays();
