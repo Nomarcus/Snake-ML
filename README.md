@@ -51,5 +51,18 @@ AI Auto-Tune går via en liten Express-server (`api/proxy.js`) som körs som en 
 ## Development
 
 - Source is written in modern ES modules (`package.json` sets `"type": "module"`).
-- Install dependencies with `npm install` and start the Hugging Face proxy with `npm run start`.
-- The Node.js portion is intentionally tiny: only Express and `node-fetch` are required to forward requests to Hugging Face.
+- TensorFlow.js Node bindings (`@tensorflow/tfjs-node`) are used for training.
+- All heavy file operations (checkpoint pruning, log rotation) run through the shared `DiskGuard` helper which rate-limits work to once every 30 seconds.
+- Legacy `presets.js` (which exposed the global `SNAKE_PRESETS` registry and `applySnakePreset` helper) has been removed; UI customization now flows through the current module entry points.
+
+## Example workflows
+
+```bash
+# Auto mode with 16 parallel environments and larger replay buffer
+node train.js --mode auto --envCount 16 --bufferSize 750000 --saveDir models/auto-exp
+
+# Manual mode, 4 environments, custom gamma and epsilon schedule
+node train.js --mode manual --envCount 4 --gamma 0.985 --eps-end 0.1 --saveDir models/manual-finetune
+```
+
+Logs and checkpoints are available inside the configured `saveDir`. `latest/checkpoint.json` always reflects the most recent successful save, while `best/checkpoint.json` tracks the best evaluation result.
