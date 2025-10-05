@@ -177,6 +177,62 @@ canvas#board{
   border:1px solid rgba(128,138,206,0.2);
   box-shadow:0 16px 34px rgba(6,10,30,0.38);
 }
+.test-panel{
+  width:100%;
+  display:flex;
+  flex-wrap:wrap;
+  align-items:center;
+  justify-content:center;
+  gap:18px;
+  margin-top:14px;
+  padding:14px 16px;
+  border-radius:16px;
+  background:rgba(19,24,54,0.6);
+  border:1px solid rgba(128,138,206,0.2);
+  box-shadow:0 16px 34px rgba(6,10,30,0.32);
+}
+.test-indicator{
+  font-weight:700;
+  color:#4ade80;
+  letter-spacing:0.02em;
+}
+.test-metrics{
+  display:flex;
+  gap:18px;
+}
+.test-metric{
+  display:flex;
+  flex-direction:column;
+  gap:4px;
+  align-items:flex-start;
+}
+.test-metric__label{
+  font-size:11px;
+  letter-spacing:0.08em;
+  text-transform:uppercase;
+  color:var(--muted);
+}
+.test-metric__value{
+  font-size:16px;
+  font-weight:600;
+}
+.test-speed{
+  display:flex;
+  align-items:center;
+  gap:10px;
+  font-size:13px;
+  color:var(--muted);
+}
+.test-speed input[type="range"]{
+  width:160px;
+}
+.test-speed__label{
+  font-weight:600;
+}
+.test-speed__value{
+  font-size:13px;
+  color:#e5e9ff;
+}
 .path-visual-overlay{
   display:flex;
   justify-content:flex-end;
@@ -971,6 +1027,16 @@ footer{
     min-width:0;
     width:100%;
   }
+  .test-panel{
+    flex-direction:column;
+    align-items:stretch;
+  }
+  .test-metrics{
+    justify-content:space-between;
+  }
+  .test-speed{
+    justify-content:space-between;
+  }
   input[type="range"]{
     width:160px;
   }
@@ -1013,8 +1079,25 @@ footer{
       <button id="btnPause" class="secondary">⏸ Pause</button>
       <button id="btnStep" class="secondary">Step one episode</button>
       <button id="btnWatch" class="secondary">Watch</button>
-      <span id="testIndicator" style="display:none;color:#0f0;font-weight:bold;">🟢 Test Mode Active</span>
       <button id="btnReset" class="secondary">Reset</button>
+    </div>
+    <div class="test-panel" id="testPanel">
+      <span id="testIndicator" class="test-indicator" style="display:none;color:#0f0;font-weight:bold;">🟢 Test Mode Active</span>
+      <div class="test-metrics hidden" id="testMetrics" aria-live="polite">
+        <div class="test-metric">
+          <span class="test-metric__label">Length</span>
+          <span class="test-metric__value mono" id="testLength">0</span>
+        </div>
+        <div class="test-metric">
+          <span class="test-metric__label">Best (test)</span>
+          <span class="test-metric__value mono" id="testBestLength">0</span>
+        </div>
+      </div>
+      <label class="test-speed" for="testSpeed">
+        <span class="test-speed__label">Test speed</span>
+        <input type="range" id="testSpeed" min="20" max="200" step="10" value="80">
+        <span class="test-speed__value mono" id="testSpeedValue">80&nbsp;ms</span>
+      </label>
     </div>
     <div class="controls secondary">
       <div class="pill-group" id="playbackGroup" role="group" aria-label="Playback mode">
@@ -1081,6 +1164,7 @@ footer{
       <div class="item"><b>Episodes</b><span id="kEpisodes">0</span></div>
       <div class="item"><b>Avg reward (100)</b><span id="kAvgRw">0.0</span></div>
       <div class="item"><b>Best length</b><span id="kBest">0</span></div>
+      <div class="item"><b>Best length (test)</b><span id="kBestTest">0</span></div>
       <div class="item"><b>Fruit / ep</b><span id="kFruitRate">0.0</span></div>
       <div class="item"><b>Greedy Fruit (avg)</b><span id="greedyFruitStat">—</span></div>
       <div class="item"><b>Greedy Reward (avg)</b><span id="greedyRewardStat">—</span></div>
@@ -3703,6 +3787,7 @@ const playbackModes={
   turbo:{label:'Turbo',frameMs:30,stepsPerFrame:6,renderEvery:2,queueTarget:120},
   watch:{label:'Watch',frameMs:120,stepsPerFrame:1,renderEvery:1,queueTarget:60},
 };
+let testPlaybackDelay=80;
 const AGENT_PRESETS={
   dueling:{
     label:'Dueling Double DQN',
@@ -4084,6 +4169,12 @@ const ui={
   btnPause:document.getElementById('btnPause'),
   btnStep:document.getElementById('btnStep'),
   btnWatch:document.getElementById('btnWatch'),
+  testIndicator:document.getElementById('testIndicator'),
+  testMetrics:document.getElementById('testMetrics'),
+  testLength:document.getElementById('testLength'),
+  testBestLength:document.getElementById('testBestLength'),
+  testSpeed:document.getElementById('testSpeed'),
+  testSpeedValue:document.getElementById('testSpeedValue'),
   btnReset:document.getElementById('btnReset'),
   btnCheckpointToggle:document.getElementById('btnCheckpointToggle'),
   btnSave:document.getElementById('btnSave'),
@@ -4183,6 +4274,7 @@ const ui={
   kEpisodes:document.getElementById('kEpisodes'),
   kAvgRw:document.getElementById('kAvgRw'),
   kBest:document.getElementById('kBest'),
+  kBestTest:document.getElementById('kBestTest'),
   kFruitRate:document.getElementById('kFruitRate'),
   greedyFruitStat:document.getElementById('greedyFruitStat'),
   greedyRewardStat:document.getElementById('greedyRewardStat'),
@@ -4242,7 +4334,7 @@ let checkpointSupportWarned=false;
 let checkpointEpisodeInterval=500;
 let lastFrame=0;
 let targetSyncSteps=2000;
-let episode=0,totalSteps=0,bestLen=0;
+let episode=0,totalSteps=0,bestLen=0,bestTestLen=0,currentTestLen=0;
 const rwHist=[],fruitHist=[],lossHist=[];
 const progressPoints=[];
 const greedyFruitHist=[],greedyRewardHist=[],greedyEpisodeHist=[];
@@ -4484,6 +4576,33 @@ function updateAiIntervalReadout(){
   checkpointEpisodeInterval=aiAnalysisInterval;
   ui.aiIntervalReadout.textContent=`${aiAnalysisInterval} ep`;
   if(aiTuner) aiTuner.setInterval(aiAnalysisInterval);
+}
+
+function updateTestSpeedFromUI(){
+  if(!ui.testSpeed) return;
+  const raw=Number(ui.testSpeed.value);
+  if(Number.isFinite(raw)){
+    testPlaybackDelay=Math.max(10,Math.min(500,Math.round(raw)));
+  }
+  if(ui.testSpeedValue){
+    const delay=Math.round(testPlaybackDelay);
+    ui.testSpeedValue.textContent=`${delay}\u202Fms`;
+  }
+}
+
+function syncTestLengthDisplays(){
+  if(ui.testLength) ui.testLength.textContent=`${Math.max(0,currentTestLen|0)}`;
+  if(ui.testBestLength) ui.testBestLength.textContent=`${Math.max(0,bestTestLen|0)}`;
+  if(ui.kBestTest) ui.kBestTest.textContent=`${Math.max(0,bestTestLen|0)}`;
+}
+
+function setTestModeActive(active){
+  if(ui.testIndicator){
+    ui.testIndicator.style.display=active?'inline':'none';
+  }
+  if(ui.testMetrics){
+    ui.testMetrics.classList.toggle('hidden',!active);
+  }
 }
 
 function setAiAutoStyle(style,{announce=true}={}){
@@ -5011,6 +5130,9 @@ function bindUI(){
   ui.aiIntervalSlider?.addEventListener('input',()=>{
     updateAiIntervalReadout();
   });
+  ui.testSpeed?.addEventListener('input',()=>{
+    updateTestSpeedFromUI();
+  });
   ui.aiRunLimit?.addEventListener('change',()=>{
     applyAiRunLimitFromUI();
   });
@@ -5108,6 +5230,9 @@ function bindUI(){
   setTrainingMode(trainingMode);
   updateAutoLogVisibility();
   updateAiIntervalReadout();
+  updateTestSpeedFromUI();
+  syncTestLengthDisplays();
+  setTestModeActive(false);
   setAiAutoStyle(aiAutoTuneStyle,{announce:false});
   updateAiRunLimitHint();
   if(ui.aiAutoTuneToggle) ui.aiAutoTuneToggle.checked=aiAutoTuneEnabled;
@@ -6596,6 +6721,8 @@ function resetTrainingStats(){
   episode=0;
   totalSteps=0;
   bestLen=0;
+  bestTestLen=0;
+  currentTestLen=0;
   rwHist.length=0;
   fruitHist.length=0;
   lossHist.length=0;
@@ -6613,6 +6740,8 @@ function resetTrainingStats(){
   updateStatsUI();
   updateRewardTelemetryUI();
   updateProgressChart();
+  syncTestLengthDisplays();
+  setTestModeActive(false);
   renderTick=0;
   contexts.forEach(ctx=>ctx.needsReset=true);
   if(autoPilot){
@@ -6637,6 +6766,7 @@ function updateStatsUI(){
   telemetry.fruitPerEpAvg=fruitAvg100;
   ui.kAvgRw.textContent=avgReward100.toFixed(2);
   ui.kBest.textContent=bestLen;
+  syncTestLengthDisplays();
   ui.kFruitRate.textContent=fruitAvg100.toFixed(2);
   if(ui.greedyFruitStat){
     if(greedyFruitHist.length){
@@ -7296,30 +7426,84 @@ function getHamiltonianAction(environment){
   const nextNode=cycle[(index+1)%cycle.length];
   return determineActionFromPoint(environment,nextNode);
 }
+
+function projectActionOutcome(environment,action){
+  if(!environment||action===null||action===undefined) return null;
+  const snake=environment.snake;
+  if(!Array.isArray(snake)||snake.length===0) return null;
+  const head=snake[0];
+  if(!head) return null;
+  const dir=environment.dir||{x:1,y:0};
+  let dx=dir.x;
+  let dy=dir.y;
+  if(action===1){
+    dx=-dir.y;
+    dy=dir.x;
+  }else if(action===2){
+    dx=dir.y;
+    dy=-dir.x;
+  }
+  const nx=head.x+dx;
+  const ny=head.y+dy;
+  const cols=environment.cols??COLS;
+  const rows=environment.rows??ROWS;
+  const fruit=environment.fruit;
+  const willGrow=Boolean(fruit&&nx===fruit.x&&ny===fruit.y);
+  const hitsWall=nx<0||ny<0||nx>=cols||ny>=rows;
+  let hitsBody=false;
+  if(!hitsWall){
+    const key=`${nx},${ny}`;
+    const tail=snake[snake.length-1];
+    const tailSafe=tail&&tail.x===nx&&tail.y===ny&&!willGrow;
+    if(environment.snakeSet instanceof Set && environment.snakeSet.has(key) && !tailSafe){
+      hitsBody=true;
+    }
+  }
+  let freeSpace=0;
+  let freeRatio=0;
+  if(!hitsWall && typeof environment.freeSpaceFrom==='function'){
+    try{
+      freeSpace=environment.freeSpaceFrom(nx,ny,!willGrow);
+      const area=(cols||0)*(rows||0);
+      freeRatio=area>0?freeSpace/area:0;
+    }catch(_err){
+      freeSpace=0;
+      freeRatio=0;
+    }
+  }
+  let distanceToFruit=Infinity;
+  if(fruit&&Number.isFinite(fruit.x)&&Number.isFinite(fruit.y)){
+    distanceToFruit=Math.abs(nx-fruit.x)+Math.abs(ny-fruit.y);
+  }
+  return {action,nx,ny,willGrow,hitsWall,hitsBody,freeSpace,freeRatio,distanceToFruit};
+}
+
 async function startFullWatchMode(){
   if(watching||!agent||!env) return;
   console.log('🟢 Full Watch Test started (ε=0, frozen weights)');
   if(typeof stopTraining==='function') stopTraining();
   if(typeof training!=='undefined') training=false;
-  const indicator=document.getElementById('testIndicator');
-  if(indicator) indicator.style.display='inline';
+  setTestModeActive(true);
   const explorationState=captureExplorationState();
+  const hadUpdateWeights=!!agent&&Object.prototype.hasOwnProperty.call(agent,'updateWeights');
   fullWatchContext={
-    indicator,
     explorationState,
     previousAgentTraining:agent?.training,
-    previousUpdateWeights:typeof agent?.updateWeights==='function'?agent.updateWeights:null,
+    previousUpdateWeights:agent?.updateWeights,
+    hadUpdateWeights,
+    previousEpsilon:typeof agent?.epsilon==='number'?agent.epsilon:null,
   };
   if(agent){
     agent.training=false;
-    agent.epsilon=0;
-    if(fullWatchContext.previousUpdateWeights){
-      agent.updateWeights=()=>{};
-    }
+    if(typeof agent.epsilon==='number') agent.epsilon=0;
+    agent.updateWeights=()=>{};
   }
   if(liveViewHidden) setLiveViewHidden(false);
   env.reset();
   setImmediateState(env);
+  currentTestLen=env.snake?.length??0;
+  bestTestLen=Math.max(bestTestLen,currentTestLen);
+  syncTestLengthDisplays();
   window.fullWatchActive=true;
   watching=true;
   ui.trainState.textContent='watching';
@@ -7328,30 +7512,44 @@ async function startFullWatchMode(){
   ui.btnWatch.setAttribute('aria-pressed','true');
   updateReadouts();
   const runLoop=async()=>{
-    let running=true;
-    while(running){
-      const state=env.getState();
+    while(window.fullWatchActive){
+      const state=env.getState?.();
       let action=selectGreedyAction(state);
-      const gridSize=env.cols??COLS;
-      const bfs=bfsPath(gridSize,env.snake,env.fruit);
-      if(bfs&&bfs.length>=2){
-        const bfsAction=determineActionFromPoint(env,bfs[1]);
-        if(bfsAction!==null) action=bfsAction;
-      }else{
-        const hamAction=getHamiltonianAction(env);
-        if(hamAction!==null) action=hamAction;
+      const predictedOutcome=projectActionOutcome(env,action);
+      const cramped=Number.isFinite(predictedOutcome?.freeRatio)&&predictedOutcome.freeRatio<0.08;
+      const needsFallback=!predictedOutcome||predictedOutcome.hitsWall||predictedOutcome.hitsBody||cramped;
+      if(needsFallback){
+        const size=env.cols??COLS;
+        const path=bfsPath(size,env.snake,env.fruit);
+        let fallbackAction=null;
+        if(path&&path.length>=2){
+          fallbackAction=determineActionFromPoint(env,path[1]);
+        }
+        if(fallbackAction===null||fallbackAction===undefined){
+          fallbackAction=getHamiltonianAction(env);
+        }
+        if(fallbackAction!==null&&fallbackAction!==undefined){
+          action=fallbackAction;
+        }
       }
       const before=snapshotEnv(env);
-      const {done}=env.step(action);
+      const result=env.step(action)||{};
       const after=snapshotEnv(env);
       drawFrame(before,after,1);
       lastDrawnState=cloneState(after);
-      if(done){
+      currentTestLen=env.snake?.length??0;
+      if(result.info?.ateFruit||currentTestLen>bestTestLen){
+        bestTestLen=Math.max(bestTestLen,currentTestLen);
+      }
+      syncTestLengthDisplays();
+      if(result.done){
         env.reset();
         setImmediateState(env);
+        currentTestLen=env.snake?.length??0;
+        syncTestLengthDisplays();
       }
-      await new Promise(r=>setTimeout(r,40));
-      if(!window.fullWatchActive) running=false;
+      const delay=Math.max(10,Math.round(testPlaybackDelay||40));
+      await new Promise(r=>setTimeout(r,delay));
     }
   };
   fullWatchLoopPromise=runLoop();
@@ -7361,21 +7559,28 @@ async function startFullWatchMode(){
       flash?.('Watch mode encountered an error',true);
     })
     .finally(()=>{
-      if(fullWatchContext?.indicator) fullWatchContext.indicator.style.display='none';
+      window.fullWatchActive=false;
+      setTestModeActive(false);
+      currentTestLen=0;
+      syncTestLengthDisplays();
       console.log('🟥 Full Watch stopped.');
       restoreExplorationState(fullWatchContext?.explorationState);
       if(agent&&fullWatchContext){
-        if(fullWatchContext.previousUpdateWeights){
+        if(fullWatchContext.hadUpdateWeights){
           agent.updateWeights=fullWatchContext.previousUpdateWeights;
+        }else{
+          delete agent.updateWeights;
         }
         if(fullWatchContext.previousAgentTraining!==undefined){
           agent.training=fullWatchContext.previousAgentTraining;
+        }
+        if(fullWatchContext.previousEpsilon!==null&&typeof agent.epsilon==='number'){
+          agent.epsilon=fullWatchContext.previousEpsilon;
         }
       }
       updateReadouts();
       watching=false;
       fullWatchLoopPromise=null;
-      window.fullWatchActive=false;
       ui.btnWatch.classList.remove('active');
       ui.btnWatch.textContent='Watch';
       ui.btnWatch.setAttribute('aria-pressed','false');
@@ -7519,7 +7724,7 @@ async function buildAppState(){
     rewardConfig:{...rewardConfig},
     agent:agentState,
     meta:{
-      episode,totalSteps,bestLen,
+      episode,totalSteps,bestLen,bestTestLen,
       envCount,
       boardSize:COLS,
       rwHist:Array.from(rwHist),
@@ -7537,6 +7742,8 @@ function applyMeta(meta={}){
   episode=+meta.episode||0;
   totalSteps=+meta.totalSteps||0;
   bestLen=+meta.bestLen||0;
+  bestTestLen=+meta.bestTestLen||0;
+  currentTestLen=0;
   assignArray(rwHist,meta.rwHist,v=>+v||0);
   assignArray(fruitHist,meta.fruitHist,v=>+v||0);
   assignArray(lossHist,meta.lossHist,v=>+v||0);
@@ -7574,6 +7781,7 @@ function applyMeta(meta={}){
   updateStatsUI();
   updateProgressChart();
   updateReadouts();
+  syncTestLengthDisplays();
 }
 async function saveTrainingToFile(){
   if(!agent) return;
