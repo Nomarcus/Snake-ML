@@ -1013,7 +1013,7 @@ footer{
       <button id="btnPause" class="secondary">⏸ Pause</button>
       <button id="btnStep" class="secondary">Step one episode</button>
       <button id="btnWatch" class="secondary">Watch</button>
-      <button id="watchFinalBtn" class="secondary btn accent">🏁 Final Watch</button>
+      <span id="testIndicator" style="display:none;color:#0f0;font-weight:bold;">🟢 Test Mode Active</span>
       <button id="btnReset" class="secondary">Reset</button>
     </div>
     <div class="controls secondary">
@@ -3472,8 +3472,9 @@ let currentAnim=null;
 let renderActive=false;
 let renderToken=0;
 let watching=false;
-let watchStopRequested=false;
-let watchLoopPromise=null;
+let fullWatchLoopPromise=null;
+let fullWatchContext=null;
+window.fullWatchActive=false;
 let liveViewHidden=false;
 let renderSuspended=false;
 const MAX_RENDER_QUEUE=240;
@@ -4083,7 +4084,6 @@ const ui={
   btnPause:document.getElementById('btnPause'),
   btnStep:document.getElementById('btnStep'),
   btnWatch:document.getElementById('btnWatch'),
-  watchFinalBtn:document.getElementById('watchFinalBtn'),
   btnReset:document.getElementById('btnReset'),
   btnCheckpointToggle:document.getElementById('btnCheckpointToggle'),
   btnSave:document.getElementById('btnSave'),
@@ -4986,9 +4986,6 @@ function bindUI(){
   ui.btnPause.addEventListener('click',stopTraining);
   ui.btnStep.addEventListener('click',async()=>{ await playSingleEpisode(); });
   ui.btnWatch.addEventListener('click',watchSmoothEpisode);
-  ui.watchFinalBtn?.addEventListener('click',()=>{
-    window.runFinalWatch?.(agent, env, 100);
-  });
   ui.btnToggleLiveView?.addEventListener('click',()=>{
     setLiveViewHidden(!liveViewHidden);
   });
@@ -7212,22 +7209,6 @@ async function playSingleEpisode(){
     await performVectorStep(mode);
   }
 }
-function previewDeath(env,action){
-  const d=env.dir;
-  const L={x:-d.y,y:d.x};
-  const R={x:d.y,y:-d.x};
-  const F=d;
-  const dir=action===1?L:action===2?R:F;
-  const h=env.snake[0];
-  const nx=h.x+dir.x;
-  const ny=h.y+dir.y;
-  const tail=env.snake[env.snake.length-1];
-  const willGrow=(nx===env.fruit.x && ny===env.fruit.y);
-  const hitsWall=nx<0||ny<0||nx>=env.cols||ny>=env.rows;
-  const key=`${nx},${ny}`;
-  const hitsBody=env.snakeSet.has(key) && !(tail && tail.x===nx && tail.y===ny && !willGrow);
-  return hitsWall||hitsBody;
-}
 function captureExplorationState(){
   if(!agent) return null;
   if(isDqnAgent(agent)&&typeof agent.epsilon==='number'){
@@ -7261,111 +7242,170 @@ function restoreExplorationState(state){
     agent.epsilon=state.epsilon;
   }
 }
-async function runWatchEpisodes(){
-  await waitForRenderIdle();
-  if(window.showDirectoryPicker){
-    try{
-      const checkpoint=await readLatestCheckpoint();
-      await applyCheckpointData(checkpoint);
-    }catch(err){
-      console.warn('Failed to read latest-checkpoint',err);
-    }
-  }
-  const desired=+ui.gridSize.value;
-  if(env.cols!==desired||env.rows!==desired){
-    resetEnvironment(desired,true);
-  }
-  const mode=playbackModes.watch;
-  while(!watchStopRequested){
-    let state=env.reset();
-    setImmediateState(env);
-    const maxSteps=COLS*ROWS*6;
-    let steps=0;
-    let done=false;
-    while(!done && steps<maxSteps && !watchStopRequested){
-      const before=snapshotEnv(env);
-      let action=agent.greedyAction(state);
-      if(previewDeath(env,action)){
-        for(const alt of [0,1,2]){
-          if(!previewDeath(env,alt)){ action=alt; break; }
-        }
-      }
-      const {state:nextState,done:finished}=env.step(action);
-      const after=snapshotEnv(env);
-      enqueueRenderFrame(before,after,mode.frameMs);
-      await waitForRenderCapacity(mode.queueTarget);
-      await tf.nextFrame();
-      state=nextState;
-      done=finished;
-      steps++;
-    }
-    await waitForRenderIdle();
-    bestLen=Math.max(bestLen,env.snake.length);
-    ui.kBest.textContent=bestLen;
-  }
+function determineActionFromPoint(environment,nextPoint){
+  if(!environment||!nextPoint) return null;
+  const head=environment.snake?.[0];
+  if(!head) return null;
+  const desiredX=nextPoint.x-head.x;
+  const desiredY=nextPoint.y-head.y;
+  const dir=environment.dir||{x:1,y:0};
+  const forward=dir;
+  const left={x:-forward.y,y:forward.x};
+  const right={x:forward.y,y:-forward.x};
+  if(desiredX===forward.x && desiredY===forward.y) return 0;
+  if(desiredX===left.x && desiredY===left.y) return 1;
+  if(desiredX===right.x && desiredY===right.y) return 2;
+  return null;
 }
-async function finishWatchLoop(context){
+function selectGreedyAction(state){
+  if(!agent) return 0;
   try{
-    await waitForRenderIdle();
+    if(typeof agent.greedyAction==='function'){
+      return agent.greedyAction(state);
+    }
+    if(typeof agent.act==='function'){
+      return agent.act(state);
+    }
+    if(typeof agent.predict==='function'){
+      const result=agent.predict(state);
+      if(result&&typeof result.dataSync==='function'){
+        const data=result.dataSync();
+        result.dispose?.();
+        return Number.isFinite(data?.[0])?data[0]|0:0;
+      }
+      if(Array.isArray(result)&&result.length){
+        return Number.isFinite(result[0])?result[0]|0:0;
+      }
+      const numeric=Number(result);
+      return Number.isFinite(numeric)?numeric|0:0;
+    }
   }catch(err){
-    console.warn('Failed waiting for render idle during watch cleanup',err);
+    console.warn('selectGreedyAction fallback due to error',err);
   }
-  restoreExplorationState(context?.explorationState);
-  updateReadouts();
-  watching=false;
-  watchLoopPromise=null;
-  watchStopRequested=false;
-  ui.btnWatch.disabled=false;
-  ui.btnWatch.classList.remove('active');
-  ui.btnWatch.textContent='Watch';
-  ui.btnWatch.setAttribute('aria-pressed','false');
-  const resume=context?.wasTraining;
-  ui.trainState.textContent=resume?'training':'idle';
-  if(resume) startTraining();
+  return 0;
 }
-async function startWatchLoop(){
-  if(!agent) return;
-  watchStopRequested=false;
-  const context={
-    wasTraining:training,
+function getHamiltonianAction(environment){
+  if(!environment) return null;
+  const size=environment.cols??COLS;
+  const cycle=(hamiltonCycle&&hamiltonCycle.length)?hamiltonCycle:generateHamiltonCycle(size);
+  if(!cycle||!cycle.length) return null;
+  const head=environment.snake?.[0];
+  if(!head) return null;
+  const index=cycle.findIndex(node=>node.x===head.x&&node.y===head.y);
+  if(index<0) return null;
+  const nextNode=cycle[(index+1)%cycle.length];
+  return determineActionFromPoint(environment,nextNode);
+}
+async function startFullWatchMode(){
+  if(watching||!agent||!env) return;
+  console.log('🟢 Full Watch Test started (ε=0, frozen weights)');
+  if(typeof stopTraining==='function') stopTraining();
+  if(typeof training!=='undefined') training=false;
+  const indicator=document.getElementById('testIndicator');
+  if(indicator) indicator.style.display='inline';
+  const explorationState=captureExplorationState();
+  fullWatchContext={
+    indicator,
+    explorationState,
+    previousAgentTraining:agent?.training,
+    previousUpdateWeights:typeof agent?.updateWeights==='function'?agent.updateWeights:null,
   };
-  ui.btnWatch.disabled=true;
-  if(context.wasTraining) stopTraining();
+  if(agent){
+    agent.training=false;
+    agent.epsilon=0;
+    if(fullWatchContext.previousUpdateWeights){
+      agent.updateWeights=()=>{};
+    }
+  }
   if(liveViewHidden) setLiveViewHidden(false);
+  env.reset();
+  setImmediateState(env);
+  window.fullWatchActive=true;
   watching=true;
   ui.trainState.textContent='watching';
   ui.btnWatch.classList.add('active');
+  ui.btnWatch.textContent='Stop';
   ui.btnWatch.setAttribute('aria-pressed','true');
-  ui.btnWatch.textContent='Stop Watching';
-  context.explorationState=captureExplorationState();
-  applyEvaluationExploration(context.explorationState);
   updateReadouts();
-  watchLoopPromise=(async()=>{
-    try{
-      await runWatchEpisodes();
-    }catch(err){
-      console.error('Watch mode failed',err);
-      flash('Watch mode encountered an error',true);
-    }finally{
-      await finishWatchLoop(context);
+  const runLoop=async()=>{
+    let running=true;
+    while(running){
+      const state=env.getState();
+      let action=selectGreedyAction(state);
+      const gridSize=env.cols??COLS;
+      const bfs=bfsPath(gridSize,env.snake,env.fruit);
+      if(bfs&&bfs.length>=2){
+        const bfsAction=determineActionFromPoint(env,bfs[1]);
+        if(bfsAction!==null) action=bfsAction;
+      }else{
+        const hamAction=getHamiltonianAction(env);
+        if(hamAction!==null) action=hamAction;
+      }
+      const before=snapshotEnv(env);
+      const {done}=env.step(action);
+      const after=snapshotEnv(env);
+      drawFrame(before,after,1);
+      lastDrawnState=cloneState(after);
+      if(done){
+        env.reset();
+        setImmediateState(env);
+      }
+      await new Promise(r=>setTimeout(r,40));
+      if(!window.fullWatchActive) running=false;
     }
-  })();
-  watchLoopPromise.catch(err=>console.error('Unhandled watch loop error',err));
-  ui.btnWatch.disabled=false;
+  };
+  fullWatchLoopPromise=runLoop();
+  fullWatchLoopPromise
+    .catch(err=>{
+      console.error('Full Watch loop error',err);
+      flash?.('Watch mode encountered an error',true);
+    })
+    .finally(()=>{
+      if(fullWatchContext?.indicator) fullWatchContext.indicator.style.display='none';
+      console.log('🟥 Full Watch stopped.');
+      restoreExplorationState(fullWatchContext?.explorationState);
+      if(agent&&fullWatchContext){
+        if(fullWatchContext.previousUpdateWeights){
+          agent.updateWeights=fullWatchContext.previousUpdateWeights;
+        }
+        if(fullWatchContext.previousAgentTraining!==undefined){
+          agent.training=fullWatchContext.previousAgentTraining;
+        }
+      }
+      updateReadouts();
+      watching=false;
+      fullWatchLoopPromise=null;
+      window.fullWatchActive=false;
+      ui.btnWatch.classList.remove('active');
+      ui.btnWatch.textContent='Watch';
+      ui.btnWatch.setAttribute('aria-pressed','false');
+      ui.btnWatch.disabled=false;
+      ui.trainState.textContent=training?'training':'idle';
+      fullWatchContext=null;
+    });
+}
+async function stopFullWatchMode(){
+  if(!watching){
+    window.fullWatchActive=false;
+    return;
+  }
+  ui.btnWatch.disabled=true;
+  window.fullWatchActive=false;
+  if(fullWatchLoopPromise){
+    try{
+      await fullWatchLoopPromise;
+    }catch(err){
+      console.error('Error stopping Full Watch loop',err);
+    }
+  }
 }
 async function watchSmoothEpisode(){
   if(watching){
-    if(watchStopRequested) return;
-    watchStopRequested=true;
-    ui.btnWatch.disabled=true;
-    ui.btnWatch.textContent='Stopping…';
-    if(watchLoopPromise){
-      await watchLoopPromise;
-    }
+    await stopFullWatchMode();
     return;
   }
-  if(watchLoopPromise||!agent) return;
-  await startWatchLoop();
+  if(!agent) return;
+  await startFullWatchMode();
 }
 
 /* ---------------- Save / load ---------------- */
@@ -7918,181 +7958,5 @@ window.addEventListener('load',()=>{
   window.snakeEnv = { runEpisode };
 </script>
 
-<!-- Final Watch integrated inline -->
-<script type="module">
-  // === FINAL WATCH HELPER ===
-
-  function requireRunEpisode() {
-    if (typeof window.runEpisode !== 'function') {
-      throw new Error('Snake environment is not available.');
-    }
-    return window.runEpisode;
-  }
-
-  async function runFinalWatch(agent, env, episodes = 100) {
-    console.log('🟢 Starting Final Watch Mode...');
-    // Save current state to restore after test
-    const savedState = {
-      epsilon: agent.epsilon,
-      epsilonStart: agent.epsilonStart,
-      epsilonEnd: agent.epsilonEnd,
-      training: agent.training,
-      autoActive: window.autoActive ?? false,
-      aiAutoTuneEnabled: window.aiAutoTuneEnabled ?? false,
-    };
-
-    // Disable all training activity
-    agent.training = false;
-    agent.epsilon = 0;
-    window.autoActive = false;
-    window.aiAutoTuneEnabled = false;
-
-    const results = {
-      fruit: [],
-      reward: [],
-      steps: [],
-      wallCrashes: 0,
-      selfCrashes: 0,
-      loopCrashes: 0,
-    };
-
-    const runEpisode = requireRunEpisode();
-    for (let i = 0; i < episodes; i++) {
-      const { totalReward, fruitEaten, steps, crashType } = await runEpisode(env, agent, {
-        train: false,
-        render: true,
-      });
-
-      results.fruit.push(fruitEaten);
-      results.reward.push(totalReward);
-      results.steps.push(steps);
-
-      if (crashType === 'wall') results.wallCrashes++;
-      else if (crashType === 'self') results.selfCrashes++;
-      else if (crashType === 'loop') results.loopCrashes++;
-
-      document.dispatchEvent(
-        new CustomEvent('watchUpdate', { detail: { i, fruitEaten, totalReward } })
-      );
-    }
-
-    const summary = {
-      episodes,
-      avgFruit: avg(results.fruit),
-      avgReward: avg(results.reward),
-      avgSteps: avg(results.steps),
-      wallRate: results.wallCrashes / episodes,
-      selfRate: results.selfCrashes / episodes,
-      loopRate: results.loopCrashes / episodes,
-      timestamp: new Date().toLocaleString(),
-    };
-
-    console.log('🏁 Final Watch Summary:', summary);
-    renderFinalStats(summary, savedState);
-    exportResults(summary);
-    renderMiniSummary(summary);
-    return summary;
-  }
-
-  function avg(a) {
-    return a.reduce((x, y) => x + y, 0) / a.length;
-  }
-
-  // --- Floating overlay after test ---
-  function renderFinalStats(s, savedState) {
-    const old = document.getElementById('finalWatchStats');
-    if (old) old.remove();
-
-    const div = document.createElement('div');
-    div.id = 'finalWatchStats';
-    div.className =
-      'final-watch-stats absolute top-4 right-4 bg-black/70 text-white p-3 rounded-xl shadow-lg text-sm font-mono z-50';
-    div.innerHTML = `
-      <h3 class="font-bold text-base mb-2">🏁 Final Watch Stats</h3>
-      <p>Episodes: ${s.episodes}</p>
-      <p>Avg Fruit: ${s.avgFruit.toFixed(2)}</p>
-      <p>Avg Reward: ${s.avgReward.toFixed(1)}</p>
-      <p>Avg Steps: ${s.avgSteps.toFixed(0)}</p>
-      <p>Wall crash rate: ${(s.wallRate * 100).toFixed(1)}%</p>
-      <p>Self crash rate: ${(s.selfRate * 100).toFixed(1)}%</p>
-      <p>Loop crash rate: ${(s.loopRate * 100).toFixed(1)}%</p>
-      <div class="flex gap-2 mt-2">
-        <button id="exportFinalWatch" class="btn accent">💾 Export JSON</button>
-        <button id="resumeTraining" class="btn success">▶️ Resume Training</button>
-      </div>
-    `;
-    document.body.appendChild(div);
-
-    document
-      .getElementById('exportFinalWatch')
-      ?.addEventListener('click', () => exportResults(s));
-
-    document
-      .getElementById('resumeTraining')
-      ?.addEventListener('click', () => restoreTraining(savedState));
-  }
-
-  // --- Add small summary box inside existing stats panel ---
-  function renderMiniSummary(s) {
-    let panel = document.getElementById('miniFinalSummary');
-    if (!panel) {
-      const statsPanel = document.querySelector('.stats-panel, .ai-stats, .training-stats');
-      if (!statsPanel) {
-        console.warn('⚠️ No stats panel found for mini summary');
-        return;
-      }
-      panel = document.createElement('div');
-      panel.id = 'miniFinalSummary';
-      panel.className = 'mini-final-summary border-t mt-2 pt-1 text-xs font-mono';
-      statsPanel.appendChild(panel);
-    }
-
-    panel.innerHTML = `
-      <div class="flex flex-col gap-0.5">
-        <strong class="text-accent">🏁 Last Final Test (${s.timestamp})</strong>
-        <span>Fruit: ${s.avgFruit.toFixed(2)}</span>
-        <span>Reward: ${s.avgReward.toFixed(1)}</span>
-        <span>Steps: ${s.avgSteps.toFixed(0)}</span>
-        <span>Wall: ${(s.wallRate * 100).toFixed(1)}% | Self: ${(s.selfRate * 100).toFixed(1)}% | Loop: ${(s.loopRate * 100).toFixed(1)}%</span>
-      </div>
-    `;
-  }
-
-  // --- JSON export helper ---
-  function exportResults(data) {
-    const blob = new Blob([JSON.stringify(data, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'final-watch-results.json';
-    a.click();
-    URL.revokeObjectURL(url);
-    console.log('💾 Exported final-watch-results.json');
-  }
-
-  // --- Restore all parameters and continue training ---
-  function restoreTraining(state) {
-    const agent = window.agent;
-    if (!agent) return;
-    agent.epsilon = state.epsilon;
-    agent.epsilonStart = state.epsilonStart;
-    agent.epsilonEnd = state.epsilonEnd;
-    agent.training = state.training;
-    window.autoActive = state.autoActive;
-    window.aiAutoTuneEnabled = state.aiAutoTuneEnabled;
-
-    const uiDiv = document.getElementById('finalWatchStats');
-    if (uiDiv) uiDiv.remove();
-
-    console.log('🔁 Restored previous training state, resuming...');
-    if (typeof window.startTraining === 'function') {
-      window.startTraining();
-    }
-  }
-
-  window.runFinalWatch = runFinalWatch;
-</script>
 </body>
 </html>
