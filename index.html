@@ -7522,24 +7522,21 @@ function planTailFollowAction(snake, fruit, grid) {
   // Om inget säkert drag hittas, välj slumpmässigt (failsafe)
   return Math.floor(Math.random() * 4);
 }
-// === BFS Path Helper (inline version) ===
 function bfsPath(grid, start, goal, snake) {
   const rows = grid.rows, cols = grid.cols;
   const queue = [start];
   const visited = new Set([`${start.x},${start.y}`]);
   const parent = {};
-
   const dirs = [
-    { x: 0, y: -1, a: 0 }, // up
-    { x: 1, y: 0, a: 1 },  // right
-    { x: 0, y: 1, a: 2 },  // down
-    { x: -1, y: 0, a: 3 }  // left
+    { x: 0, y: -1, a: 0 },
+    { x: 1, y: 0, a: 1 },
+    { x: 0, y: 1, a: 2 },
+    { x: -1, y: 0, a: 3 }
   ];
 
   while (queue.length > 0) {
     const cur = queue.shift();
     if (cur.x === goal.x && cur.y === goal.y) {
-      // reconstruct path
       const path = [];
       let key = `${cur.x},${cur.y}`;
       while (parent[key]) {
@@ -7547,7 +7544,7 @@ function bfsPath(grid, start, goal, snake) {
         path.push(p.a);
         key = `${p.x},${p.y}`;
       }
-      return path.reverse(); // directions to follow
+      return path.reverse();
     }
 
     for (let d of dirs) {
@@ -7565,7 +7562,7 @@ function bfsPath(grid, start, goal, snake) {
   }
 
   return null; // no path found
-}
+} // ✅ denna måste finnas!
 
 // === Hamilton Cycle fallback (very simple heuristic) ===
 function generateHamiltonCycle(cols, rows) {
