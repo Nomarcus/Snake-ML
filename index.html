@@ -7500,6 +7500,28 @@ function scoreActionOutcome(outcome,strategy,{preferModel=false,nearEndgame=fals
   if(nearEndgame) score+=ratio*40;
   return score;
 }
+function planTailFollowAction(snake, fruit, grid) {
+  // En enkel fallback-funktion för "tail follow" när Hamilton eller BFS inte används
+  const head = snake[0];
+  const dirs = [
+    { x: 0, y: -1, action: 0 }, // up
+    { x: 1, y: 0, action: 1 },  // right
+    { x: 0, y: 1, action: 2 },  // down
+    { x: -1, y: 0, action: 3 }  // left
+  ];
+
+  // Försök undvika krock med vägg eller kropp
+  for (let d of dirs) {
+    const nx = head.x + d.x;
+    const ny = head.y + d.y;
+    const safe = nx >= 0 && ny >= 0 && nx < grid.cols && ny < grid.rows &&
+      !snake.some(seg => seg.x === nx && seg.y === ny);
+    if (safe) return d.action;
+  }
+
+  // Om inget säkert drag hittas, välj slumpmässigt (failsafe)
+  return Math.floor(Math.random() * 4);
+}
 
 function chooseTestAction(environment,state){
   const candidates=[];
