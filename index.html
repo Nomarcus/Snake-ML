@@ -139,15 +139,19 @@ h2{
   color:#f0f2ff;
   letter-spacing:0.01em;
 }
-canvas#board{
+#gameContainer{
+  position:relative;
   width:100%;
   max-width:560px;
+  align-self:center;
+}
+#gameContainer canvas#board{
+  width:100%;
   aspect-ratio:1/1;
   border-radius:26px;
   background:radial-gradient(140% 140% at 30% 20%,#273067 0%,#151a3a 50%,#0d1127 100%);
   border:1px solid rgba(128,140,210,0.25);
   box-shadow:0 40px 80px rgba(8,12,42,0.55);
-  align-self:center;
 }
 .controls{
   display:flex;
@@ -1015,7 +1019,10 @@ footer{
   .tuning-card{
     grid-column:1;
   }
-  canvas#board{
+  #gameContainer{
+    max-width:none;
+  }
+  #gameContainer canvas#board{
     width:100%;
     height:auto;
   }
@@ -1065,6 +1072,12 @@ footer{
     width:160px;
   }
 }
+.spatial-overlay{
+  pointer-events:none;
+  border-radius:6px;
+  mix-blend-mode:multiply;
+  transition:background 0.3s ease;
+}
 </style>
 </head>
 <body>
@@ -1097,7 +1110,9 @@ footer{
         <button id="btnToggleLiveView" class="secondary" type="button">Hide live view</button>
       </div>
     </div>
-    <canvas id="board" width="500" height="500"></canvas>
+    <div id="gameContainer" class="board-wrapper">
+      <canvas id="board" width="500" height="500"></canvas>
+    </div>
     <div class="controls primary">
       <button id="btnTrain">▶ Start training</button>
       <button id="btnPause" class="secondary">⏸ Pause</button>
@@ -1443,16 +1458,17 @@ footer{
       </div>
       <section class="path-helper-controls" aria-label="Path Helper Rewards">
         <h4>BFS / Hamilton Rewards</h4>
+        <p class="hint">Matches with the planner award the full bonus; ignoring the helper costs roughly 25% of the slider value so the agent leans on guidance only when confident.</p>
 
         <label>
           BFS Weight:
-          <input type="range" id="bfsSlider" min="0" max="10" step="0.01" value="0.20">
+          <input type="range" id="bfsSlider" min="0" max="0.5" step="0.01" value="0.20">
           <span id="bfsVal">0.20</span>
         </label><br>
 
         <label>
           Hamilton Weight:
-          <input type="range" id="hamSlider" min="0" max="10" step="0.01" value="0.05">
+          <input type="range" id="hamSlider" min="0" max="0.2" step="0.01" value="0.05">
           <span id="hamVal">0.05</span>
         </label><br>
 
@@ -1731,6 +1747,7 @@ footer{
     <ul>
       <li><strong>Fruit reward:</strong> the main reward when a fruit is eaten. Raise it for more aggressive fruit chasing.</li>
       <li><strong>Compactness bonus:</strong> gives a small bonus when the occupied area becomes denser (lower difference between the bounding box and snake length). Increase it late in training if you want the body packed tightly.</li>
+      <li><strong>BFS / Hamilton helpers:</strong> when enabled, aligning the move with the helper plan grants the slider bonus; going your own way subtracts about 25&nbsp;% of that value to gently encourage agreement.</li>
     </ul>
     <h3>Reading the reward telemetry</h3>
     <ul>
@@ -1826,17 +1843,21 @@ const REWARD_DEFAULTS={
   fruitReward:10,
   growthBonus:1,
   compactWeight:0,
-  trapPenalty:0.5,
+  compactBonus:0.25,
+  trapPenalty:1.2,
   spaceGainBonus:0.05,
   bfsWeight:0.2,
   hamiltonWeight:0.05,
   usePathHelpers:true,
+  helperAlignmentPenalty:0.25,
 };
 const REWARD_COMPONENTS=[
   {key:'fruitReward',label:'Fruit bonus',sign:'positive'},
   {key:'growthBonus',label:'Growth bonus',sign:'positive'},
   {key:'approachBonus',label:'Toward fruit bonus',sign:'positive'},
   {key:'spaceGainBonus',label:'Open space bonus',sign:'positive'},
+  {key:'bfsHelper',label:'BFS helper bonus',sign:'positive'},
+  {key:'hamiltonHelper',label:'Hamilton helper bonus',sign:'positive'},
   {key:'compactness',label:'Compactness bonus',sign:'neutral'},
   {key:'stepPenalty',label:'Step penalty',sign:'negative'},
   {key:'turnPenalty',label:'Turn penalty',sign:'negative'},
@@ -1869,6 +1890,11 @@ const REWARD_LABELS={
   growthBonus:'Growth bonus',
   compactWeight:'Compactness weight',
   compactness:'Compactness bonus',
+  bfsHelper:'BFS helper bonus',
+  hamiltonHelper:'Hamilton helper bonus',
+  bfsWeight:'BFS helper weight',
+  hamiltonWeight:'Hamilton helper weight',
+  helperAlignmentPenalty:'Helper alignment penalty',
 };
 const REWARD_INPUT_IDS={
   stepPenalty:'rewardStep',
@@ -1963,6 +1989,8 @@ class SnakeEnv{
     this.observationVersion=normalizeObservationVersion(observationVersion);
     this.defaultStartLength=Math.max(1,Math.min(3,this.cols-1));
     this.baseStartLength=this.defaultStartLength;
+    this.overlayEl=null;
+    this.overlayEnabled=false;
     this.reset();
   }
   _makeRewardBreakdown(){
@@ -2082,6 +2110,11 @@ class SnakeEnv{
     this.timeToFruitCount=0;
     this.episodeFruit=0;
     this.lastCrash=null;
+    this.freedomHistory=[];
+    if(this.overlayEl){
+      this.overlayEl.remove();
+      this.overlayEl=null;
+    }
     return this.getState();
   }
   idx(x,y){return y*this.cols+x;}
@@ -2104,8 +2137,54 @@ class SnakeEnv{
     const R=this.reward;
     const breakdown=this.rewardBreakdown||(this.rewardBreakdown=this._makeRewardBreakdown());
     this.lastCrash=null;
+    const head=this.snake[0];
+    const originalDir={x:this.dir.x,y:this.dir.y};
+    let bfsSuggestion=null;
+    let hamiltonSuggestion=null;
+    const helperPenaltyScale=Math.max(0,Number.isFinite(R.helperAlignmentPenalty)?R.helperAlignmentPenalty:0.25);
+    if(R.usePathHelpers){
+      const helperEnv={
+        snake:this.snake,
+        fruit:this.fruit,
+        cols:this.cols,
+        rows:this.rows,
+        dir:originalDir,
+      };
+      if(typeof bfsPath==='function' && head && this.fruit && this.fruit.x>=0 && this.fruit.y>=0){
+        try{
+          const path=bfsPath({cols:this.cols,rows:this.rows},head,this.fruit,this.snake);
+          if(Array.isArray(path)&&path.length){
+            const step=path[0];
+            if(Number.isFinite(step)){
+              const dirs=[
+                {x:0,y:-1},
+                {x:1,y:0},
+                {x:0,y:1},
+                {x:-1,y:0},
+              ];
+              const dirVec=dirs[step];
+              if(dirVec){
+                const nextPoint={x:head.x+dirVec.x,y:head.y+dirVec.y};
+                bfsSuggestion=determineActionFromPoint(helperEnv,nextPoint);
+              }else if(step>=0&&step<=2){
+                bfsSuggestion=step;
+              }
+            }
+          }
+        }catch(err){
+          if(DEBUG_LOG) console.warn('BFS helper computation failed',err);
+        }
+      }
+      if(typeof getHamiltonianAction==='function'){
+        try{
+          hamiltonSuggestion=getHamiltonianAction(helperEnv);
+        }catch(err){
+          if(DEBUG_LOG) console.warn('Hamilton helper computation failed',err);
+        }
+      }
+    }
     this.turn(a);
-    const h=this.snake[0];
+    const h=head;
     const nx=h.x+this.dir.x;
     const ny=h.y+this.dir.y;
     this.steps++;
@@ -2161,6 +2240,9 @@ class SnakeEnv{
         deadEndReward=base*R.deadEndPenalty;
       }
     }
+    const totalCells=Math.max(1,this.cols*this.rows);
+    const reachableSpace=Math.max(0,getFutureSpace());
+    const freedomRatio=Number.isFinite(reachableSpace)?Math.min(1,reachableSpace/totalCells):0;
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
     this.snake.unshift({x:nx,y:ny});
     let r=-R.stepPenalty;
@@ -2171,6 +2253,73 @@ class SnakeEnv{
     if(deadEndReward!==0){
       r+=deadEndReward;
       breakdown.deadEndPenalty+=deadEndReward;
+    }
+    // === LONG-TERM SPATIAL TREND ANALYSIS ===
+    this.freedomHistory=this.freedomHistory||[];
+    this.freedomHistory.push(freedomRatio);
+    if(this.freedomHistory.length>20) this.freedomHistory.shift();
+
+    const avgFreedom=this.freedomHistory.reduce((a,b)=>a+b,0)/this.freedomHistory.length;
+    const trend=freedomRatio-this.freedomHistory[0];
+
+    let longTermPenalty=0;
+    let longTermBonus=0;
+
+    if(trend<-0.05&&avgFreedom<0.15){
+      longTermPenalty=-R.trapPenalty*Math.abs(trend)*4;
+      if(DEBUG_LOG) console.log(`📉 Long-term entrapment: trend=${trend.toFixed(3)} penalty=${longTermPenalty.toFixed(3)}`);
+    }
+
+    if(trend>0.03&&avgFreedom>0.2){
+      longTermBonus=R.compactBonus*trend*5;
+      if(DEBUG_LOG) console.log(`📈 Spatial stability bonus: trend=${trend.toFixed(3)} bonus=${longTermBonus.toFixed(3)}`);
+    }
+
+    if(longTermPenalty){
+      r+=longTermPenalty;
+      breakdown.trapPenalty+=longTermPenalty;
+    }
+    if(longTermBonus){
+      r+=longTermBonus;
+      breakdown.compactness+=longTermBonus;
+    }
+
+    if(this.overlayEnabled){
+      if(this.overlayEl) this.overlayEl.remove();
+      const overlay=document.createElement('div');
+      overlay.className='spatial-overlay';
+      overlay.style.position='absolute';
+      overlay.style.top='0';
+      overlay.style.left='0';
+      overlay.style.width='100%';
+      overlay.style.height='100%';
+      overlay.style.pointerEvents='none';
+      overlay.style.transition='background 0.3s ease';
+
+      if(freedomRatio<0.05){
+        overlay.style.background='rgba(255,0,0,0.25)';
+        overlay.title='🚨 Dead-end penalty triggered';
+      }else if(trend<-0.05){
+        overlay.style.background='rgba(255,165,0,0.2)';
+        overlay.title='⚠️ Gradual entrapment (trend negative)';
+      }else if(trend>0.03){
+        overlay.style.background='rgba(0,255,0,0.15)';
+        overlay.title='✅ Long-term spatial stability bonus';
+      }else{
+        overlay.style.background='rgba(0,0,255,0.05)';
+        overlay.title='Neutral spatial state';
+      }
+
+      const container=document.querySelector('#gameContainer');
+      if(container){
+        container.appendChild(overlay);
+        this.overlayEl=overlay;
+      }else{
+        this.overlayEl=null;
+      }
+    }else if(this.overlayEl){
+      this.overlayEl.remove();
+      this.overlayEl=null;
     }
     if(a!==0){
       r-=R.turnPenalty;
@@ -2240,6 +2389,24 @@ class SnakeEnv{
         r-=R.retreatPenalty;
         breakdown.retreatPenalty-=R.retreatPenalty;
       }
+    }
+    if(R.usePathHelpers){
+      const applyHelperReward=(suggested,weight,key)=>{
+        if(!Number.isFinite(weight)||weight===0) return;
+        if(suggested===null||suggested===undefined) return;
+        let delta=0;
+        if(a===suggested){
+          delta+=weight;
+        }else if(helperPenaltyScale>0){
+          delta-=Math.abs(weight)*helperPenaltyScale;
+        }
+        if(delta!==0){
+          r+=delta;
+          breakdown[key]=(breakdown[key]??0)+delta;
+        }
+      };
+      applyHelperReward(bfsSuggestion,R.bfsWeight,'bfsHelper');
+      applyHelperReward(hamiltonSuggestion,R.hamiltonWeight,'hamiltonHelper');
     }
     if(this.snake.length>this.maxLength){
       const gain=this.snake.length-this.maxLength;
@@ -2378,6 +2545,18 @@ class VecSnakeEnv{
       const opts=typeof options==='function'?options(env,idx):options;
       if(opts&&typeof opts.startLength==='number') env.baseStartLength=opts.startLength;
       return env.reset(opts||{});
+    });
+  }
+  setOverlayFocus(index=0){
+    if(!this.envs?.length) return;
+    const target=((index%this.envCount)+this.envCount)%this.envCount;
+    this.envs.forEach((environment,idx)=>{
+      const enabled=idx===target;
+      environment.overlayEnabled=enabled;
+      if(!enabled&&environment.overlayEl){
+        environment.overlayEl.remove();
+        environment.overlayEl=null;
+      }
     });
   }
   getStateSize(){
@@ -3708,6 +3887,7 @@ let observationVersion=DEFAULT_OBSERVATION_VERSION;
 let envCount=1;
 let vecEnv=new VecSnakeEnv(envCount,{cols:COLS,rows:ROWS,rewardConfig,observationVersion});
 let renderIndex=0;
+vecEnv.setOverlayFocus(renderIndex);
 let env=vecEnv.getEnv(renderIndex);
 let hamiltonCycle=generateHamiltonCycle(COLS);
 window.overlayVisible=Boolean(window.overlayVisible);
@@ -4781,6 +4961,9 @@ const REWARD_DECIMALS={
   timeoutPenalty:1,
   bfsWeight:2,
   hamiltonWeight:2,
+  bfsHelper:3,
+  hamiltonHelper:3,
+  helperAlignmentPenalty:3,
 };
 function describeRewardDetail(adj){
   if(!adj||typeof adj!=='object') return 'Reward';
@@ -5679,6 +5862,7 @@ function seedContexts(forceReset=true){
   }
   contexts=states.map((state,idx)=>createContextSlot(idx,state));
   env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
+  vecEnv.setOverlayFocus(renderIndex);
   if(env) setImmediateState(env);
   applyCurriculumEpsilonBoost();
 }
@@ -5712,6 +5896,7 @@ function reconfigureEnvironment({count=envCount,size=COLS,observationVersion:obs
   curriculumState.resize(envCount);
   renderIndex=Math.min(renderIndex,envCount-1);
   env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
+  vecEnv.setOverlayFocus(renderIndex);
   COLS=desiredSize;
   ROWS=desiredSize;
   CELL=board.width/COLS;
@@ -5970,6 +6155,7 @@ function applyRewardsToEnv(){
   rewardConfig=getRewardConfigFromUI();
   vecEnv?.setRewardConfig(rewardConfig);
   env=vecEnv?.getEnv(renderIndex)||env;
+  vecEnv?.setOverlayFocus?.(renderIndex);
   autoPilot?.setRewardConfig?.({...rewardConfig});
   if(agent){
     agent.rewardConfig={...(agent.rewardConfig||{}),...rewardConfig};
@@ -7650,12 +7836,14 @@ async function performVectorStep(mode){
       ctx.needsReset=false;
       if(ctx.envIndex===renderIndex){
         env=vecEnv.getEnv(renderIndex)||env;
+        vecEnv.setOverlayFocus(renderIndex);
         if(env) setImmediateState(env);
       }
     }
   });
   applyCurriculumEpsilonBoost();
   env=vecEnv.getEnv(renderIndex)||env;
+  vecEnv.setOverlayFocus(renderIndex);
   const displayEnv=env;
   const shouldRender=(renderTick%mode.renderEvery===0);
   let before=null;
