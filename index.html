@@ -1186,7 +1186,7 @@ footer{
       <div class="curriculum-controls">
         <label for="curriculumLength">Startlängd</label>
         <input type="range" id="curriculumLength" min="1" max="200" step="1" value="1">
-        <span class="mono" id="curriculumLengthReadout">10</span>
+        <span class="mono" id="curriculumLengthReadout">1</span>
       </div>
       <span class="hint">Tränar masken i längre former för att förbättra sen-spel-beteende.</span>
     </div>
@@ -1961,7 +1961,7 @@ class SnakeEnv{
     this.rows=rows;
     this.setRewardConfig(rewardConfig);
     this.observationVersion=normalizeObservationVersion(observationVersion);
-    this.baseStartLength=Math.max(2,Math.min(3,this.cols-1));
+    this.baseStartLength=Math.max(1,Math.min(3,this.cols-1));
     this.reset();
   }
   _makeRewardBreakdown(){
@@ -2020,19 +2020,46 @@ class SnakeEnv{
   }
   reset(options={}){
     const desired=Number.isFinite(options?.startLength)?options.startLength:this.baseStartLength;
-    const safeDesired=Math.max(2,Math.round(desired||3));
-    const maxForward=Math.max(2,this.cols-1);
-    const length=Math.max(2,Math.min(safeDesired,maxForward));
+    const safeDesired=Math.max(1,Math.round(desired||1));
+    const maxForward=this.cols*this.rows;
+    const length=Math.max(1,Math.min(safeDesired,maxForward));
     this.baseStartLength=length;
-    this.dir={x:1,y:0};
-    const cy=(this.rows/2|0);
-    const margin=Math.max(0,this.cols-length-1);
-    const startX=Math.max(0,Math.floor(margin/2));
-    this.snake=[];
-    for(let i=0;i<length;i+=1){
-      this.snake.push({x:startX+i,y:cy});
+    const layout=[];
+    if(length<=this.cols){
+      const cy=(this.rows/2|0);
+      const margin=Math.max(0,this.cols-length);
+      const startX=Math.max(0,Math.floor(margin/2));
+      for(let i=0;i<length;i+=1){
+        layout.push({x:startX+i,y:cy});
+      }
+    }else{
+      const rowsNeeded=Math.ceil(length/this.cols);
+      const startRow=Math.max(0,Math.floor((this.rows-rowsNeeded)/2));
+      for(let row=0;row<rowsNeeded&&layout.length<length;row+=1){
+        const y=startRow+row;
+        if(y>=this.rows) break;
+        if(row%2===0){
+          for(let x=0;x<this.cols&&layout.length<length;x+=1){
+            layout.push({x,y});
+          }
+        }else{
+          for(let x=this.cols-1;x>=0&&layout.length<length;x-=1){
+            layout.push({x,y});
+          }
+        }
+      }
     }
-    this.snake.reverse();
+    if(!layout.length){
+      layout.push({x:0,y:0});
+    }
+    layout.reverse();
+    this.snake=layout;
+    const head=this.snake[0];
+    const neck=this.snake[1]||{x:head.x-1,y:head.y};
+    this.dir={x:head.x-neck.x,y:head.y-neck.y};
+    if(this.dir.x===0&&this.dir.y===0){
+      this.dir={x:1,y:0};
+    }
     this.snakeSet=new Set(this.snake.map(p=>`${p.x},${p.y}`));
     this.visit=new Float32Array(this.cols*this.rows).fill(0);
     this.actionHist=[];
@@ -2043,7 +2070,6 @@ class SnakeEnv{
     this.alive=true;
     this.prevSlack=this.computeSlack();
     this.lastSlackDelta=0;
-    const head=this.snake[0];
     const spaceRatio=this.freeSpaceFrom(head.x,head.y,true)/(this.cols*this.rows);
     this.lastFreeSpaceRatio=Number.isFinite(spaceRatio)?spaceRatio:1;
     this.headHistory=[];
@@ -4523,12 +4549,15 @@ let contexts=[];
 let renderTick=0;
 let trainingMode='manual';
 let autoPilot=null;
+const CURRICULUM_MANUAL_MIN=1;
+const CURRICULUM_MANUAL_MAX=200;
+
 const curriculumState={
   manualEnabled:false,
-  manualLength:1,
+  manualLength:CURRICULUM_MANUAL_MIN,
   autoCursor:0,
   perEnvLengths:[],
-  lastStartLength:3,
+  lastStartLength:CURRICULUM_MANUAL_MIN,
   load(){
     if(typeof localStorage==='undefined') return;
     try{
@@ -4538,7 +4567,11 @@ const curriculumState={
       if(data&&typeof data==='object'){
         if(typeof data.manualEnabled==='boolean') this.manualEnabled=data.manualEnabled;
         if(Number.isFinite(data.manualLength)){
-          this.manualLength=clamp(Math.round(data.manualLength),3,200);
+          this.manualLength=clamp(
+            Math.round(data.manualLength),
+            CURRICULUM_MANUAL_MIN,
+            CURRICULUM_MANUAL_MAX,
+          );
         }
         if(this.manualEnabled) this.lastStartLength=this.manualLength;
       }
@@ -4566,7 +4599,7 @@ const curriculumState={
   setManualLength(value){
     const num=Number(value);
     if(Number.isFinite(num)){
-      this.manualLength=clamp(Math.round(num),1,200);
+      this.manualLength=clamp(Math.round(num),CURRICULUM_MANUAL_MIN,CURRICULUM_MANUAL_MAX);
       this.lastStartLength=this.manualLength;
       this.save();
     }
@@ -4603,11 +4636,15 @@ const curriculumState={
         this.autoCursor=(this.autoCursor+1)%4096;
       }
     }
-    return clamp(Math.round(desired),3,30);
+    const rounded=Math.round(desired);
+    if(this.manualEnabled){
+      return clamp(rounded,CURRICULUM_MANUAL_MIN,CURRICULUM_MANUAL_MAX);
+    }
+    return clamp(rounded,3,30);
   },
   recordStartLength(envIndex,length){
     if(!Number.isFinite(length)) return;
-    const safeLen=Math.max(2,Math.round(length));
+    const safeLen=Math.max(CURRICULUM_MANUAL_MIN,Math.round(length));
     if(Number.isFinite(envIndex)&&envIndex>=0){
       if(envIndex>=this.perEnvLengths.length) this.resize(envIndex+1);
       this.perEnvLengths[envIndex]=safeLen;
@@ -5490,15 +5527,27 @@ function bindUI(){
     }else{
       curriculumState.perEnvLengths=curriculumState.perEnvLengths.map(()=>0);
     }
-    contexts.forEach(ctx=>ctx.needsReset=true);
+    if(vecEnv){
+      seedContexts(true);
+    }else{
+      contexts.forEach(ctx=>ctx.needsReset=true);
+    }
     updateReadouts();
     applyCurriculumEpsilonBoost();
   });
   ui.curriculumLength?.addEventListener('input',()=>{
+    const previousLength=curriculumState.manualLength;
     curriculumState.setManualLength(ui.curriculumLength.value);
     if(curriculumState.manualEnabled){
+      const lengthChanged=previousLength!==curriculumState.manualLength;
       curriculumState.perEnvLengths=curriculumState.perEnvLengths.map(()=>curriculumState.manualLength);
-      contexts.forEach(ctx=>ctx.needsReset=true);
+      if(lengthChanged){
+        if(vecEnv){
+          seedContexts(true);
+        }else{
+          contexts.forEach(ctx=>ctx.needsReset=true);
+        }
+      }
     }
     updateReadouts();
     applyCurriculumEpsilonBoost();
