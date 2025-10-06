@@ -1906,6 +1906,19 @@ let hyperParams={};
 const LOOP_PATTERNS=new Set(['1,2,1,2','2,1,2,1']);
 const GREEDY_EVAL_INTERVAL=1000;
 const GREEDY_EVAL_RUNS=20;
+const OBSERVATION_VERSIONS={legacy:'legacy',extended:'extended'};
+const DEFAULT_OBSERVATION_VERSION=OBSERVATION_VERSIONS.extended;
+const OBSERVATION_STATE_SIZES={
+  [OBSERVATION_VERSIONS.legacy]:17,
+  [OBSERVATION_VERSIONS.extended]:24,
+};
+const normalizeObservationVersion=version=>{
+  if(typeof version!=='string') return DEFAULT_OBSERVATION_VERSION;
+  const lower=version.trim().toLowerCase();
+  if(lower===OBSERVATION_VERSIONS.legacy) return OBSERVATION_VERSIONS.legacy;
+  if(lower===OBSERVATION_VERSIONS.extended) return OBSERVATION_VERSIONS.extended;
+  return DEFAULT_OBSERVATION_VERSION;
+};
 
 /* ---------------- Serialization helpers ---------------- */
 const DTYPE_ARRAYS={float32:Float32Array,int32:Int32Array,bool:Uint8Array};
@@ -1937,10 +1950,11 @@ function assignArray(target,source,mapper=v=>v){
 
 /* ---------------- Snake environment ---------------- */
 class SnakeEnv{
-  constructor(cols=20,rows=20,rewardOverrides={}){
+  constructor(cols=20,rows=20,{rewardConfig={},observationVersion=DEFAULT_OBSERVATION_VERSION}={}){
     this.cols=cols;
     this.rows=rows;
-    this.setRewardConfig(rewardOverrides);
+    this.setRewardConfig(rewardConfig);
+    this.observationVersion=normalizeObservationVersion(observationVersion);
     this.baseStartLength=Math.max(2,Math.min(3,this.cols-1));
     this.reset();
   }
@@ -1951,6 +1965,9 @@ class SnakeEnv{
   }
   setRewardConfig(cfg={}){
     this.reward={...REWARD_DEFAULTS,...cfg};
+  }
+  setObservationVersion(version){
+    this.observationVersion=normalizeObservationVersion(version);
   }
   neighbors(x,y){
     return [
@@ -2245,6 +2262,10 @@ class SnakeEnv{
     const fruit=[this.fruit.y<h.y?1:0,this.fruit.y>h.y?1:0,this.fruit.x<h.x?1:0,this.fruit.x>h.x?1:0];
     const dists=[h.y/(this.rows-1),(this.rows-1-h.y)/(this.rows-1),h.x/(this.cols-1),(this.cols-1-h.x)/(this.cols-1)];
     const dx=this.fruit.x-h.x, dy=this.fruit.y-h.y, len=Math.hypot(dx,dy)||1;
+    const baseFeatures=[...danger,...dir,...fruit,...dists,dy/len,dx/len];
+    if(this.observationVersion===OBSERVATION_VERSIONS.legacy){
+      return Float32Array.from(baseFeatures);
+    }
     const crowd=[
       this.getVisit(h.x, h.y-1),
       this.getVisit(h.x, h.y+1),
@@ -2255,29 +2276,31 @@ class SnakeEnv{
     const slack=this.computeSlack();
     const slackNorm=Math.max(0,Math.min(1,slack/(this.cols*this.rows)));
     const slackDeltaNorm=Math.max(-1,Math.min(1,(this.lastSlackDelta??0)/(this.cols*this.rows)));
-    return Float32Array.from([...danger,...dir,...fruit,...dists,dy/len,dx/len,...crowd,freeSpaceRatio,slackNorm,slackDeltaNorm]);
+    return Float32Array.from([...baseFeatures,...crowd,freeSpaceRatio,slackNorm,slackDeltaNorm]);
   }
 }
 
 class VecSnakeEnv{
-  constructor(count=1,{cols=20,rows=20,rewardConfig={}}={}){
+  constructor(count=1,{cols=20,rows=20,rewardConfig={},observationVersion=DEFAULT_OBSERVATION_VERSION}={}){
     this.cols=cols;
     this.rows=rows;
     this.rewardConfig={...REWARD_DEFAULTS,...rewardConfig};
+    this.observationVersion=normalizeObservationVersion(observationVersion);
     this.envCount=Math.max(1,count|0);
-    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,this.rewardConfig));
+    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,{rewardConfig:this.rewardConfig,observationVersion:this.observationVersion}));
   }
   getEnv(index=0){
     if(!this.envs.length) return null;
     const idx=((index%this.envCount)+this.envCount)%this.envCount;
     return this.envs[idx];
   }
-  configure({count=this.envCount,cols=this.cols,rows=this.rows,rewardConfig=this.rewardConfig}={}){
+  configure({count=this.envCount,cols=this.cols,rows=this.rows,rewardConfig=this.rewardConfig,observationVersion=this.observationVersion}={}){
     this.envCount=Math.max(1,count|0);
     this.cols=cols;
     this.rows=rows;
     this.rewardConfig={...REWARD_DEFAULTS,...rewardConfig};
-    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,this.rewardConfig));
+    this.observationVersion=normalizeObservationVersion(observationVersion);
+    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,{rewardConfig:this.rewardConfig,observationVersion:this.observationVersion}));
     return this.resetAll();
   }
   setCount(count){
@@ -2288,12 +2311,26 @@ class VecSnakeEnv{
   }
   setRewardConfig(cfg={}){
     this.rewardConfig={...this.rewardConfig,...cfg};
-    this.envs.forEach(env=>env.setRewardConfig(this.rewardConfig));
+    this.envs.forEach(env=>{
+      env.setRewardConfig(this.rewardConfig);
+      env.setObservationVersion(this.observationVersion);
+    });
+  }
+  setObservationVersion(version){
+    const next=normalizeObservationVersion(version);
+    if(next===this.observationVersion){
+      this.envs.forEach(env=>env.setObservationVersion(next));
+      return this.resetAll();
+    }
+    this.observationVersion=next;
+    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,{rewardConfig:this.rewardConfig,observationVersion:this.observationVersion}));
+    return this.resetAll();
   }
   resetEnv(index,options){
     const env=this.getEnv(index);
     if(!env) return null;
     env.setRewardConfig(this.rewardConfig);
+    env.setObservationVersion(this.observationVersion);
     const opts=typeof options==='function'?options(env,index):options;
     if(opts&&typeof opts.startLength==='number') env.baseStartLength=opts.startLength;
     return env.reset(opts||{});
@@ -2301,10 +2338,16 @@ class VecSnakeEnv{
   resetAll(options){
     return this.envs.map((env,idx)=>{
       env.setRewardConfig(this.rewardConfig);
+      env.setObservationVersion(this.observationVersion);
       const opts=typeof options==='function'?options(env,idx):options;
       if(opts&&typeof opts.startLength==='number') env.baseStartLength=opts.startLength;
       return env.reset(opts||{});
     });
+  }
+  getStateSize(){
+    const env=this.getEnv(0);
+    if(env) return env.getState().length;
+    return OBSERVATION_STATE_SIZES[this.observationVersion]??0;
   }
   step(actions){
     if(!Array.isArray(actions)||actions.length!==this.envCount){
@@ -3625,8 +3668,9 @@ const board=document.getElementById('board');
 const bctx=board.getContext('2d');
 board.setAttribute('aria-hidden','false');
 let COLS=20,ROWS=20,CELL=board.width/COLS;
+let observationVersion=DEFAULT_OBSERVATION_VERSION;
 let envCount=1;
-let vecEnv=new VecSnakeEnv(envCount,{cols:COLS,rows:ROWS,rewardConfig});
+let vecEnv=new VecSnakeEnv(envCount,{cols:COLS,rows:ROWS,rewardConfig,observationVersion});
 let renderIndex=0;
 let env=vecEnv.getEnv(renderIndex);
 let hamiltonCycle=generateHamiltonCycle(COLS);
@@ -5563,22 +5607,26 @@ function ensureContextPool(){
     seedContexts(true);
   }
 }
-function reconfigureEnvironment({count=envCount,size=COLS,force=false}={}){
+function reconfigureEnvironment({count=envCount,size=COLS,observationVersion:obsVersion=observationVersion,force=false}={}){
   let desiredCount=Math.max(1,count|0);
   if(trainingMode==='auto'){
     desiredCount=Math.max(12,desiredCount);
   }
   const desiredSize=Math.max(8,(+size)|0);
   const needInit=!vecEnv;
+  const desiredObservationVersion=normalizeObservationVersion(obsVersion);
   const changedCount=desiredCount!==envCount;
   const changedSize=force||desiredSize!==COLS||needInit;
+  const changedObservation=force||desiredObservationVersion!==observationVersion||needInit;
   envCount=desiredCount;
+  observationVersion=desiredObservationVersion;
   if(!vecEnv){
-    vecEnv=new VecSnakeEnv(envCount,{cols:desiredSize,rows:desiredSize,rewardConfig});
-  }else if(changedCount||changedSize){
-    vecEnv.configure({count:envCount,cols:desiredSize,rows:desiredSize,rewardConfig});
+    vecEnv=new VecSnakeEnv(envCount,{cols:desiredSize,rows:desiredSize,rewardConfig,observationVersion});
+  }else if(changedCount||changedSize||changedObservation){
+    vecEnv.configure({count:envCount,cols:desiredSize,rows:desiredSize,rewardConfig,observationVersion});
   }else{
     vecEnv.setRewardConfig(rewardConfig);
+    vecEnv.setObservationVersion(observationVersion);
   }
   curriculumState.resize(envCount);
   renderIndex=Math.min(renderIndex,envCount-1);
@@ -5587,7 +5635,7 @@ function reconfigureEnvironment({count=envCount,size=COLS,force=false}={}){
   ROWS=desiredSize;
   CELL=board.width/COLS;
   hamiltonCycle=generateHamiltonCycle(COLS);
-  stateDim=env?.getState()?.length||stateDim;
+  stateDim=vecEnv?.getStateSize?.()||stateDim;
   seedContexts(true);
   agent?.setEnvCount?.(envCount);
   renderTick=0;
@@ -7439,7 +7487,7 @@ async function evalGreedyEpisodes(agentRef,runCount=GREEDY_EVAL_RUNS,referenceEp
   const prevEps=typeof agentRef.epsilon==='number'?agentRef.epsilon:null;
   if(prevEps!==null) agentRef.epsilon=0;
   const evalCount=Math.min(Math.max(1,envCount|0),Math.max(1,runCount|0));
-  const evalEnv=new VecSnakeEnv(evalCount,{cols:COLS,rows:ROWS,rewardConfig});
+  const evalEnv=new VecSnakeEnv(evalCount,{cols:COLS,rows:ROWS,rewardConfig,observationVersion});
   let states=evalEnv.resetAll((_,idx)=>{
     if(typeof curriculumState==='object'&&curriculumState){
       const desired=curriculumState.getStartLength(idx,{record:false,forEval:true});
@@ -8243,12 +8291,14 @@ async function buildAppState(){
     mode:trainingMode,
     envCount,
     gridSize:+ui.gridSize.value,
+    observationVersion,
     rewardConfig:{...rewardConfig},
     agent:agentState,
     meta:{
       episode,totalSteps,bestLen,bestTestLen,
       envCount,
       boardSize:COLS,
+      observationVersion,
       rwHist:Array.from(rwHist),
       fruitHist:Array.from(fruitHist),
       lossHist:Array.from(lossHist),
@@ -8295,7 +8345,8 @@ function applyMeta(meta={}){
     ui.gridSize.value=`${meta.boardSize}`;
     updateGridLabel();
   }
-  reconfigureEnvironment({count:nextCount,size:nextSize,force:true});
+  const metaObservationVersion=typeof meta.observationVersion==='string'?meta.observationVersion:observationVersion;
+  reconfigureEnvironment({count:nextCount,size:nextSize,observationVersion:metaObservationVersion,force:true});
   if(trainingMode==='auto' && autoPilot){
     const stageIdx=autoPilot.boardStages.findIndex(stage=>stage.size===COLS);
     if(stageIdx>=0) autoPilot.stageIndex=stageIdx;
@@ -8353,7 +8404,18 @@ async function applyCheckpointData(data){
     applyPresetToUI({...preset.defaults,...(data.agent.config||{})});
   }
   if(data.rewardConfig) applyRewardConfigToUI(data.rewardConfig);
+  const agentStateDim=Number(data.agent?.sDim);
+  const currentSize=vecEnv?.getStateSize?.()||OBSERVATION_STATE_SIZES[observationVersion]||0;
+  const legacySize=OBSERVATION_STATE_SIZES[OBSERVATION_VERSIONS.legacy];
+  let desiredObservationVersion=(typeof data.observationVersion==='string'?data.observationVersion:(typeof data.meta?.observationVersion==='string'?data.meta.observationVersion:observationVersion));
+  if(Number.isFinite(agentStateDim)&&agentStateDim>0&&agentStateDim<currentSize&&agentStateDim===legacySize){
+    desiredObservationVersion=OBSERVATION_VERSIONS.legacy;
   }
+  desiredObservationVersion=normalizeObservationVersion(desiredObservationVersion);
+  const loadedEnvCount=data.envCount??data.meta?.envCount??envCount;
+  const boardSize=typeof data.gridSize==='number'?data.gridSize:typeof data.meta?.boardSize==='number'?data.meta.boardSize:COLS;
+  reconfigureEnvironment({count:loadedEnvCount,size:boardSize,observationVersion:desiredObservationVersion,force:true});
+}
 
 
 async function loadTrainingFromFile(file){
@@ -8373,10 +8435,18 @@ async function loadTrainingFromFile(file){
     if(data.rewardConfig) applyRewardConfigToUI(data.rewardConfig);
     const loadedEnvCount=data.envCount??data.meta?.envCount??envCount;
     const boardSize=typeof data.gridSize==='number'?data.gridSize:typeof data.meta?.boardSize==='number'?data.meta.boardSize:+ui.gridSize.value;
+    const agentStateDim=Number(data.agent?.sDim);
+    const currentSize=vecEnv?.getStateSize?.()||OBSERVATION_STATE_SIZES[observationVersion]||0;
+    const legacySize=OBSERVATION_STATE_SIZES[OBSERVATION_VERSIONS.legacy];
+    let desiredObservationVersion=(typeof data.observationVersion==='string'?data.observationVersion:(typeof data.meta?.observationVersion==='string'?data.meta.observationVersion:observationVersion));
+    if(Number.isFinite(agentStateDim)&&agentStateDim>0&&agentStateDim<currentSize&&agentStateDim===legacySize){
+      desiredObservationVersion=OBSERVATION_VERSIONS.legacy;
+    }
+    desiredObservationVersion=normalizeObservationVersion(desiredObservationVersion);
     ui.envCount.value=`${loadedEnvCount}`;
     ui.gridSize.value=`${boardSize}`;
     updateGridLabel();
-    reconfigureEnvironment({count:loadedEnvCount,size:boardSize,force:true});
+    reconfigureEnvironment({count:loadedEnvCount,size:boardSize,observationVersion:desiredObservationVersion,force:true});
     instantiateAgent(algo,{useCurrentUI:true});
     await agent.importState(data.agent);
     applyConfigToAgent();
