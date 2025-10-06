@@ -4566,7 +4566,7 @@ const curriculumState={
   setManualLength(value){
     const num=Number(value);
     if(Number.isFinite(num)){
-      this.manualLength=clamp(Math.round(num),3,30);
+      this.manualLength=clamp(Math.round(num),1,200);
       this.lastStartLength=this.manualLength;
       this.save();
     }
