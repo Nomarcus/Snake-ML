@@ -4713,9 +4713,25 @@ const curriculumState={
     }
   },
   setManualEnabled(value){
-    this.manualEnabled=!!value;
+    const nextEnabled=!!value;
+    this.manualEnabled=nextEnabled;
     this.autoCursor=0;
-    if(this.manualEnabled) this.lastStartLength=this.manualLength;
+    if(this.manualEnabled){
+      this.lastStartLength=this.manualLength;
+    }else{
+      const baseline=this.getBaselineStartLength(0);
+      this.lastStartLength=baseline;
+      if(vecEnv&&typeof vecEnv.getEnv==='function'){
+        for(let i=0;i<vecEnv.envCount;i+=1){
+          const envRef=vecEnv.getEnv(i);
+          if(!envRef) continue;
+          const defaultLen=Number.isFinite(envRef?.defaultStartLength)
+            ?Math.max(1,Math.round(envRef.defaultStartLength))
+            :baseline;
+          envRef.baseStartLength=defaultLen;
+        }
+      }
+    }
     this.save();
   },
   setManualLength(value){
