@@ -1458,6 +1458,7 @@ footer{
       </div>
       <section class="path-helper-controls" aria-label="Path Helper Rewards">
         <h4>BFS / Hamilton Rewards</h4>
+        <p class="hint">Matches with the planner award the full bonus; ignoring the helper costs roughly 25% of the slider value so the agent leans on guidance only when confident.</p>
 
         <label>
           BFS Weight:
@@ -1746,6 +1747,7 @@ footer{
     <ul>
       <li><strong>Fruit reward:</strong> the main reward when a fruit is eaten. Raise it for more aggressive fruit chasing.</li>
       <li><strong>Compactness bonus:</strong> gives a small bonus when the occupied area becomes denser (lower difference between the bounding box and snake length). Increase it late in training if you want the body packed tightly.</li>
+      <li><strong>BFS / Hamilton helpers:</strong> when enabled, aligning the move with the helper plan grants the slider bonus; going your own way subtracts about 25&nbsp;% of that value to gently encourage agreement.</li>
     </ul>
     <h3>Reading the reward telemetry</h3>
     <ul>
@@ -1847,12 +1849,15 @@ const REWARD_DEFAULTS={
   bfsWeight:0.2,
   hamiltonWeight:0.05,
   usePathHelpers:true,
+  helperAlignmentPenalty:0.25,
 };
 const REWARD_COMPONENTS=[
   {key:'fruitReward',label:'Fruit bonus',sign:'positive'},
   {key:'growthBonus',label:'Growth bonus',sign:'positive'},
   {key:'approachBonus',label:'Toward fruit bonus',sign:'positive'},
   {key:'spaceGainBonus',label:'Open space bonus',sign:'positive'},
+  {key:'bfsHelper',label:'BFS helper bonus',sign:'positive'},
+  {key:'hamiltonHelper',label:'Hamilton helper bonus',sign:'positive'},
   {key:'compactness',label:'Compactness bonus',sign:'neutral'},
   {key:'stepPenalty',label:'Step penalty',sign:'negative'},
   {key:'turnPenalty',label:'Turn penalty',sign:'negative'},
@@ -1885,6 +1890,11 @@ const REWARD_LABELS={
   growthBonus:'Growth bonus',
   compactWeight:'Compactness weight',
   compactness:'Compactness bonus',
+  bfsHelper:'BFS helper bonus',
+  hamiltonHelper:'Hamilton helper bonus',
+  bfsWeight:'BFS helper weight',
+  hamiltonWeight:'Hamilton helper weight',
+  helperAlignmentPenalty:'Helper alignment penalty',
 };
 const REWARD_INPUT_IDS={
   stepPenalty:'rewardStep',
@@ -2127,8 +2137,54 @@ class SnakeEnv{
     const R=this.reward;
     const breakdown=this.rewardBreakdown||(this.rewardBreakdown=this._makeRewardBreakdown());
     this.lastCrash=null;
+    const head=this.snake[0];
+    const originalDir={x:this.dir.x,y:this.dir.y};
+    let bfsSuggestion=null;
+    let hamiltonSuggestion=null;
+    const helperPenaltyScale=Math.max(0,Number.isFinite(R.helperAlignmentPenalty)?R.helperAlignmentPenalty:0.25);
+    if(R.usePathHelpers){
+      const helperEnv={
+        snake:this.snake,
+        fruit:this.fruit,
+        cols:this.cols,
+        rows:this.rows,
+        dir:originalDir,
+      };
+      if(typeof bfsPath==='function' && head && this.fruit && this.fruit.x>=0 && this.fruit.y>=0){
+        try{
+          const path=bfsPath({cols:this.cols,rows:this.rows},head,this.fruit,this.snake);
+          if(Array.isArray(path)&&path.length){
+            const step=path[0];
+            if(Number.isFinite(step)){
+              const dirs=[
+                {x:0,y:-1},
+                {x:1,y:0},
+                {x:0,y:1},
+                {x:-1,y:0},
+              ];
+              const dirVec=dirs[step];
+              if(dirVec){
+                const nextPoint={x:head.x+dirVec.x,y:head.y+dirVec.y};
+                bfsSuggestion=determineActionFromPoint(helperEnv,nextPoint);
+              }else if(step>=0&&step<=2){
+                bfsSuggestion=step;
+              }
+            }
+          }
+        }catch(err){
+          if(DEBUG_LOG) console.warn('BFS helper computation failed',err);
+        }
+      }
+      if(typeof getHamiltonianAction==='function'){
+        try{
+          hamiltonSuggestion=getHamiltonianAction(helperEnv);
+        }catch(err){
+          if(DEBUG_LOG) console.warn('Hamilton helper computation failed',err);
+        }
+      }
+    }
     this.turn(a);
-    const h=this.snake[0];
+    const h=head;
     const nx=h.x+this.dir.x;
     const ny=h.y+this.dir.y;
     this.steps++;
@@ -2333,6 +2389,24 @@ class SnakeEnv{
         r-=R.retreatPenalty;
         breakdown.retreatPenalty-=R.retreatPenalty;
       }
+    }
+    if(R.usePathHelpers){
+      const applyHelperReward=(suggested,weight,key)=>{
+        if(!Number.isFinite(weight)||weight===0) return;
+        if(suggested===null||suggested===undefined) return;
+        let delta=0;
+        if(a===suggested){
+          delta+=weight;
+        }else if(helperPenaltyScale>0){
+          delta-=Math.abs(weight)*helperPenaltyScale;
+        }
+        if(delta!==0){
+          r+=delta;
+          breakdown[key]=(breakdown[key]??0)+delta;
+        }
+      };
+      applyHelperReward(bfsSuggestion,R.bfsWeight,'bfsHelper');
+      applyHelperReward(hamiltonSuggestion,R.hamiltonWeight,'hamiltonHelper');
     }
     if(this.snake.length>this.maxLength){
       const gain=this.snake.length-this.maxLength;
@@ -4887,6 +4961,9 @@ const REWARD_DECIMALS={
   timeoutPenalty:1,
   bfsWeight:2,
   hamiltonWeight:2,
+  bfsHelper:3,
+  hamiltonHelper:3,
+  helperAlignmentPenalty:3,
 };
 function describeRewardDetail(adj){
   if(!adj||typeof adj!=='object') return 'Reward';
