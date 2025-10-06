@@ -139,19 +139,15 @@ h2{
   color:#f0f2ff;
   letter-spacing:0.01em;
 }
-#gameContainer{
-  position:relative;
+canvas#board{
   width:100%;
   max-width:560px;
-  align-self:center;
-}
-#gameContainer canvas#board{
-  width:100%;
   aspect-ratio:1/1;
   border-radius:26px;
   background:radial-gradient(140% 140% at 30% 20%,#273067 0%,#151a3a 50%,#0d1127 100%);
   border:1px solid rgba(128,140,210,0.25);
   box-shadow:0 40px 80px rgba(8,12,42,0.55);
+  align-self:center;
 }
 .controls{
   display:flex;
@@ -1019,10 +1015,7 @@ footer{
   .tuning-card{
     grid-column:1;
   }
-  #gameContainer{
-    max-width:none;
-  }
-  #gameContainer canvas#board{
+  canvas#board{
     width:100%;
     height:auto;
   }
@@ -1072,12 +1065,6 @@ footer{
     width:160px;
   }
 }
-.spatial-overlay{
-  pointer-events:none;
-  border-radius:6px;
-  mix-blend-mode:multiply;
-  transition:background 0.3s ease;
-}
 </style>
 </head>
 <body>
@@ -1110,9 +1097,7 @@ footer{
         <button id="btnToggleLiveView" class="secondary" type="button">Hide live view</button>
       </div>
     </div>
-    <div id="gameContainer" class="board-wrapper">
-      <canvas id="board" width="500" height="500"></canvas>
-    </div>
+    <canvas id="board" width="500" height="500"></canvas>
     <div class="controls primary">
       <button id="btnTrain">▶ Start training</button>
       <button id="btnPause" class="secondary">⏸ Pause</button>
@@ -1148,11 +1133,6 @@ footer{
         <label for="gridSize">Board size</label>
         <input type="range" id="gridSize" min="10" max="30" step="1" value="20">
         <span class="mono" id="gridLabel">20×20</span>
-      </div>
-      <div class="field compact">
-        <label for="fruitCount">Fruit count</label>
-        <input type="range" id="fruitCount" min="1" max="30" step="1" value="1">
-        <span class="mono" id="fruitLabel">1 fruit</span>
       </div>
     </div>
     <section class="path-visual-overlay" aria-label="Path Visualisation">
@@ -1463,17 +1443,16 @@ footer{
       </div>
       <section class="path-helper-controls" aria-label="Path Helper Rewards">
         <h4>BFS / Hamilton Rewards</h4>
-        <p class="hint">Matches with the planner award the full bonus; ignoring the helper costs roughly 25% of the slider value so the agent leans on guidance only when confident.</p>
 
         <label>
           BFS Weight:
-          <input type="range" id="bfsSlider" min="0" max="10" step="0.01" value="0.20">
+          <input type="range" id="bfsSlider" min="0" max="0.5" step="0.01" value="0.20">
           <span id="bfsVal">0.20</span>
         </label><br>
 
         <label>
           Hamilton Weight:
-          <input type="range" id="hamSlider" min="0" max="10" step="0.01" value="0.05">
+          <input type="range" id="hamSlider" min="0" max="0.2" step="0.01" value="0.05">
           <span id="hamVal">0.05</span>
         </label><br>
 
@@ -1752,7 +1731,6 @@ footer{
     <ul>
       <li><strong>Fruit reward:</strong> the main reward when a fruit is eaten. Raise it for more aggressive fruit chasing.</li>
       <li><strong>Compactness bonus:</strong> gives a small bonus when the occupied area becomes denser (lower difference between the bounding box and snake length). Increase it late in training if you want the body packed tightly.</li>
-      <li><strong>BFS / Hamilton helpers:</strong> when enabled, aligning the move with the helper plan grants the slider bonus; going your own way subtracts about 25&nbsp;% of that value to gently encourage agreement.</li>
     </ul>
     <h3>Reading the reward telemetry</h3>
     <ul>
@@ -1848,21 +1826,17 @@ const REWARD_DEFAULTS={
   fruitReward:10,
   growthBonus:1,
   compactWeight:0,
-  compactBonus:0.25,
-  trapPenalty:1.2,
+  trapPenalty:0.5,
   spaceGainBonus:0.05,
   bfsWeight:0.2,
   hamiltonWeight:0.05,
   usePathHelpers:true,
-  helperAlignmentPenalty:0.25,
 };
 const REWARD_COMPONENTS=[
   {key:'fruitReward',label:'Fruit bonus',sign:'positive'},
   {key:'growthBonus',label:'Growth bonus',sign:'positive'},
   {key:'approachBonus',label:'Toward fruit bonus',sign:'positive'},
   {key:'spaceGainBonus',label:'Open space bonus',sign:'positive'},
-  {key:'bfsHelper',label:'BFS helper bonus',sign:'positive'},
-  {key:'hamiltonHelper',label:'Hamilton helper bonus',sign:'positive'},
   {key:'compactness',label:'Compactness bonus',sign:'neutral'},
   {key:'stepPenalty',label:'Step penalty',sign:'negative'},
   {key:'turnPenalty',label:'Turn penalty',sign:'negative'},
@@ -1895,11 +1869,6 @@ const REWARD_LABELS={
   growthBonus:'Growth bonus',
   compactWeight:'Compactness weight',
   compactness:'Compactness bonus',
-  bfsHelper:'BFS helper bonus',
-  hamiltonHelper:'Hamilton helper bonus',
-  bfsWeight:'BFS helper weight',
-  hamiltonWeight:'Hamilton helper weight',
-  helperAlignmentPenalty:'Helper alignment penalty',
 };
 const REWARD_INPUT_IDS={
   stepPenalty:'rewardStep',
@@ -1987,27 +1956,14 @@ function assignArray(target,source,mapper=v=>v){
 
 /* ---------------- Snake environment ---------------- */
 class SnakeEnv{
-  constructor(cols=20,rows=20,{rewardConfig={},observationVersion=DEFAULT_OBSERVATION_VERSION,fruitCount=1}={}){
+  constructor(cols=20,rows=20,{rewardConfig={},observationVersion=DEFAULT_OBSERVATION_VERSION}={}){
     this.cols=cols;
     this.rows=rows;
     this.setRewardConfig(rewardConfig);
     this.observationVersion=normalizeObservationVersion(observationVersion);
-    this.fruitCount=this._clampFruitCount(fruitCount);
-    this.fruits=[];
-    this.nearestFruitIndex=-1;
-    this.fruit={x:-1,y:-1};
     this.defaultStartLength=Math.max(1,Math.min(3,this.cols-1));
     this.baseStartLength=this.defaultStartLength;
-    this.overlayEl=null;
-    this.overlayEnabled=false;
     this.reset();
-  }
-  _clampFruitCount(count){
-    const num=Number(count);
-    const area=Math.max(1,this.cols*this.rows);
-    const cap=Math.max(1,Math.min(30,area-1));
-    const rounded=Number.isFinite(num)?Math.round(num):1;
-    return Math.max(1,Math.min(rounded,cap));
   }
   _makeRewardBreakdown(){
     const base={total:0};
@@ -2106,16 +2062,9 @@ class SnakeEnv{
       this.dir={x:1,y:0};
     }
     this.snakeSet=new Set(this.snake.map(p=>`${p.x},${p.y}`));
-    if(Number.isFinite(options?.fruitCount)){
-      this.fruitCount=this._clampFruitCount(options.fruitCount);
-    }
-    this.fruits=Array.from({length:this.fruitCount},()=>({x:-1,y:-1}));
-    for(let i=0;i<this.fruits.length;i+=1){
-      this.spawnFruit(i);
-    }
-    this.updateNearestFruit();
     this.visit=new Float32Array(this.cols*this.rows).fill(0);
     this.actionHist=[];
+    this.spawnFruit();
     this.rewardBreakdown=this._makeRewardBreakdown();
     this.steps=0;
     this.stepsSinceFruit=0;
@@ -2133,107 +2082,17 @@ class SnakeEnv{
     this.timeToFruitCount=0;
     this.episodeFruit=0;
     this.lastCrash=null;
-    this.freedomHistory=[];
-    if(this.overlayEl){
-      this.overlayEl.remove();
-      this.overlayEl=null;
-    }
     return this.getState();
   }
   idx(x,y){return y*this.cols+x;}
-  _isFruitRenderable(fruit){
-    return fruit&&Number.isFinite(fruit.x)&&Number.isFinite(fruit.y)&&fruit.x>=0&&fruit.y>=0&&fruit.x<this.cols&&fruit.y<this.rows;
-  }
-  _isFruitValid(fruit){
-    if(!this._isFruitRenderable(fruit)) return false;
-    if(!(this.snakeSet instanceof Set)) return true;
-    return !this.snakeSet.has(`${fruit.x},${fruit.y}`);
-  }
-  setFruitCount(count){
-    this.fruitCount=this._clampFruitCount(count);
-    if(!(this.snakeSet instanceof Set)){
-      this.fruits=Array.from({length:this.fruitCount},()=>({x:-1,y:-1}));
-      this.nearestFruitIndex=-1;
-      this.fruit={x:-1,y:-1};
-      return;
-    }
-    if(!Array.isArray(this.fruits)) this.fruits=[];
-    if(this.fruits.length>this.fruitCount){
-      this.fruits.length=this.fruitCount;
-    }else{
-      while(this.fruits.length<this.fruitCount){
-        this.fruits.push({x:-1,y:-1});
-      }
-    }
-    for(let i=0;i<this.fruits.length;i+=1){
-      if(!this._isFruitValid(this.fruits[i])){
-        this.spawnFruit(i);
-      }
-    }
-    this.updateNearestFruit();
-  }
-  findFruitIndex(x,y){
-    if(!Array.isArray(this.fruits)) return -1;
-    for(let i=0;i<this.fruits.length;i+=1){
-      const fruit=this.fruits[i];
-      if(fruit&&fruit.x===x&&fruit.y===y) return i;
-    }
-    return -1;
-  }
-  spawnFruit(index){
-    if(!Array.isArray(this.fruits)) this.fruits=[];
-    let target=Number.isInteger(index)?index:-1;
-    if(target<0||target>=this.fruits.length){
-      if(this.fruits.length<this.fruitCount){
-        this.fruits.push({x:-1,y:-1});
-        target=this.fruits.length-1;
-      }else{
-        target=Math.max(0,Math.min(this.fruits.length-1,0));
-      }
-    }
-    const occupied=new Set();
-    if(this.snakeSet instanceof Set){
-      this.snakeSet.forEach(value=>occupied.add(value));
-    }
-    this.fruits.forEach((fruit,i)=>{
-      if(i===target) return;
-      if(this._isFruitRenderable(fruit)){
-        occupied.add(`${fruit.x},${fruit.y}`);
-      }
-    });
+  spawnFruit(){
     const free=[];
-    for(let y=0;y<this.rows;y+=1){
-      for(let x=0;x<this.cols;x+=1){
-        const key=`${x},${y}`;
-        if(occupied.has(key)) continue;
-        free.push({x,y});
+    for(let y=0;y<this.rows;y++){
+      for(let x=0;x<this.cols;x++){
+        if(!this.snakeSet.has(`${x},${y}`)) free.push({x,y});
       }
     }
-    const next=free.length?free[(Math.random()*free.length)|0]:{x:-1,y:-1};
-    this.fruits[target]=next;
-    return next;
-  }
-  updateNearestFruit(){
-    const head=this.snake?.[0];
-    let bestIndex=-1;
-    let bestDist=Infinity;
-    if(head&&Number.isFinite(head.x)&&Number.isFinite(head.y)){
-      for(let i=0;i<this.fruits.length;i+=1){
-        const fruit=this.fruits[i];
-        if(!this._isFruitRenderable(fruit)) continue;
-        const dist=Math.abs(head.x-fruit.x)+Math.abs(head.y-fruit.y);
-        if(dist<bestDist){
-          bestDist=dist;
-          bestIndex=i;
-        }
-      }
-    }
-    this.nearestFruitIndex=bestIndex;
-    if(bestIndex>=0){
-      this.fruit=this.fruits[bestIndex];
-    }else{
-      this.fruit={x:-1,y:-1};
-    }
+    this.fruit=free.length?free[(Math.random()*free.length)|0]:{x:-1,y:-1};
   }
   turn(a){
     const d=this.dir;
@@ -2245,62 +2104,13 @@ class SnakeEnv{
     const R=this.reward;
     const breakdown=this.rewardBreakdown||(this.rewardBreakdown=this._makeRewardBreakdown());
     this.lastCrash=null;
-    const head=this.snake[0];
-    const originalDir={x:this.dir.x,y:this.dir.y};
-    let bfsSuggestion=null;
-    let hamiltonSuggestion=null;
-    const helperPenaltyScale=Math.max(0,Number.isFinite(R.helperAlignmentPenalty)?R.helperAlignmentPenalty:0.25);
-    if(R.usePathHelpers){
-      const helperEnv={
-        snake:this.snake,
-        fruit:this.fruit,
-        cols:this.cols,
-        rows:this.rows,
-        dir:originalDir,
-      };
-      if(typeof bfsPath==='function' && head && this.fruit && this.fruit.x>=0 && this.fruit.y>=0){
-        try{
-          const path=bfsPath({cols:this.cols,rows:this.rows},head,this.fruit,this.snake);
-          if(Array.isArray(path)&&path.length){
-            const step=path[0];
-            if(Number.isFinite(step)){
-              const dirs=[
-                {x:0,y:-1},
-                {x:1,y:0},
-                {x:0,y:1},
-                {x:-1,y:0},
-              ];
-              const dirVec=dirs[step];
-              if(dirVec){
-                const nextPoint={x:head.x+dirVec.x,y:head.y+dirVec.y};
-                bfsSuggestion=determineActionFromPoint(helperEnv,nextPoint);
-              }else if(step>=0&&step<=2){
-                bfsSuggestion=step;
-              }
-            }
-          }
-        }catch(err){
-          if(DEBUG_LOG) console.warn('BFS helper computation failed',err);
-        }
-      }
-      if(typeof getHamiltonianAction==='function'){
-        try{
-          hamiltonSuggestion=getHamiltonianAction(helperEnv);
-        }catch(err){
-          if(DEBUG_LOG) console.warn('Hamilton helper computation failed',err);
-        }
-      }
-    }
     this.turn(a);
-    const h=head;
+    const h=this.snake[0];
     const nx=h.x+this.dir.x;
     const ny=h.y+this.dir.y;
     this.steps++;
     this.stepsSinceFruit++;
-    const targetBefore=this._isFruitRenderable(this.fruit)?{x:this.fruit.x,y:this.fruit.y}:null;
-    const previousDistance=targetBefore?Math.abs(h.x-targetBefore.x)+Math.abs(h.y-targetBefore.y):Infinity;
-    const fruitIdx=this.findFruitIndex(nx,ny);
-    const willGrow=fruitIdx>=0;
+    const willGrow=(nx===this.fruit.x && ny===this.fruit.y);
     const hitsWall=nx<0||ny<0||nx>=this.cols||ny>=this.rows;
     const bodyToCheck=willGrow?this.snake:this.snake.slice(0,-1);
     const hitsBody=bodyToCheck.some(seg=>seg.x===nx && seg.y===ny);
@@ -2351,9 +2161,6 @@ class SnakeEnv{
         deadEndReward=base*R.deadEndPenalty;
       }
     }
-    const totalCells=Math.max(1,this.cols*this.rows);
-    const reachableSpace=Math.max(0,getFutureSpace());
-    const freedomRatio=Number.isFinite(reachableSpace)?Math.min(1,reachableSpace/totalCells):0;
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
     this.snake.unshift({x:nx,y:ny});
     let r=-R.stepPenalty;
@@ -2364,73 +2171,6 @@ class SnakeEnv{
     if(deadEndReward!==0){
       r+=deadEndReward;
       breakdown.deadEndPenalty+=deadEndReward;
-    }
-    // === LONG-TERM SPATIAL TREND ANALYSIS ===
-    this.freedomHistory=this.freedomHistory||[];
-    this.freedomHistory.push(freedomRatio);
-    if(this.freedomHistory.length>20) this.freedomHistory.shift();
-
-    const avgFreedom=this.freedomHistory.reduce((a,b)=>a+b,0)/this.freedomHistory.length;
-    const trend=freedomRatio-this.freedomHistory[0];
-
-    let longTermPenalty=0;
-    let longTermBonus=0;
-
-    if(trend<-0.05&&avgFreedom<0.15){
-      longTermPenalty=-R.trapPenalty*Math.abs(trend)*4;
-      if(DEBUG_LOG) console.log(`📉 Long-term entrapment: trend=${trend.toFixed(3)} penalty=${longTermPenalty.toFixed(3)}`);
-    }
-
-    if(trend>0.03&&avgFreedom>0.2){
-      longTermBonus=R.compactBonus*trend*5;
-      if(DEBUG_LOG) console.log(`📈 Spatial stability bonus: trend=${trend.toFixed(3)} bonus=${longTermBonus.toFixed(3)}`);
-    }
-
-    if(longTermPenalty){
-      r+=longTermPenalty;
-      breakdown.trapPenalty+=longTermPenalty;
-    }
-    if(longTermBonus){
-      r+=longTermBonus;
-      breakdown.compactness+=longTermBonus;
-    }
-
-    if(this.overlayEnabled){
-      if(this.overlayEl) this.overlayEl.remove();
-      const overlay=document.createElement('div');
-      overlay.className='spatial-overlay';
-      overlay.style.position='absolute';
-      overlay.style.top='0';
-      overlay.style.left='0';
-      overlay.style.width='100%';
-      overlay.style.height='100%';
-      overlay.style.pointerEvents='none';
-      overlay.style.transition='background 0.3s ease';
-
-      if(freedomRatio<0.05){
-        overlay.style.background='rgba(255,0,0,0.25)';
-        overlay.title='🚨 Dead-end penalty triggered';
-      }else if(trend<-0.05){
-        overlay.style.background='rgba(255,165,0,0.2)';
-        overlay.title='⚠️ Gradual entrapment (trend negative)';
-      }else if(trend>0.03){
-        overlay.style.background='rgba(0,255,0,0.15)';
-        overlay.title='✅ Long-term spatial stability bonus';
-      }else{
-        overlay.style.background='rgba(0,0,255,0.05)';
-        overlay.title='Neutral spatial state';
-      }
-
-      const container=document.querySelector('#gameContainer');
-      if(container){
-        container.appendChild(overlay);
-        this.overlayEl=overlay;
-      }else{
-        this.overlayEl=null;
-      }
-    }else if(this.overlayEl){
-      this.overlayEl.remove();
-      this.overlayEl=null;
     }
     if(a!==0){
       r-=R.turnPenalty;
@@ -2476,12 +2216,12 @@ class SnakeEnv{
     this.revisitAccum+=revisitPenalty;
     if(revisitPenalty) breakdown.revisitPenalty-=revisitPenalty;
     let ateFruit=false;
-    if(willGrow){
+    if(nx===this.fruit.x && ny===this.fruit.y){
       ateFruit=true;
       r+=R.fruitReward;
       breakdown.fruitReward+=R.fruitReward;
       this.snakeSet.add(`${nx},${ny}`);
-      this.spawnFruit(fruitIdx);
+      this.spawnFruit();
       this.timeToFruitAccum+=this.stepsSinceFruit;
       this.timeToFruitCount++;
       this.stepsSinceFruit=0;
@@ -2491,34 +2231,15 @@ class SnakeEnv{
       this.snakeSet.delete(`${tail.x},${tail.y}`);
       this.snakeSet.add(`${nx},${ny}`);
       this.visit[vidx]=Math.min(1,this.visit[vidx]+0.3);
-      if(targetBefore){
-        const nextDistance=Math.abs(nx-targetBefore.x)+Math.abs(ny-targetBefore.y);
-        if(nextDistance<previousDistance){
-          r+=R.approachBonus;
-          breakdown.approachBonus+=R.approachBonus;
-        }else if(nextDistance>previousDistance){
-          r-=R.retreatPenalty;
-          breakdown.retreatPenalty-=R.retreatPenalty;
-        }
+      const pd=Math.abs(h.x-this.fruit.x)+Math.abs(h.y-this.fruit.y);
+      const nd=Math.abs(nx-this.fruit.x)+Math.abs(ny-this.fruit.y);
+      if(nd<pd){
+        r+=R.approachBonus;
+        breakdown.approachBonus+=R.approachBonus;
+      }else if(nd>pd){
+        r-=R.retreatPenalty;
+        breakdown.retreatPenalty-=R.retreatPenalty;
       }
-    }
-    if(R.usePathHelpers){
-      const applyHelperReward=(suggested,weight,key)=>{
-        if(!Number.isFinite(weight)||weight===0) return;
-        if(suggested===null||suggested===undefined) return;
-        let delta=0;
-        if(a===suggested){
-          delta+=weight;
-        }else if(helperPenaltyScale>0){
-          delta-=Math.abs(weight)*helperPenaltyScale;
-        }
-        if(delta!==0){
-          r+=delta;
-          breakdown[key]=(breakdown[key]??0)+delta;
-        }
-      };
-      applyHelperReward(bfsSuggestion,R.bfsWeight,'bfsHelper');
-      applyHelperReward(hamiltonSuggestion,R.hamiltonWeight,'hamiltonHelper');
     }
     if(this.snake.length>this.maxLength){
       const gain=this.snake.length-this.maxLength;
@@ -2596,35 +2317,26 @@ class SnakeEnv{
 }
 
 class VecSnakeEnv{
-  constructor(count=1,{cols=20,rows=20,rewardConfig={},observationVersion=DEFAULT_OBSERVATION_VERSION,fruitCount=1}={}){
+  constructor(count=1,{cols=20,rows=20,rewardConfig={},observationVersion=DEFAULT_OBSERVATION_VERSION}={}){
     this.cols=cols;
     this.rows=rows;
     this.rewardConfig={...REWARD_DEFAULTS,...rewardConfig};
     this.observationVersion=normalizeObservationVersion(observationVersion);
     this.envCount=Math.max(1,count|0);
-    this.fruitCount=this.clampFruitCount(fruitCount,cols,rows);
-    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,{rewardConfig:this.rewardConfig,observationVersion:this.observationVersion,fruitCount:this.fruitCount}));
-  }
-  clampFruitCount(count,cols=this.cols,rows=this.rows){
-    const num=Number(count);
-    const area=Math.max(1,(cols|0)*(rows|0));
-    const cap=Math.max(1,Math.min(30,area-1));
-    const rounded=Number.isFinite(num)?Math.round(num):1;
-    return Math.max(1,Math.min(rounded,cap));
+    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,{rewardConfig:this.rewardConfig,observationVersion:this.observationVersion}));
   }
   getEnv(index=0){
     if(!this.envs.length) return null;
     const idx=((index%this.envCount)+this.envCount)%this.envCount;
     return this.envs[idx];
   }
-  configure({count=this.envCount,cols=this.cols,rows=this.rows,rewardConfig=this.rewardConfig,observationVersion=this.observationVersion,fruitCount=this.fruitCount}={}){
+  configure({count=this.envCount,cols=this.cols,rows=this.rows,rewardConfig=this.rewardConfig,observationVersion=this.observationVersion}={}){
     this.envCount=Math.max(1,count|0);
     this.cols=cols;
     this.rows=rows;
     this.rewardConfig={...REWARD_DEFAULTS,...rewardConfig};
     this.observationVersion=normalizeObservationVersion(observationVersion);
-    this.fruitCount=this.clampFruitCount(fruitCount,cols,rows);
-    this.envs=Array.from({length=this.envCount},()=>new SnakeEnv(this.cols,this.rows,{rewardConfig:this.rewardConfig,observationVersion:this.observationVersion,fruitCount:this.fruitCount}));
+    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,{rewardConfig:this.rewardConfig,observationVersion:this.observationVersion}));
     return this.resetAll();
   }
   setCount(count){
@@ -2638,61 +2350,34 @@ class VecSnakeEnv{
     this.envs.forEach(env=>{
       env.setRewardConfig(this.rewardConfig);
       env.setObservationVersion(this.observationVersion);
-      env.setFruitCount(this.fruitCount);
     });
   }
   setObservationVersion(version){
     const next=normalizeObservationVersion(version);
     if(next===this.observationVersion){
-      this.envs.forEach(env=>{
-        env.setObservationVersion(next);
-        env.setFruitCount(this.fruitCount);
-      });
+      this.envs.forEach(env=>env.setObservationVersion(next));
       return this.resetAll();
     }
     this.observationVersion=next;
-    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,{rewardConfig:this.rewardConfig,observationVersion:this.observationVersion,fruitCount:this.fruitCount}));
+    this.envs=Array.from({length:this.envCount},()=>new SnakeEnv(this.cols,this.rows,{rewardConfig:this.rewardConfig,observationVersion:this.observationVersion}));
     return this.resetAll();
-  }
-  setFruitCount(count){
-    const next=this.clampFruitCount(count);
-    this.fruitCount=next;
-    this.envs.forEach(env=>env.setFruitCount(this.fruitCount));
   }
   resetEnv(index,options){
     const env=this.getEnv(index);
     if(!env) return null;
     env.setRewardConfig(this.rewardConfig);
     env.setObservationVersion(this.observationVersion);
-    env.setFruitCount(this.fruitCount);
     const opts=typeof options==='function'?options(env,index):options;
-    const resetOpts={...(opts||{})};
-    if(resetOpts&&typeof resetOpts.startLength==='number') env.baseStartLength=resetOpts.startLength;
-    if(resetOpts.fruitCount===undefined) resetOpts.fruitCount=this.fruitCount;
-    return env.reset(resetOpts);
+    if(opts&&typeof opts.startLength==='number') env.baseStartLength=opts.startLength;
+    return env.reset(opts||{});
   }
   resetAll(options){
     return this.envs.map((env,idx)=>{
       env.setRewardConfig(this.rewardConfig);
       env.setObservationVersion(this.observationVersion);
-      env.setFruitCount(this.fruitCount);
       const opts=typeof options==='function'?options(env,idx):options;
-      const resetOpts={...(opts||{})};
-      if(resetOpts&&typeof resetOpts.startLength==='number') env.baseStartLength=resetOpts.startLength;
-      if(resetOpts.fruitCount===undefined) resetOpts.fruitCount=this.fruitCount;
-      return env.reset(resetOpts);
-    });
-  }
-  setOverlayFocus(index=0){
-    if(!this.envs?.length) return;
-    const target=((index%this.envCount)+this.envCount)%this.envCount;
-    this.envs.forEach((environment,idx)=>{
-      const enabled=idx===target;
-      environment.overlayEnabled=enabled;
-      if(!enabled&&environment.overlayEl){
-        environment.overlayEl.remove();
-        environment.overlayEl=null;
-      }
+      if(opts&&typeof opts.startLength==='number') env.baseStartLength=opts.startLength;
+      return env.reset(opts||{});
     });
   }
   getStateSize(){
@@ -4021,28 +3706,21 @@ board.setAttribute('aria-hidden','false');
 let COLS=20,ROWS=20,CELL=board.width/COLS;
 let observationVersion=DEFAULT_OBSERVATION_VERSION;
 let envCount=1;
-let fruitTarget=1;
-let vecEnv=new VecSnakeEnv(envCount,{cols:COLS,rows:ROWS,rewardConfig,observationVersion,fruitCount:fruitTarget});
+let vecEnv=new VecSnakeEnv(envCount,{cols:COLS,rows:ROWS,rewardConfig,observationVersion});
 let renderIndex=0;
-vecEnv.setOverlayFocus(renderIndex);
 let env=vecEnv.getEnv(renderIndex);
 let hamiltonCycle=generateHamiltonCycle(COLS);
 window.overlayVisible=Boolean(window.overlayVisible);
 
 function snapshotEnv(environment){
-  const fruits=Array.isArray(environment?.fruits)?environment.fruits.map(f=>({x:f.x,y:f.y})):[];
-  const target=environment?.fruit;
-  const nearest=target&&Number.isFinite(target.x)&&Number.isFinite(target.y)?{x:target.x,y:target.y}:{x:-1,y:-1};
   return {
     snake:environment.snake.map(p=>({x:p.x,y:p.y})),
-    fruits,
-    fruit:nearest,
+    fruit:environment.fruit?{x:environment.fruit.x,y:environment.fruit.y}:{x:-1,y:-1},
   };
 }
 const cloneState=state=>({
   snake:state.snake.map(p=>({x:p.x,y:p.y})),
-  fruits:Array.isArray(state?.fruits)?state.fruits.map(f=>({x:f.x,y:f.y})):[],
-  fruit:{x:state.fruit?.x??-1,y:state.fruit?.y??-1},
+  fruit:{x:state.fruit.x,y:state.fruit.y},
 });
 const BG_COLOR='#101532';
 const GRID_COLOR='rgba(135,143,210,0.16)';
@@ -4142,16 +3820,9 @@ function drawFrame(from,to,t){
   bctx.fillStyle=BG_COLOR;
   bctx.fillRect(0,0,board.width,board.height);
   drawGrid();
-  const fromFruits=Array.isArray(from.fruits)&&from.fruits.length?from.fruits:[from.fruit];
-  const toFruits=Array.isArray(to.fruits)&&to.fruits.length?to.fruits:[to.fruit];
-  const maxFruits=Math.max(fromFruits.length,toFruits.length);
-  for(let i=0;i<maxFruits;i+=1){
-    const prev=fromFruits[i]||{x:-1,y:-1};
-    const next=toFruits[i]||{x:-1,y:-1};
-    const same=prev.x===next.x&&prev.y===next.y;
-    if(prev.x>=0&&prev.y>=0&&!same) drawFruit(prev,1-t);
-    if(next.x>=0&&next.y>=0) drawFruit(next,same?1:t);
-  }
+  const sameFruit=from.fruit.x===to.fruit.x&&from.fruit.y===to.fruit.y;
+  if(from.fruit.x>=0&&!sameFruit) drawFruit(from.fruit,1-t);
+  if(to.fruit.x>=0) drawFruit(to.fruit,sameFruit?1:t);
   const fromSnake=from.snake;
   const toSnake=to.snake;
   const grew=toSnake.length>fromSnake.length;
@@ -4257,21 +3928,12 @@ function drawOverlay(state){
     ctx.stroke();
   }
   const snake=state?.snake||[];
-  const fruits=Array.isArray(state?.fruits)&&state.fruits.length?state.fruits:(state?.fruit&&Number.isFinite(state.fruit.x)&&Number.isFinite(state.fruit.y)?[state.fruit]:[]);
-  fruits.forEach(fruitItem=>{
-    if(!fruitItem||fruitItem.x<0||fruitItem.y<0) return;
-    ctx.strokeStyle='rgba(236,72,153,0.3)';
-    ctx.lineWidth=1.2;
-    ctx.beginPath();
-    ctx.arc((fruitItem.x+0.5)*cell,(fruitItem.y+0.5)*cell,cell*0.42,0,Math.PI*2);
-    ctx.stroke();
-  });
-  const targetFruit=(state?.fruit&&Number.isFinite(state.fruit.x)&&Number.isFinite(state.fruit.y))?state.fruit:(fruits[0]||null);
-  if(targetFruit&&snake.length){
+  const fruit=state?.fruit;
+  if(fruit&&snake.length){
     const path = bfsPath(
       { cols: COLS, rows: ROWS },
       snake?.[0],
-      targetFruit,
+      fruit,
       snake
     ) || [];
     if(path.length>0){
@@ -4699,8 +4361,6 @@ const ui={
   playbackButtons:Array.from(document.querySelectorAll('#playbackGroup .pill')),
   gridSize:document.getElementById('gridSize'),
   gridLabel:document.getElementById('gridLabel'),
-  fruitCount:document.getElementById('fruitCount'),
-  fruitLabel:document.getElementById('fruitLabel'),
   showPathOverlay:document.getElementById('showPathOverlay'),
   btnToggleLiveView:document.getElementById('btnToggleLiveView'),
   btnTrain:document.getElementById('btnTrain'),
@@ -4947,25 +4607,9 @@ const curriculumState={
     }
   },
   setManualEnabled(value){
-    const nextEnabled=!!value;
-    this.manualEnabled=nextEnabled;
+    this.manualEnabled=!!value;
     this.autoCursor=0;
-    if(this.manualEnabled){
-      this.lastStartLength=this.manualLength;
-    }else{
-      const baseline=this.getBaselineStartLength(0);
-      this.lastStartLength=baseline;
-      if(vecEnv&&typeof vecEnv.getEnv==='function'){
-        for(let i=0;i<vecEnv.envCount;i+=1){
-          const envRef=vecEnv.getEnv(i);
-          if(!envRef) continue;
-          const defaultLen=Number.isFinite(envRef?.defaultStartLength)
-            ?Math.max(1,Math.round(envRef.defaultStartLength))
-            :baseline;
-          envRef.baseStartLength=defaultLen;
-        }
-      }
-    }
+    if(this.manualEnabled) this.lastStartLength=this.manualLength;
     this.save();
   },
   setManualLength(value){
@@ -5137,9 +4781,6 @@ const REWARD_DECIMALS={
   timeoutPenalty:1,
   bfsWeight:2,
   hamiltonWeight:2,
-  bfsHelper:3,
-  hamiltonHelper:3,
-  helperAlignmentPenalty:3,
 };
 function describeRewardDetail(adj){
   if(!adj||typeof adj!=='object') return 'Reward';
@@ -5796,16 +5437,6 @@ function bindUI(){
       resetEnvironment(desiredSize,true);
     }
   });
-  if(ui.fruitCount){
-    updateFruitLabel();
-    ui.fruitCount.addEventListener('input',()=>{
-      updateFruitLabel();
-    });
-    ui.fruitCount.addEventListener('change',()=>{
-      updateFruitLabel();
-      applyFruitCountFromUI();
-    });
-  }
   if(ui.showPathOverlay){
     window.overlayVisible=ui.showPathOverlay.checked;
     ui.showPathOverlay.addEventListener('change',()=>{
@@ -6002,11 +5633,6 @@ function updateGridLabel(){
   const val=+ui.gridSize.value;
   ui.gridLabel.textContent=`${val}×${val}`;
 }
-function updateFruitLabel(){
-  if(!ui.fruitCount||!ui.fruitLabel) return;
-  const val=Math.max(1,Math.round(+ui.fruitCount.value||1));
-  ui.fruitLabel.textContent=val===1?`1 fruit`:`${val} fruits`;
-}
 function updateControlAvailability(){
   if(ui.btnStep){
     ui.btnStep.disabled=trainingMode==='auto'||envCount>1;
@@ -6053,7 +5679,6 @@ function seedContexts(forceReset=true){
   }
   contexts=states.map((state,idx)=>createContextSlot(idx,state));
   env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
-  vecEnv.setOverlayFocus(renderIndex);
   if(env) setImmediateState(env);
   applyCurriculumEpsilonBoost();
 }
@@ -6063,7 +5688,7 @@ function ensureContextPool(){
     seedContexts(true);
   }
 }
-function reconfigureEnvironment({count=envCount,size=COLS,observationVersion:obsVersion=observationVersion,fruitCount:fruitOpt=fruitTarget,force=false}={}){
+function reconfigureEnvironment({count=envCount,size=COLS,observationVersion:obsVersion=observationVersion,force=false}={}){
   let desiredCount=Math.max(1,count|0);
   if(trainingMode==='auto'){
     desiredCount=Math.max(12,desiredCount);
@@ -6071,29 +5696,22 @@ function reconfigureEnvironment({count=envCount,size=COLS,observationVersion:obs
   const desiredSize=Math.max(8,(+size)|0);
   const needInit=!vecEnv;
   const desiredObservationVersion=normalizeObservationVersion(obsVersion);
-  const area=Math.max(1,desiredSize*desiredSize);
-  const maxFruit=Math.max(1,Math.min(30,area-1));
-  const desiredFruitCount=Math.max(1,Math.min(maxFruit,Math.round(Number(fruitOpt))||1));
   const changedCount=desiredCount!==envCount;
   const changedSize=force||desiredSize!==COLS||needInit;
   const changedObservation=force||desiredObservationVersion!==observationVersion||needInit;
-  const changedFruit=force||desiredFruitCount!==fruitTarget||needInit;
   envCount=desiredCount;
   observationVersion=desiredObservationVersion;
-  fruitTarget=desiredFruitCount;
   if(!vecEnv){
-    vecEnv=new VecSnakeEnv(envCount,{cols:desiredSize,rows:desiredSize,rewardConfig,observationVersion,fruitCount:fruitTarget});
-  }else if(changedCount||changedSize||changedObservation||changedFruit){
-    vecEnv.configure({count:envCount,cols:desiredSize,rows:desiredSize,rewardConfig,observationVersion,fruitCount:fruitTarget});
+    vecEnv=new VecSnakeEnv(envCount,{cols:desiredSize,rows:desiredSize,rewardConfig,observationVersion});
+  }else if(changedCount||changedSize||changedObservation){
+    vecEnv.configure({count:envCount,cols:desiredSize,rows:desiredSize,rewardConfig,observationVersion});
   }else{
     vecEnv.setRewardConfig(rewardConfig);
     vecEnv.setObservationVersion(observationVersion);
-    vecEnv.setFruitCount(fruitTarget);
   }
   curriculumState.resize(envCount);
   renderIndex=Math.min(renderIndex,envCount-1);
   env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
-  vecEnv.setOverlayFocus(renderIndex);
   COLS=desiredSize;
   ROWS=desiredSize;
   CELL=board.width/COLS;
@@ -6106,18 +5724,12 @@ function reconfigureEnvironment({count=envCount,size=COLS,observationVersion:obs
   if(ui.envCount && ui.envCount.value!==`${envCount}`){
     ui.envCount.value=`${envCount}`;
   }
-  if(ui.fruitCount && ui.fruitCount.value!==`${fruitTarget}`){
-    ui.fruitCount.value=`${fruitTarget}`;
-    updateFruitLabel();
-  }else if(ui.fruitCount){
-    updateFruitLabel();
-  }
   updateBadgeMetrics();
 }
 function resetEnvironment(size=COLS,force=false){
   const wasTraining=training;
   if(wasTraining) stopTraining();
-  reconfigureEnvironment({size,fruitCount:fruitTarget,force:true});
+  reconfigureEnvironment({size,force:true});
   if(wasTraining&&!watching) startTraining();
 }
 function applyEnvCountFromUI(){
@@ -6125,16 +5737,7 @@ function applyEnvCountFromUI(){
   if(desired===envCount) return;
   const wasTraining=training;
   if(wasTraining) stopTraining();
-  reconfigureEnvironment({count:desired,size:+ui.gridSize.value,fruitCount:fruitTarget,force:true});
-  if(wasTraining&&!watching) startTraining();
-}
-function applyFruitCountFromUI(){
-  if(!ui.fruitCount) return;
-  const desired=Math.max(1,Math.round(+ui.fruitCount.value||1));
-  if(desired===fruitTarget) return;
-  const wasTraining=training;
-  if(wasTraining) stopTraining();
-  reconfigureEnvironment({count:envCount,size:+ui.gridSize.value,fruitCount:desired,force:true});
+  reconfigureEnvironment({count:desired,size:+ui.gridSize.value,force:true});
   if(wasTraining&&!watching) startTraining();
 }
 function setTrainingMode(mode){
@@ -6158,9 +5761,9 @@ function setTrainingMode(mode){
     if(firstActivation){
       ui.gridSize.value='10';
       updateGridLabel();
-      reconfigureEnvironment({count:desiredCount,size:10,fruitCount:fruitTarget,force:true});
+      reconfigureEnvironment({count:desiredCount,size:10,force:true});
     }else{
-      reconfigureEnvironment({count:desiredCount,size:+ui.gridSize.value,fruitCount:fruitTarget,force:true});
+      reconfigureEnvironment({count:desiredCount,size:+ui.gridSize.value,force:true});
     }
     updateReadouts();
     const stageIdx=autoPilot.boardStages.findIndex(stage=>stage.size===COLS);
@@ -6367,7 +5970,6 @@ function applyRewardsToEnv(){
   rewardConfig=getRewardConfigFromUI();
   vecEnv?.setRewardConfig(rewardConfig);
   env=vecEnv?.getEnv(renderIndex)||env;
-  vecEnv?.setOverlayFocus?.(renderIndex);
   autoPilot?.setRewardConfig?.({...rewardConfig});
   if(agent){
     agent.rewardConfig={...(agent.rewardConfig||{}),...rewardConfig};
@@ -7383,11 +6985,11 @@ function instantiateAgent(key,opts={}){
   if(!isDqnAgent(agent)){
     ui.envCount.value='1';
     ui.envCount.disabled=true;
-    reconfigureEnvironment({count:1,size:+ui.gridSize.value,fruitCount:fruitTarget,force:true});
+    reconfigureEnvironment({count:1,size:+ui.gridSize.value,force:true});
   }else{
     ui.envCount.disabled=false;
     const desiredCount=Math.max(1,+ui.envCount.value||envCount);
-    reconfigureEnvironment({count:desiredCount,size:+ui.gridSize.value,fruitCount:fruitTarget,force:true});
+    reconfigureEnvironment({count:desiredCount,size:+ui.gridSize.value,force:true});
   }
   updateAutoPpoVisibility();
   autoPilot?.setAgent?.(agent);
@@ -7398,10 +7000,6 @@ function instantiateAgent(key,opts={}){
 function applyPresetToUI(config){
   if(config.gamma!==undefined) ui.gamma.value=config.gamma;
   if(config.lr!==undefined) ui.lr.value=config.lr;
-  if(config.fruitCount!==undefined && ui.fruitCount){
-    ui.fruitCount.value=`${Math.max(1,Math.round(config.fruitCount))}`;
-    updateFruitLabel();
-  }
   if(config.epsStart!==undefined) ui.epsStart.value=config.epsStart;
   if(config.epsEnd!==undefined) ui.epsEnd.value=config.epsEnd;
   if(config.epsDecay!==undefined) ui.epsDecay.value=config.epsDecay;
@@ -7949,7 +7547,7 @@ async function applyAutoAdjustments(adjustments){
   if(nextBoard){
     ui.gridSize.value=`${nextBoard}`;
     updateGridLabel();
-    reconfigureEnvironment({size:nextBoard,fruitCount:fruitTarget,force:true});
+    reconfigureEnvironment({size:nextBoard,force:true});
     flash(`Curriculum: ${nextBoard}×${nextBoard}`);
   }
   if(rewardAdjusted){
@@ -7970,7 +7568,7 @@ async function evalGreedyEpisodes(agentRef,runCount=GREEDY_EVAL_RUNS,referenceEp
   const prevEps=typeof agentRef.epsilon==='number'?agentRef.epsilon:null;
   if(prevEps!==null) agentRef.epsilon=0;
   const evalCount=Math.min(Math.max(1,envCount|0),Math.max(1,runCount|0));
-  const evalEnv=new VecSnakeEnv(evalCount,{cols:COLS,rows:ROWS,rewardConfig,observationVersion,fruitCount:fruitTarget});
+  const evalEnv=new VecSnakeEnv(evalCount,{cols:COLS,rows:ROWS,rewardConfig,observationVersion});
   let states=evalEnv.resetAll((_,idx)=>{
     if(typeof curriculumState==='object'&&curriculumState){
       const desired=curriculumState.getStartLength(idx,{record:false,forEval:true});
@@ -8052,14 +7650,12 @@ async function performVectorStep(mode){
       ctx.needsReset=false;
       if(ctx.envIndex===renderIndex){
         env=vecEnv.getEnv(renderIndex)||env;
-        vecEnv.setOverlayFocus(renderIndex);
         if(env) setImmediateState(env);
       }
     }
   });
   applyCurriculumEpsilonBoost();
   env=vecEnv.getEnv(renderIndex)||env;
-  vecEnv.setOverlayFocus(renderIndex);
   const displayEnv=env;
   const shouldRender=(renderTick%mode.renderEvery===0);
   let before=null;
@@ -8234,44 +7830,6 @@ function determineActionFromPoint(environment,nextPoint){
   if(desiredX===right.x && desiredY===right.y) return 2;
   return null;
 }
-
-function iterateEnvironmentFruits(environment){
-  const fruits=[];
-  if(Array.isArray(environment?.fruits)){
-    environment.fruits.forEach(fruit=>{
-      if(fruit&&Number.isFinite(fruit.x)&&Number.isFinite(fruit.y)) fruits.push(fruit);
-    });
-  }
-  const fallback=environment?.fruit;
-  if(fallback&&Number.isFinite(fallback.x)&&Number.isFinite(fallback.y)){
-    if(!fruits.some(f=>f.x===fallback.x&&f.y===fallback.y)) fruits.push(fallback);
-  }
-  return fruits;
-}
-
-function hasFruitAt(environment,x,y){
-  if(typeof environment?.findFruitIndex==='function') return environment.findFruitIndex(x,y)>=0;
-  const fruits=iterateEnvironmentFruits(environment);
-  return fruits.some(fruit=>fruit.x===x&&fruit.y===y);
-}
-
-function nearestFruitForEnvironment(environment,origin){
-  const fruits=iterateEnvironmentFruits(environment);
-  const point=origin&&Number.isFinite(origin.x)&&Number.isFinite(origin.y)?origin:null;
-  if(!point){
-    return {fruit:fruits[0]||null,dist:Infinity};
-  }
-  let best=null;
-  let bestDist=Infinity;
-  for(const fruit of fruits){
-    const dist=Math.abs(point.x-fruit.x)+Math.abs(point.y-fruit.y);
-    if(dist<bestDist){
-      best=fruit;
-      bestDist=dist;
-    }
-  }
-  return {fruit:best,dist:bestDist};
-}
 function selectGreedyAction(state){
   if(!agent) return 0;
   try{
@@ -8332,8 +7890,8 @@ function projectActionOutcome(environment,action){
   const ny=head.y+dy;
   const cols=environment.cols??COLS;
   const rows=environment.rows??ROWS;
-  const willGrow=hasFruitAt(environment,nx,ny);
-  const {fruit:nearestFruit,dist:nearestDistance}=nearestFruitForEnvironment(environment,{x:nx,y:ny});
+  const fruit=environment.fruit;
+  const willGrow=Boolean(fruit&&nx===fruit.x&&ny===fruit.y);
   const hitsWall=nx<0||ny<0||nx>=cols||ny>=rows;
   let hitsBody=false;
   if(!hitsWall){
@@ -8356,9 +7914,9 @@ function projectActionOutcome(environment,action){
       freeRatio=0;
     }
   }
-  let distanceToFruit=Number.isFinite(nearestDistance)?nearestDistance:Infinity;
-  if(!Number.isFinite(distanceToFruit) && nearestFruit && Number.isFinite(nearestFruit.x) && Number.isFinite(nearestFruit.y)){
-    distanceToFruit=Math.abs(nx-nearestFruit.x)+Math.abs(ny-nearestFruit.y);
+  let distanceToFruit=Infinity;
+  if(fruit&&Number.isFinite(fruit.x)&&Number.isFinite(fruit.y)){
+    distanceToFruit=Math.abs(nx-fruit.x)+Math.abs(ny-fruit.y);
   }
   return {action,nx,ny,willGrow,hitsWall,hitsBody,freeSpace,freeRatio,distanceToFruit};
 }
@@ -8507,13 +8065,10 @@ function chooseTestAction(environment,state){
 
   addCandidate(selectGreedyAction(state),'model');
 
-  const head=environment.snake?.[0];
-  const {fruit:targetFruit}=nearestFruitForEnvironment(environment,head);
-
   const bfs = bfsPath(
     { cols: environment.cols ?? COLS, rows: environment.rows ?? ROWS },
-    head,
-    targetFruit,
+    environment.snake?.[0],
+    environment.fruit,
     environment.snake
   );
 
@@ -8523,7 +8078,7 @@ function chooseTestAction(environment,state){
 
   const tailAction=planTailFollowAction(
     environment.snake,
-    targetFruit,
+    environment.fruit,
     { cols: environment.cols ?? COLS, rows: environment.rows ?? ROWS }
   );
   if(Number.isFinite(tailAction)){
@@ -8817,7 +8372,6 @@ async function buildAppState(){
     mode:trainingMode,
     envCount,
     gridSize:+ui.gridSize.value,
-    fruitCount:fruitTarget,
     observationVersion,
     rewardConfig:{...rewardConfig},
     agent:agentState,
@@ -8825,7 +8379,6 @@ async function buildAppState(){
       episode,totalSteps,bestLen,bestTestLen,
       envCount,
       boardSize:COLS,
-      fruitCount:fruitTarget,
       observationVersion,
       rwHist:Array.from(rwHist),
       fruitHist:Array.from(fruitHist),
@@ -8866,7 +8419,6 @@ function applyMeta(meta={}){
     nextCount=Math.max(1,nextCount||1);
   }
   const nextSize=typeof meta.boardSize==='number'?meta.boardSize:+ui.gridSize.value;
-  const nextFruitCount=Number.isFinite(meta.fruitCount)?Math.round(meta.fruitCount):fruitTarget;
   if(hasMetaCount){
     ui.envCount.value=`${nextCount}`;
   }
@@ -8874,12 +8426,8 @@ function applyMeta(meta={}){
     ui.gridSize.value=`${meta.boardSize}`;
     updateGridLabel();
   }
-  if(ui.fruitCount){
-    ui.fruitCount.value=`${Math.max(1,nextFruitCount)}`;
-    updateFruitLabel();
-  }
   const metaObservationVersion=typeof meta.observationVersion==='string'?meta.observationVersion:observationVersion;
-  reconfigureEnvironment({count:nextCount,size:nextSize,observationVersion:metaObservationVersion,fruitCount:nextFruitCount,force:true});
+  reconfigureEnvironment({count:nextCount,size:nextSize,observationVersion:metaObservationVersion,force:true});
   if(trainingMode==='auto' && autoPilot){
     const stageIdx=autoPilot.boardStages.findIndex(stage=>stage.size===COLS);
     if(stageIdx>=0) autoPilot.stageIndex=stageIdx;
@@ -8952,12 +8500,7 @@ async function applyCheckpointData(data){
   desiredObservationVersion=normalizeObservationVersion(desiredObservationVersion);
   const loadedEnvCount=data.envCount??data.meta?.envCount??envCount;
   const boardSize=typeof data.gridSize==='number'?data.gridSize:typeof data.meta?.boardSize==='number'?data.meta.boardSize:COLS;
-  const loadedFruitCount=Number.isFinite(data.fruitCount)?Math.round(data.fruitCount):Number.isFinite(data.meta?.fruitCount)?Math.round(data.meta.fruitCount):fruitTarget;
-  if(ui.fruitCount){
-    ui.fruitCount.value=`${Math.max(1,loadedFruitCount)}`;
-    updateFruitLabel();
-  }
-  reconfigureEnvironment({count:loadedEnvCount,size:boardSize,observationVersion:desiredObservationVersion,fruitCount:loadedFruitCount,force:true});
+  reconfigureEnvironment({count:loadedEnvCount,size:boardSize,observationVersion:desiredObservationVersion,force:true});
 }
 
 
@@ -8978,7 +8521,6 @@ async function loadTrainingFromFile(file){
     if(data.rewardConfig) applyRewardConfigToUI(data.rewardConfig);
     const loadedEnvCount=data.envCount??data.meta?.envCount??envCount;
     const boardSize=typeof data.gridSize==='number'?data.gridSize:typeof data.meta?.boardSize==='number'?data.meta.boardSize:+ui.gridSize.value;
-    const loadedFruitCount=Number.isFinite(data.fruitCount)?Math.round(data.fruitCount):Number.isFinite(data.meta?.fruitCount)?Math.round(data.meta.fruitCount):fruitTarget;
     const agentStateDim=Number(data.agent?.sDim);
     const currentSize=vecEnv?.getStateSize?.()||OBSERVATION_STATE_SIZES[observationVersion]||0;
     const legacySize=OBSERVATION_STATE_SIZES[OBSERVATION_VERSIONS.legacy];
@@ -8995,11 +8537,7 @@ async function loadTrainingFromFile(file){
     ui.envCount.value=`${loadedEnvCount}`;
     ui.gridSize.value=`${boardSize}`;
     updateGridLabel();
-    if(ui.fruitCount){
-      ui.fruitCount.value=`${Math.max(1,loadedFruitCount)}`;
-      updateFruitLabel();
-    }
-    reconfigureEnvironment({count:loadedEnvCount,size:boardSize,observationVersion:desiredObservationVersion,fruitCount:loadedFruitCount,force:true});
+    reconfigureEnvironment({count:loadedEnvCount,size:boardSize,observationVersion:desiredObservationVersion,force:true});
     instantiateAgent(algo,{useCurrentUI:true});
     await agent.importState(data.agent);
     applyConfigToAgent();
@@ -9091,7 +8629,6 @@ aiTuner.setEnabled(aiAutoTuneEnabled);
 
 window.addEventListener('load',()=>{
   bindUI();
-  updateFruitLabel();
   setPlaybackMode('cinematic');
   instantiateAgent('dueling');
   hyperParams=getHyperparameterSnapshot();
