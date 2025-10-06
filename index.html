@@ -4525,7 +4525,7 @@ let trainingMode='manual';
 let autoPilot=null;
 const curriculumState={
   manualEnabled:false,
-  manualLength:10,
+  manualLength:1,
   autoCursor:0,
   perEnvLengths:[],
   lastStartLength:3,
@@ -4538,7 +4538,7 @@ const curriculumState={
       if(data&&typeof data==='object'){
         if(typeof data.manualEnabled==='boolean') this.manualEnabled=data.manualEnabled;
         if(Number.isFinite(data.manualLength)){
-          this.manualLength=clamp(Math.round(data.manualLength),3,30);
+          this.manualLength=clamp(Math.round(data.manualLength),3,200);
         }
         if(this.manualEnabled) this.lastStartLength=this.manualLength;
       }
