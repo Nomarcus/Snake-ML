@@ -139,15 +139,19 @@ h2{
   color:#f0f2ff;
   letter-spacing:0.01em;
 }
-canvas#board{
+#gameContainer{
+  position:relative;
   width:100%;
   max-width:560px;
+  align-self:center;
+}
+#gameContainer canvas#board{
+  width:100%;
   aspect-ratio:1/1;
   border-radius:26px;
   background:radial-gradient(140% 140% at 30% 20%,#273067 0%,#151a3a 50%,#0d1127 100%);
   border:1px solid rgba(128,140,210,0.25);
   box-shadow:0 40px 80px rgba(8,12,42,0.55);
-  align-self:center;
 }
 .controls{
   display:flex;
@@ -1015,7 +1019,10 @@ footer{
   .tuning-card{
     grid-column:1;
   }
-  canvas#board{
+  #gameContainer{
+    max-width:none;
+  }
+  #gameContainer canvas#board{
     width:100%;
     height:auto;
   }
@@ -1065,6 +1072,12 @@ footer{
     width:160px;
   }
 }
+.spatial-overlay{
+  pointer-events:none;
+  border-radius:6px;
+  mix-blend-mode:multiply;
+  transition:background 0.3s ease;
+}
 </style>
 </head>
 <body>
@@ -1097,7 +1110,9 @@ footer{
         <button id="btnToggleLiveView" class="secondary" type="button">Hide live view</button>
       </div>
     </div>
-    <canvas id="board" width="500" height="500"></canvas>
+    <div id="gameContainer" class="board-wrapper">
+      <canvas id="board" width="500" height="500"></canvas>
+    </div>
     <div class="controls primary">
       <button id="btnTrain">▶ Start training</button>
       <button id="btnPause" class="secondary">⏸ Pause</button>
@@ -1826,7 +1841,8 @@ const REWARD_DEFAULTS={
   fruitReward:10,
   growthBonus:1,
   compactWeight:0,
-  trapPenalty:0.5,
+  compactBonus:0.25,
+  trapPenalty:1.2,
   spaceGainBonus:0.05,
   bfsWeight:0.2,
   hamiltonWeight:0.05,
@@ -1963,6 +1979,8 @@ class SnakeEnv{
     this.observationVersion=normalizeObservationVersion(observationVersion);
     this.defaultStartLength=Math.max(1,Math.min(3,this.cols-1));
     this.baseStartLength=this.defaultStartLength;
+    this.overlayEl=null;
+    this.overlayEnabled=false;
     this.reset();
   }
   _makeRewardBreakdown(){
@@ -2082,6 +2100,11 @@ class SnakeEnv{
     this.timeToFruitCount=0;
     this.episodeFruit=0;
     this.lastCrash=null;
+    this.freedomHistory=[];
+    if(this.overlayEl){
+      this.overlayEl.remove();
+      this.overlayEl=null;
+    }
     return this.getState();
   }
   idx(x,y){return y*this.cols+x;}
@@ -2161,6 +2184,9 @@ class SnakeEnv{
         deadEndReward=base*R.deadEndPenalty;
       }
     }
+    const totalCells=Math.max(1,this.cols*this.rows);
+    const reachableSpace=Math.max(0,getFutureSpace());
+    const freedomRatio=Number.isFinite(reachableSpace)?Math.min(1,reachableSpace/totalCells):0;
     for(let i=0;i<this.visit.length;i++) this.visit[i]*=0.995;
     this.snake.unshift({x:nx,y:ny});
     let r=-R.stepPenalty;
@@ -2171,6 +2197,73 @@ class SnakeEnv{
     if(deadEndReward!==0){
       r+=deadEndReward;
       breakdown.deadEndPenalty+=deadEndReward;
+    }
+    // === LONG-TERM SPATIAL TREND ANALYSIS ===
+    this.freedomHistory=this.freedomHistory||[];
+    this.freedomHistory.push(freedomRatio);
+    if(this.freedomHistory.length>20) this.freedomHistory.shift();
+
+    const avgFreedom=this.freedomHistory.reduce((a,b)=>a+b,0)/this.freedomHistory.length;
+    const trend=freedomRatio-this.freedomHistory[0];
+
+    let longTermPenalty=0;
+    let longTermBonus=0;
+
+    if(trend<-0.05&&avgFreedom<0.15){
+      longTermPenalty=-R.trapPenalty*Math.abs(trend)*4;
+      if(DEBUG_LOG) console.log(`📉 Long-term entrapment: trend=${trend.toFixed(3)} penalty=${longTermPenalty.toFixed(3)}`);
+    }
+
+    if(trend>0.03&&avgFreedom>0.2){
+      longTermBonus=R.compactBonus*trend*5;
+      if(DEBUG_LOG) console.log(`📈 Spatial stability bonus: trend=${trend.toFixed(3)} bonus=${longTermBonus.toFixed(3)}`);
+    }
+
+    if(longTermPenalty){
+      r+=longTermPenalty;
+      breakdown.trapPenalty+=longTermPenalty;
+    }
+    if(longTermBonus){
+      r+=longTermBonus;
+      breakdown.compactness+=longTermBonus;
+    }
+
+    if(this.overlayEnabled){
+      if(this.overlayEl) this.overlayEl.remove();
+      const overlay=document.createElement('div');
+      overlay.className='spatial-overlay';
+      overlay.style.position='absolute';
+      overlay.style.top='0';
+      overlay.style.left='0';
+      overlay.style.width='100%';
+      overlay.style.height='100%';
+      overlay.style.pointerEvents='none';
+      overlay.style.transition='background 0.3s ease';
+
+      if(freedomRatio<0.05){
+        overlay.style.background='rgba(255,0,0,0.25)';
+        overlay.title='🚨 Dead-end penalty triggered';
+      }else if(trend<-0.05){
+        overlay.style.background='rgba(255,165,0,0.2)';
+        overlay.title='⚠️ Gradual entrapment (trend negative)';
+      }else if(trend>0.03){
+        overlay.style.background='rgba(0,255,0,0.15)';
+        overlay.title='✅ Long-term spatial stability bonus';
+      }else{
+        overlay.style.background='rgba(0,0,255,0.05)';
+        overlay.title='Neutral spatial state';
+      }
+
+      const container=document.querySelector('#gameContainer');
+      if(container){
+        container.appendChild(overlay);
+        this.overlayEl=overlay;
+      }else{
+        this.overlayEl=null;
+      }
+    }else if(this.overlayEl){
+      this.overlayEl.remove();
+      this.overlayEl=null;
     }
     if(a!==0){
       r-=R.turnPenalty;
@@ -2378,6 +2471,18 @@ class VecSnakeEnv{
       const opts=typeof options==='function'?options(env,idx):options;
       if(opts&&typeof opts.startLength==='number') env.baseStartLength=opts.startLength;
       return env.reset(opts||{});
+    });
+  }
+  setOverlayFocus(index=0){
+    if(!this.envs?.length) return;
+    const target=((index%this.envCount)+this.envCount)%this.envCount;
+    this.envs.forEach((environment,idx)=>{
+      const enabled=idx===target;
+      environment.overlayEnabled=enabled;
+      if(!enabled&&environment.overlayEl){
+        environment.overlayEl.remove();
+        environment.overlayEl=null;
+      }
     });
   }
   getStateSize(){
@@ -3708,6 +3813,7 @@ let observationVersion=DEFAULT_OBSERVATION_VERSION;
 let envCount=1;
 let vecEnv=new VecSnakeEnv(envCount,{cols:COLS,rows:ROWS,rewardConfig,observationVersion});
 let renderIndex=0;
+vecEnv.setOverlayFocus(renderIndex);
 let env=vecEnv.getEnv(renderIndex);
 let hamiltonCycle=generateHamiltonCycle(COLS);
 window.overlayVisible=Boolean(window.overlayVisible);
@@ -5679,6 +5785,7 @@ function seedContexts(forceReset=true){
   }
   contexts=states.map((state,idx)=>createContextSlot(idx,state));
   env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
+  vecEnv.setOverlayFocus(renderIndex);
   if(env) setImmediateState(env);
   applyCurriculumEpsilonBoost();
 }
@@ -5712,6 +5819,7 @@ function reconfigureEnvironment({count=envCount,size=COLS,observationVersion:obs
   curriculumState.resize(envCount);
   renderIndex=Math.min(renderIndex,envCount-1);
   env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
+  vecEnv.setOverlayFocus(renderIndex);
   COLS=desiredSize;
   ROWS=desiredSize;
   CELL=board.width/COLS;
@@ -5970,6 +6078,7 @@ function applyRewardsToEnv(){
   rewardConfig=getRewardConfigFromUI();
   vecEnv?.setRewardConfig(rewardConfig);
   env=vecEnv?.getEnv(renderIndex)||env;
+  vecEnv?.setOverlayFocus?.(renderIndex);
   autoPilot?.setRewardConfig?.({...rewardConfig});
   if(agent){
     agent.rewardConfig={...(agent.rewardConfig||{}),...rewardConfig};
@@ -7650,12 +7759,14 @@ async function performVectorStep(mode){
       ctx.needsReset=false;
       if(ctx.envIndex===renderIndex){
         env=vecEnv.getEnv(renderIndex)||env;
+        vecEnv.setOverlayFocus(renderIndex);
         if(env) setImmediateState(env);
       }
     }
   });
   applyCurriculumEpsilonBoost();
   env=vecEnv.getEnv(renderIndex)||env;
+  vecEnv.setOverlayFocus(renderIndex);
   const displayEnv=env;
   const shouldRender=(renderTick%mode.renderEvery===0);
   let before=null;
