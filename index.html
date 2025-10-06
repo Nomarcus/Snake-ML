@@ -1906,16 +1906,22 @@ let hyperParams={};
 const LOOP_PATTERNS=new Set(['1,2,1,2','2,1,2,1']);
 const GREEDY_EVAL_INTERVAL=1000;
 const GREEDY_EVAL_RUNS=20;
-const OBSERVATION_VERSIONS={legacy:'legacy',extended:'extended'};
+const OBSERVATION_VERSIONS={
+  legacy:'legacy',
+  extended:'extended',
+  extendedCompat:'extended-v1',
+};
 const DEFAULT_OBSERVATION_VERSION=OBSERVATION_VERSIONS.extended;
 const OBSERVATION_STATE_SIZES={
   [OBSERVATION_VERSIONS.legacy]:17,
+  [OBSERVATION_VERSIONS.extendedCompat]:21,
   [OBSERVATION_VERSIONS.extended]:24,
 };
 const normalizeObservationVersion=version=>{
   if(typeof version!=='string') return DEFAULT_OBSERVATION_VERSION;
   const lower=version.trim().toLowerCase();
   if(lower===OBSERVATION_VERSIONS.legacy) return OBSERVATION_VERSIONS.legacy;
+  if(lower===OBSERVATION_VERSIONS.extendedCompat) return OBSERVATION_VERSIONS.extendedCompat;
   if(lower===OBSERVATION_VERSIONS.extended) return OBSERVATION_VERSIONS.extended;
   return DEFAULT_OBSERVATION_VERSION;
 };
@@ -2272,6 +2278,9 @@ class SnakeEnv{
       this.getVisit(h.x-1, h.y),
       this.getVisit(h.x+1, h.y),
     ];
+    if(this.observationVersion===OBSERVATION_VERSIONS.extendedCompat){
+      return Float32Array.from([...baseFeatures,...crowd]);
+    }
     const freeSpaceRatio=Math.max(0,Math.min(1,this.freeSpaceFrom(h.x,h.y,true)/(this.cols*this.rows)));
     const slack=this.computeSlack();
     const slackNorm=Math.max(0,Math.min(1,slack/(this.cols*this.rows)));
@@ -8407,9 +8416,14 @@ async function applyCheckpointData(data){
   const agentStateDim=Number(data.agent?.sDim);
   const currentSize=vecEnv?.getStateSize?.()||OBSERVATION_STATE_SIZES[observationVersion]||0;
   const legacySize=OBSERVATION_STATE_SIZES[OBSERVATION_VERSIONS.legacy];
+  const compatSize=OBSERVATION_STATE_SIZES[OBSERVATION_VERSIONS.extendedCompat];
   let desiredObservationVersion=(typeof data.observationVersion==='string'?data.observationVersion:(typeof data.meta?.observationVersion==='string'?data.meta.observationVersion:observationVersion));
-  if(Number.isFinite(agentStateDim)&&agentStateDim>0&&agentStateDim<currentSize&&agentStateDim===legacySize){
-    desiredObservationVersion=OBSERVATION_VERSIONS.legacy;
+  if(Number.isFinite(agentStateDim)&&agentStateDim>0){
+    if(agentStateDim===legacySize && agentStateDim!==currentSize){
+      desiredObservationVersion=OBSERVATION_VERSIONS.legacy;
+    }else if(agentStateDim===compatSize && agentStateDim!==currentSize){
+      desiredObservationVersion=OBSERVATION_VERSIONS.extendedCompat;
+    }
   }
   desiredObservationVersion=normalizeObservationVersion(desiredObservationVersion);
   const loadedEnvCount=data.envCount??data.meta?.envCount??envCount;
@@ -8438,9 +8452,14 @@ async function loadTrainingFromFile(file){
     const agentStateDim=Number(data.agent?.sDim);
     const currentSize=vecEnv?.getStateSize?.()||OBSERVATION_STATE_SIZES[observationVersion]||0;
     const legacySize=OBSERVATION_STATE_SIZES[OBSERVATION_VERSIONS.legacy];
+    const compatSize=OBSERVATION_STATE_SIZES[OBSERVATION_VERSIONS.extendedCompat];
     let desiredObservationVersion=(typeof data.observationVersion==='string'?data.observationVersion:(typeof data.meta?.observationVersion==='string'?data.meta.observationVersion:observationVersion));
-    if(Number.isFinite(agentStateDim)&&agentStateDim>0&&agentStateDim<currentSize&&agentStateDim===legacySize){
-      desiredObservationVersion=OBSERVATION_VERSIONS.legacy;
+    if(Number.isFinite(agentStateDim)&&agentStateDim>0){
+      if(agentStateDim===legacySize && agentStateDim!==currentSize){
+        desiredObservationVersion=OBSERVATION_VERSIONS.legacy;
+      }else if(agentStateDim===compatSize && agentStateDim!==currentSize){
+        desiredObservationVersion=OBSERVATION_VERSIONS.extendedCompat;
+      }
     }
     desiredObservationVersion=normalizeObservationVersion(desiredObservationVersion);
     ui.envCount.value=`${loadedEnvCount}`;
