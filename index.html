@@ -445,6 +445,30 @@ button:focus-visible{
 .auto-ppo-field .toggle{
   margin:0;
 }
+.curriculum-field{
+  gap:10px;
+}
+.curriculum-field .curriculum-toggle{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.curriculum-field .curriculum-controls{
+  display:flex;
+  align-items:center;
+  gap:12px;
+}
+.curriculum-field .curriculum-controls label{
+  font-weight:600;
+  min-width:88px;
+}
+.curriculum-field .curriculum-controls input[type="range"]{
+  flex:1 1 160px;
+}
+.curriculum-field .curriculum-controls .mono{
+  min-width:34px;
+  text-align:right;
+}
 .ai-interval-field .field-header{
   display:flex;
   align-items:center;
@@ -1152,6 +1176,20 @@ footer{
       <label for="stagePresetSelect">Stage preset</label>
       <select id="stagePresetSelect"></select>
     </div>
+    <div class="field block curriculum-field">
+      <div class="curriculum-toggle">
+        <label class="toggle" for="curriculumToggle" title="Tränar masken i längre former för att förbättra sen-spel-beteende.">
+          <input type="checkbox" id="curriculumToggle">
+          <span>Aktivera Late-Game Curriculum</span>
+        </label>
+      </div>
+      <div class="curriculum-controls">
+        <label for="curriculumLength">Startlängd</label>
+        <input type="range" id="curriculumLength" min="3" max="30" step="1" value="10">
+        <span class="mono" id="curriculumLengthReadout">10</span>
+      </div>
+      <span class="hint">Tränar masken i längre former för att förbättra sen-spel-beteende.</span>
+    </div>
     <div class="field block auto-ppo-field hidden" id="autoPpoField">
       <label class="toggle" for="autoPpoToggle">
         <input type="checkbox" id="autoPpoToggle" aria-label="Toggle Auto-PPO">
@@ -1333,6 +1371,11 @@ footer{
             <span class="hint">Applies extra loss when the snake repeats tight loops.</span>
             <input type="range" id="rewardLoop" min="0" max="20" step="0.01" value="0.50">
             <span class="mono" id="rewardLoopReadout">0.50</span>
+          </label>
+          <label>Tight loop penalty
+            <span class="hint">Punishes revisiting dense spirals and shrinking free space.</span>
+            <input type="range" id="rewardTightLoop" min="0" max="20" step="0.01" value="1.20">
+            <span class="mono" id="rewardTightLoopReadout">1.20</span>
           </label>
           <label>Revisit penalty
             <span class="hint">Penalizes revisiting recent tiles to promote exploration.</span>
@@ -1774,6 +1817,7 @@ const REWARD_DEFAULTS={
   approachBonus:0.03,
   retreatPenalty:0.03,
   loopPenalty:0.50,
+  tightLoopPenalty:1.2,
   revisitPenalty:0.05,
   deadEndPenalty:0.5,
   wallPenalty:10,
@@ -1798,6 +1842,7 @@ const REWARD_COMPONENTS=[
   {key:'turnPenalty',label:'Turn penalty',sign:'negative'},
   {key:'retreatPenalty',label:'Retreat penalty',sign:'negative'},
   {key:'loopPenalty',label:'Loop penalty',sign:'negative'},
+  {key:'tightLoopPenalty',label:'Tight loop penalty',sign:'negative'},
   {key:'revisitPenalty',label:'Revisit penalty',sign:'negative'},
   {key:'deadEndPenalty',label:'Dead-end penalty',sign:'negative'},
   {key:'trapPenalty',label:'Trap penalty',sign:'negative'},
@@ -1812,6 +1857,7 @@ const REWARD_LABELS={
   approachBonus:'Toward fruit bonus',
   retreatPenalty:'Retreat penalty',
   loopPenalty:'Loop penalty',
+  tightLoopPenalty:'Tight loop penalty',
   revisitPenalty:'Revisit penalty',
   deadEndPenalty:'Dead-end penalty',
   trapPenalty:'Trap penalty',
@@ -1830,6 +1876,7 @@ const REWARD_INPUT_IDS={
   approachBonus:'rewardApproach',
   retreatPenalty:'rewardRetreat',
   loopPenalty:'rewardLoop',
+  tightLoopPenalty:'rewardTightLoop',
   revisitPenalty:'rewardRevisit',
   deadEndPenalty:'rewardDeadEnd',
   trapPenalty:'rewardTrap',
@@ -1853,6 +1900,7 @@ const telemetry={
   fruitPerEpAvg:0,
   greedyGapLatest:undefined,
 };
+const CURRICULUM_STORAGE_KEY='snake.curriculum.v1';
 let rewardConfig={...REWARD_DEFAULTS};
 let hyperParams={};
 const LOOP_PATTERNS=new Set(['1,2,1,2','2,1,2,1']);
@@ -1893,6 +1941,7 @@ class SnakeEnv{
     this.cols=cols;
     this.rows=rows;
     this.setRewardConfig(rewardOverrides);
+    this.baseStartLength=Math.max(2,Math.min(3,this.cols-1));
     this.reset();
   }
   _makeRewardBreakdown(){
@@ -1946,10 +1995,21 @@ class SnakeEnv{
     const area=width*height;
     return Math.max(0,area-this.snake.length);
   }
-  reset(){
+  reset(options={}){
+    const desired=Number.isFinite(options?.startLength)?options.startLength:this.baseStartLength;
+    const safeDesired=Math.max(2,Math.round(desired||3));
+    const maxForward=Math.max(2,this.cols-1);
+    const length=Math.max(2,Math.min(safeDesired,maxForward));
+    this.baseStartLength=length;
     this.dir={x:1,y:0};
-    const cx=(this.cols/2|0), cy=(this.rows/2|0);
-    this.snake=[{x:cx-1,y:cy},{x:cx,y:cy}];
+    const cy=(this.rows/2|0);
+    const margin=Math.max(0,this.cols-length-1);
+    const startX=Math.max(0,Math.floor(margin/2));
+    this.snake=[];
+    for(let i=0;i<length;i+=1){
+      this.snake.push({x:startX+i,y:cy});
+    }
+    this.snake.reverse();
     this.snakeSet=new Set(this.snake.map(p=>`${p.x},${p.y}`));
     this.visit=new Float32Array(this.cols*this.rows).fill(0);
     this.actionHist=[];
@@ -1959,6 +2019,12 @@ class SnakeEnv{
     this.stepsSinceFruit=0;
     this.alive=true;
     this.prevSlack=this.computeSlack();
+    this.lastSlackDelta=0;
+    const head=this.snake[0];
+    const spaceRatio=this.freeSpaceFrom(head.x,head.y,true)/(this.cols*this.rows);
+    this.lastFreeSpaceRatio=Number.isFinite(spaceRatio)?spaceRatio:1;
+    this.headHistory=[];
+    this.headHistory.push(`${head.x},${head.y}`);
     this.maxLength=this.snake.length;
     this.loopHits=0;
     this.revisitAccum=0;
@@ -2060,16 +2126,40 @@ class SnakeEnv{
       r-=R.turnPenalty;
       breakdown.turnPenalty-=R.turnPenalty;
     }
+    const headKey=`${nx},${ny}`;
+    if(!this.headHistory) this.headHistory=[];
+    let nextSpaceRatio=this.lastFreeSpaceRatio??1;
+    let loopDetected=false;
+    if((R.tightLoopPenalty??0)!==0){
+      const spaceRatio=Math.max(0,getFutureSpace()/(this.cols*this.rows));
+      const drop=Math.max(0,(this.lastFreeSpaceRatio??spaceRatio)-spaceRatio);
+      let penaltyFactor=0;
+      if(this.snake.length>4 && this.headHistory.includes(headKey)) penaltyFactor+=1;
+      if(drop>0.02) penaltyFactor+=Math.min(1.5,drop*12);
+      if(penaltyFactor>0){
+        const penalty=R.tightLoopPenalty*penaltyFactor;
+        r-=penalty;
+        breakdown.tightLoopPenalty=(breakdown.tightLoopPenalty??0)-penalty;
+        loopDetected=true;
+      }
+      nextSpaceRatio=spaceRatio;
+    }else if(futureSpaceKnown){
+      nextSpaceRatio=Math.max(0,futureSpace/(this.cols*this.rows));
+    }
+    this.lastFreeSpaceRatio=nextSpaceRatio;
+    this.headHistory.push(headKey);
+    if(this.headHistory.length>12) this.headHistory.shift();
     this.actionHist.push(a);
     if(this.actionHist.length>6) this.actionHist.shift();
     if(this.actionHist.length>=4){
       const last4=this.actionHist.slice(-4).join(',');
       if(LOOP_PATTERNS.has(last4)){
         r-=R.loopPenalty;
-        this.loopHits++;
         breakdown.loopPenalty-=R.loopPenalty;
+        loopDetected=true;
       }
     }
+    if(loopDetected) this.loopHits++;
     const vidx=this.idx(nx,ny);
     const revisitPenalty=this.visit[vidx]*R.revisitPenalty;
     r-=revisitPenalty;
@@ -2119,6 +2209,7 @@ class SnakeEnv{
         breakdown.compactness+=compactReward;
       }
     }
+    this.lastSlackDelta=slackDelta;
     this.prevSlack=slack;
     if(this.stepsSinceFruit>this.cols*this.rows*2){
       this.alive=false;
@@ -2160,7 +2251,11 @@ class SnakeEnv{
       this.getVisit(h.x-1, h.y),
       this.getVisit(h.x+1, h.y),
     ];
-    return Float32Array.from([...danger,...dir,...fruit,...dists,dy/len,dx/len,...crowd]);
+    const freeSpaceRatio=Math.max(0,Math.min(1,this.freeSpaceFrom(h.x,h.y,true)/(this.cols*this.rows)));
+    const slack=this.computeSlack();
+    const slackNorm=Math.max(0,Math.min(1,slack/(this.cols*this.rows)));
+    const slackDeltaNorm=Math.max(-1,Math.min(1,(this.lastSlackDelta??0)/(this.cols*this.rows)));
+    return Float32Array.from([...danger,...dir,...fruit,...dists,dy/len,dx/len,...crowd,freeSpaceRatio,slackNorm,slackDeltaNorm]);
   }
 }
 
@@ -2195,16 +2290,20 @@ class VecSnakeEnv{
     this.rewardConfig={...this.rewardConfig,...cfg};
     this.envs.forEach(env=>env.setRewardConfig(this.rewardConfig));
   }
-  resetEnv(index){
+  resetEnv(index,options){
     const env=this.getEnv(index);
     if(!env) return null;
     env.setRewardConfig(this.rewardConfig);
-    return env.reset();
+    const opts=typeof options==='function'?options(env,index):options;
+    if(opts&&typeof opts.startLength==='number') env.baseStartLength=opts.startLength;
+    return env.reset(opts||{});
   }
-  resetAll(){
-    return this.envs.map(env=>{
+  resetAll(options){
+    return this.envs.map((env,idx)=>{
       env.setRewardConfig(this.rewardConfig);
-      return env.reset();
+      const opts=typeof options==='function'?options(env,idx):options;
+      if(opts&&typeof opts.startLength==='number') env.baseStartLength=opts.startLength;
+      return env.reset(opts||{});
     });
   }
   step(actions){
@@ -4202,6 +4301,10 @@ const ui={
   modeButtons:Array.from(document.querySelectorAll('#modeGroup .pill')),
   algoSelect:document.getElementById('algoSelect'),
   algoDescription:document.getElementById('algoDescription'),
+  stagePresetSelect:document.getElementById('stagePresetSelect'),
+  curriculumToggle:document.getElementById('curriculumToggle'),
+  curriculumLength:document.getElementById('curriculumLength'),
+  curriculumLengthReadout:document.getElementById('curriculumLengthReadout'),
   autoPpoField:document.getElementById('autoPpoField'),
   autoPpoToggle:document.getElementById('autoPpoToggle'),
   autoPpoStage:document.getElementById('autoPpoStage'),
@@ -4265,6 +4368,8 @@ const ui={
   rewardRetreatReadout:document.getElementById('rewardRetreatReadout'),
   rewardLoop:document.getElementById('rewardLoop'),
   rewardLoopReadout:document.getElementById('rewardLoopReadout'),
+  rewardTightLoop:document.getElementById('rewardTightLoop'),
+  rewardTightLoopReadout:document.getElementById('rewardTightLoopReadout'),
   rewardRevisit:document.getElementById('rewardRevisit'),
   rewardRevisitReadout:document.getElementById('rewardRevisitReadout'),
   rewardWall:document.getElementById('rewardWall'),
@@ -4365,6 +4470,115 @@ let contexts=[];
 let renderTick=0;
 let trainingMode='manual';
 let autoPilot=null;
+const curriculumState={
+  manualEnabled:false,
+  manualLength:10,
+  autoCursor:0,
+  perEnvLengths:[],
+  lastStartLength:3,
+  load(){
+    if(typeof localStorage==='undefined') return;
+    try{
+      const raw=localStorage.getItem(CURRICULUM_STORAGE_KEY);
+      if(!raw) return;
+      const data=JSON.parse(raw);
+      if(data&&typeof data==='object'){
+        if(typeof data.manualEnabled==='boolean') this.manualEnabled=data.manualEnabled;
+        if(Number.isFinite(data.manualLength)){
+          this.manualLength=clamp(Math.round(data.manualLength),3,30);
+        }
+        if(this.manualEnabled) this.lastStartLength=this.manualLength;
+      }
+    }catch(err){
+      console.warn('Failed to load curriculum settings',err);
+    }
+  },
+  save(){
+    if(typeof localStorage==='undefined') return;
+    try{
+      localStorage.setItem(CURRICULUM_STORAGE_KEY,JSON.stringify({
+        manualEnabled:this.manualEnabled,
+        manualLength:this.manualLength,
+      }));
+    }catch(err){
+      console.warn('Failed to save curriculum settings',err);
+    }
+  },
+  setManualEnabled(value){
+    this.manualEnabled=!!value;
+    this.autoCursor=0;
+    if(this.manualEnabled) this.lastStartLength=this.manualLength;
+    this.save();
+  },
+  setManualLength(value){
+    const num=Number(value);
+    if(Number.isFinite(num)){
+      this.manualLength=clamp(Math.round(num),3,30);
+      this.lastStartLength=this.manualLength;
+      this.save();
+    }
+  },
+  resize(count){
+    const size=Math.max(1,count|0);
+    if(this.perEnvLengths.length!==size){
+      this.perEnvLengths=new Array(size).fill(this.manualEnabled?this.manualLength:0);
+    }
+  },
+  computeAutoStage(){
+    if(bestLen>=60||episode>=3200) return 4;
+    if(bestLen>=45||episode>=2200) return 3;
+    if(bestLen>=28||episode>=1400) return 2;
+    if(bestLen>=14||episode>=600) return 1;
+    return 0;
+  },
+  computeAutoOptions(){
+    switch(this.computeAutoStage()){
+      case 4:return [20,30];
+      case 3:return [10,20,30];
+      case 2:return [10,20];
+      case 1:return [3,10];
+      default:return [3];
+    }
+  },
+  getStartLength(envIndex,{record=true,forEval=false}={}){
+    let desired=this.manualEnabled?this.manualLength:null;
+    if(desired===null){
+      const options=this.computeAutoOptions();
+      const base=Math.max(0,episode)+this.autoCursor+envIndex;
+      desired=options[options.length?base%options.length:0]||3;
+      if(record&&!forEval){
+        this.autoCursor=(this.autoCursor+1)%4096;
+      }
+    }
+    return clamp(Math.round(desired),3,30);
+  },
+  recordStartLength(envIndex,length){
+    if(!Number.isFinite(length)) return;
+    const safeLen=Math.max(2,Math.round(length));
+    if(Number.isFinite(envIndex)&&envIndex>=0){
+      if(envIndex>=this.perEnvLengths.length) this.resize(envIndex+1);
+      this.perEnvLengths[envIndex]=safeLen;
+    }
+    this.lastStartLength=safeLen;
+  },
+  maxActiveLength(){
+    let max=this.lastStartLength||0;
+    for(let i=0;i<this.perEnvLengths.length;i++){
+      if(this.perEnvLengths[i]>max) max=this.perEnvLengths[i];
+    }
+    return max;
+  },
+  getEpsilonFloor(){
+    const maxLen=this.maxActiveLength();
+    if(maxLen>=26) return 0.22;
+    if(maxLen>=20) return 0.18;
+    if(maxLen>=15) return 0.14;
+    if(maxLen>=10) return 0.1;
+    return null;
+  },
+};
+curriculumState.load();
+curriculumState.resize(envCount);
 const autoLogEntries=[];
 const MAX_AUTO_LOG_ENTRIES=24;
 let lastAutoMetrics=null;
@@ -5208,9 +5422,34 @@ function bindUI(){
     updateReadouts();
     applyEnvCountFromUI();
   });
-  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardDeadEnd','rewardFruit','rewardGrowth','rewardCompact'];
+  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardTightLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardDeadEnd','rewardFruit','rewardGrowth','rewardCompact'];
   const updateRewards=()=>{ updateRewardReadouts(); applyRewardsToEnv(); };
   rewardIds.forEach(id=>ui[id]?.addEventListener('input',updateRewards));
+  ui.curriculumToggle?.addEventListener('change',()=>{
+    const enabled=!!ui.curriculumToggle.checked;
+    curriculumState.setManualEnabled(enabled);
+    curriculumState.resize(envCount);
+    if(enabled){
+      curriculumState.setManualLength(ui.curriculumLength?.value||curriculumState.manualLength);
+    }
+    if(curriculumState.manualEnabled){
+      curriculumState.perEnvLengths=curriculumState.perEnvLengths.map(()=>curriculumState.manualLength);
+    }else{
+      curriculumState.perEnvLengths=curriculumState.perEnvLengths.map(()=>0);
+    }
+    contexts.forEach(ctx=>ctx.needsReset=true);
+    updateReadouts();
+    applyCurriculumEpsilonBoost();
+  });
+  ui.curriculumLength?.addEventListener('input',()=>{
+    curriculumState.setManualLength(ui.curriculumLength.value);
+    if(curriculumState.manualEnabled){
+      curriculumState.perEnvLengths=curriculumState.perEnvLengths.map(()=>curriculumState.manualLength);
+      contexts.forEach(ctx=>ctx.needsReset=true);
+    }
+    updateReadouts();
+    applyCurriculumEpsilonBoost();
+  });
   const bfsSlider=document.getElementById('bfsSlider');
   const hamSlider=document.getElementById('hamSlider');
   const usePathHelpers=document.getElementById('usePathHelpers');
@@ -5274,6 +5513,15 @@ function updateControlAvailability(){
     ui.btnStep.disabled=trainingMode==='auto'||envCount>1;
   }
 }
+function applyCurriculumEpsilonBoost(){
+  if(!isDqnAgent(agent)) return;
+  const floor=curriculumState.getEpsilonFloor();
+  if(floor===null) return;
+  if(typeof agent.epsilon!=='number' || agent.epsilon<floor){
+    agent.epsilon=floor;
+  }
+  ui.epsReadout.textContent=(agent.epsilon??floor).toFixed(2);
+}
 function createContextSlot(index,state){
   return {
     envIndex:index,
@@ -5286,10 +5534,28 @@ function createContextSlot(index,state){
 }
 function seedContexts(forceReset=true){
   if(!vecEnv) return;
-  const states=forceReset?vecEnv.resetAll():vecEnv.envs.map(env=>Float32Array.from(env.getState()));
+  curriculumState.resize(envCount);
+  const states=[];
+  if(forceReset){
+    for(let i=0;i<envCount;i+=1){
+      const desired=curriculumState.getStartLength(i,{record:true});
+      const state=vecEnv.resetEnv(i,{startLength:desired});
+      const envRef=vecEnv.getEnv(i);
+      const actual=envRef?.snake?.length||desired;
+      curriculumState.recordStartLength(i,actual);
+      states.push(Float32Array.from(state));
+    }
+  }else{
+    vecEnv.envs.forEach((environment,idx)=>{
+      states.push(Float32Array.from(environment.getState()));
+      const length=environment?.snake?.length||environment?.baseStartLength||curriculumState.manualLength;
+      curriculumState.recordStartLength(idx,length);
+    });
+  }
   contexts=states.map((state,idx)=>createContextSlot(idx,state));
   env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
   if(env) setImmediateState(env);
+  applyCurriculumEpsilonBoost();
 }
 function ensureContextPool(){
   if(!vecEnv) return;
@@ -5314,6 +5580,7 @@ function reconfigureEnvironment({count=envCount,size=COLS,force=false}={}){
   }else{
     vecEnv.setRewardConfig(rewardConfig);
   }
+  curriculumState.resize(envCount);
   renderIndex=Math.min(renderIndex,envCount-1);
   env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
   COLS=desiredSize;
@@ -5523,6 +5790,7 @@ function updateRewardReadouts(){
   ui.rewardApproachReadout.textContent=(+ui.rewardApproach.value).toFixed(3);
   ui.rewardRetreatReadout.textContent=(+ui.rewardRetreat.value).toFixed(3);
   ui.rewardLoopReadout.textContent=(+ui.rewardLoop.value).toFixed(2);
+  ui.rewardTightLoopReadout.textContent=(+ui.rewardTightLoop.value).toFixed(2);
   ui.rewardRevisitReadout.textContent=(+ui.rewardRevisit.value).toFixed(3);
   ui.rewardWallReadout.textContent=(+ui.rewardWall.value).toFixed(1);
   ui.rewardSelfReadout.textContent=(+ui.rewardSelf.value).toFixed(1);
@@ -5535,6 +5803,16 @@ function updateRewardReadouts(){
   ui.rewardCompactReadout.textContent=(+ui.rewardCompact.value).toFixed(3);
   ui.bfsVal.textContent=(+ui.bfsSlider.value).toFixed(2);
   ui.hamVal.textContent=(+ui.hamSlider.value).toFixed(2);
+  if(ui.curriculumLengthReadout){
+    ui.curriculumLengthReadout.textContent=`${curriculumState.manualLength|0}`;
+  }
+  if(ui.curriculumLength){
+    ui.curriculumLength.disabled=!curriculumState.manualEnabled;
+    ui.curriculumLength.value=`${curriculumState.manualLength|0}`;
+  }
+  if(ui.curriculumToggle){
+    ui.curriculumToggle.checked=curriculumState.manualEnabled;
+  }
 }
 function getRewardConfigFromUI(){
   return {
@@ -5543,6 +5821,7 @@ function getRewardConfigFromUI(){
     approachBonus:+ui.rewardApproach.value,
     retreatPenalty:+ui.rewardRetreat.value,
     loopPenalty:+ui.rewardLoop.value,
+    tightLoopPenalty:+ui.rewardTightLoop.value,
     revisitPenalty:+ui.rewardRevisit.value,
     wallPenalty:+ui.rewardWall.value,
     selfPenalty:+ui.rewardSelf.value,
@@ -5574,6 +5853,7 @@ function applyRewardConfigToUI(config={}){
   if(config.approachBonus!==undefined) ui.rewardApproach.value=config.approachBonus;
   if(config.retreatPenalty!==undefined) ui.rewardRetreat.value=config.retreatPenalty;
   if(config.loopPenalty!==undefined) ui.rewardLoop.value=config.loopPenalty;
+  if(config.tightLoopPenalty!==undefined) ui.rewardTightLoop.value=config.tightLoopPenalty;
   if(config.revisitPenalty!==undefined) ui.rewardRevisit.value=config.revisitPenalty;
   if(config.wallPenalty!==undefined) ui.rewardWall.value=config.wallPenalty;
   if(config.selfPenalty!==undefined) ui.rewardSelf.value=config.selfPenalty;
@@ -7160,7 +7440,13 @@ async function evalGreedyEpisodes(agentRef,runCount=GREEDY_EVAL_RUNS,referenceEp
   if(prevEps!==null) agentRef.epsilon=0;
   const evalCount=Math.min(Math.max(1,envCount|0),Math.max(1,runCount|0));
   const evalEnv=new VecSnakeEnv(evalCount,{cols:COLS,rows:ROWS,rewardConfig});
-  let states=evalEnv.resetAll().map(state=>Float32Array.from(state));
+  let states=evalEnv.resetAll((_,idx)=>{
+    if(typeof curriculumState==='object'&&curriculumState){
+      const desired=curriculumState.getStartLength(idx,{record:false,forEval:true});
+      return {startLength:desired};
+    }
+    return {};
+  }).map(state=>Float32Array.from(state));
   const episodeRewards=new Array(evalCount).fill(0);
   const episodeFruits=new Array(evalCount).fill(0);
   let completed=0;
@@ -7184,7 +7470,10 @@ async function evalGreedyEpisodes(agentRef,runCount=GREEDY_EVAL_RUNS,referenceEp
         episodeFruits[i]=0;
         completed+=1;
         if(completed>=runCount) break;
-        states[i]=Float32Array.from(evalEnv.resetEnv(i));
+        const desired=typeof curriculumState==='object'&&curriculumState
+          ?curriculumState.getStartLength(i,{record:false,forEval:true})
+          :null;
+        states[i]=Float32Array.from(evalEnv.resetEnv(i,desired!==null?{startLength:desired}:{ }));
       }
     }
     if(completed<runCount) await tf.nextFrame();
@@ -7220,7 +7509,11 @@ async function performVectorStep(mode){
   if(!contexts.length) return false;
   contexts.forEach(ctx=>{
     if(ctx.needsReset || !ctx.state){
-      const state=vecEnv.resetEnv(ctx.envIndex);
+      const desired=curriculumState.getStartLength(ctx.envIndex,{record:true});
+      const state=vecEnv.resetEnv(ctx.envIndex,{startLength:desired});
+      const envRef=vecEnv.getEnv(ctx.envIndex);
+      const actual=envRef?.snake?.length||desired;
+      curriculumState.recordStartLength(ctx.envIndex,actual);
       ctx.state=Float32Array.from(state);
       ctx.totalReward=0;
       ctx.fruits=0;
@@ -7232,6 +7525,7 @@ async function performVectorStep(mode){
       }
     }
   });
+  applyCurriculumEpsilonBoost();
   env=vecEnv.getEnv(renderIndex)||env;
   const displayEnv=env;
   const shouldRender=(renderTick%mode.renderEvery===0);
@@ -7285,6 +7579,7 @@ async function performVectorStep(mode){
     if(isDqnAgent(agent) && eps!==undefined){
       ui.epsReadout.textContent=eps.toFixed(2);
     }
+    applyCurriculumEpsilonBoost();
   }
   if(totalSteps%32===0) await tf.nextFrame();
   if(pendingAdjustments.length){
@@ -7710,7 +8005,7 @@ async function startFullWatchMode(){
     agent.updateWeights=()=>{};
   }
   if(liveViewHidden) setLiveViewHidden(false);
-  env.reset();
+  env.reset({startLength:curriculumState.getStartLength(renderIndex||0,{record:false})});
   // ======== BEGIN: SELF TEST ========
   (function runPathHelperSelfTest(){
     try {
@@ -7771,7 +8066,7 @@ async function startFullWatchMode(){
       }
       syncTestLengthDisplays();
       if(done){
-        env.reset();
+        env.reset({startLength:curriculumState.getStartLength(renderIndex||0,{record:false})});
         setImmediateState(env);
         currentTestLen=env.snake?.length??0;
         syncTestLengthDisplays();
@@ -8289,7 +8584,10 @@ window.addEventListener('load',()=>{
       ? options.maxSteps
       : Math.max(50, cols * rows * LOOP_FACTOR);
 
-    let state = toFloatState(env.reset());
+    const baseStart=(typeof curriculumState==='object'&&curriculumState)
+      ?curriculumState.getStartLength(0,{record:false,forEval:true})
+      :null;
+    let state = toFloatState(baseStart!==null?env.reset({startLength:baseStart}):env.reset());
     let totalReward = 0;
     let fruitEaten = 0;
     let steps = 0;
