@@ -1961,7 +1961,8 @@ class SnakeEnv{
     this.rows=rows;
     this.setRewardConfig(rewardConfig);
     this.observationVersion=normalizeObservationVersion(observationVersion);
-    this.baseStartLength=Math.max(1,Math.min(3,this.cols-1));
+    this.defaultStartLength=Math.max(1,Math.min(3,this.cols-1));
+    this.baseStartLength=this.defaultStartLength;
     this.reset();
   }
   _makeRewardBreakdown(){
@@ -4558,6 +4559,21 @@ const curriculumState={
   autoCursor:0,
   perEnvLengths:[],
   lastStartLength:CURRICULUM_MANUAL_MIN,
+  getBaselineStartLength(envIndex=0){
+    if(vecEnv&&typeof vecEnv.getEnv==='function'){
+      const envRef=vecEnv.getEnv(envIndex);
+      if(envRef){
+        const base=Number.isFinite(envRef?.defaultStartLength)
+          ?envRef.defaultStartLength
+          :envRef?.baseStartLength;
+        if(Number.isFinite(base)){
+          return Math.max(1,Math.round(base));
+        }
+      }
+    }
+    const cols=Math.max(2,(COLS|0));
+    return Math.max(1,Math.min(3,cols-1));
+  },
   load(){
     if(typeof localStorage==='undefined') return;
     try{
@@ -4627,11 +4643,15 @@ const curriculumState={
     }
   },
   getStartLength(envIndex,{record=true,forEval=false}={}){
-    let desired=this.manualEnabled?this.manualLength:null;
-    if(desired===null){
+    let desired=null;
+    if(this.manualEnabled){
+      desired=this.manualLength;
+    }else if(trainingMode!=='auto'){
+      desired=this.getBaselineStartLength(envIndex);
+    }else{
       const options=this.computeAutoOptions();
       const base=Math.max(0,episode)+this.autoCursor+envIndex;
-      desired=options[options.length?base%options.length:0]||3;
+      desired=options[options.length?base%options.length:0]||this.getBaselineStartLength(envIndex);
       if(record&&!forEval){
         this.autoCursor=(this.autoCursor+1)%4096;
       }
@@ -4639,6 +4659,9 @@ const curriculumState={
     const rounded=Math.round(desired);
     if(this.manualEnabled){
       return clamp(rounded,CURRICULUM_MANUAL_MIN,CURRICULUM_MANUAL_MAX);
+    }
+    if(trainingMode!=='auto'){
+      return Math.max(CURRICULUM_MANUAL_MIN,rounded);
     }
     return clamp(rounded,3,30);
   },
