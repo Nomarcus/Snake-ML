@@ -1185,7 +1185,7 @@ footer{
       </div>
       <div class="curriculum-controls">
         <label for="curriculumLength">Startlängd</label>
-        <input type="range" id="curriculumLength" min="3" max="30" step="1" value="10">
+        <input type="range" id="curriculumLength" min="1" max="200" step="1" value="10">
         <span class="mono" id="curriculumLengthReadout">10</span>
       </div>
       <span class="hint">Tränar masken i längre former för att förbättra sen-spel-beteende.</span>
@@ -1918,20 +1918,6 @@ const normalizeObservationVersion=version=>{
   if(lower===OBSERVATION_VERSIONS.legacy) return OBSERVATION_VERSIONS.legacy;
   if(lower===OBSERVATION_VERSIONS.extended) return OBSERVATION_VERSIONS.extended;
   return DEFAULT_OBSERVATION_VERSION;
-};
-const guessObservationVersionForStateDim=dim=>{
-  if(!Number.isFinite(dim)||dim<=0) return null;
-  let bestVersion=null;
-  let bestDiff=Infinity;
-  for(const [version,size] of Object.entries(OBSERVATION_STATE_SIZES)){
-    if(size===dim) return version;
-    const diff=Math.abs(size-dim);
-    if(diff<bestDiff){
-      bestDiff=diff;
-      bestVersion=version;
-    }
-  }
-  return bestVersion;
 };
 
 /* ---------------- Serialization helpers ---------------- */
@@ -8359,7 +8345,7 @@ function applyMeta(meta={}){
     ui.gridSize.value=`${meta.boardSize}`;
     updateGridLabel();
   }
-  const metaObservationVersion=normalizeObservationVersion(typeof meta.observationVersion==='string'?meta.observationVersion:observationVersion);
+  const metaObservationVersion=typeof meta.observationVersion==='string'?meta.observationVersion:observationVersion;
   reconfigureEnvironment({count:nextCount,size:nextSize,observationVersion:metaObservationVersion,force:true});
   if(trainingMode==='auto' && autoPilot){
     const stageIdx=autoPilot.boardStages.findIndex(stage=>stage.size===COLS);
@@ -8420,10 +8406,9 @@ async function applyCheckpointData(data){
   if(data.rewardConfig) applyRewardConfigToUI(data.rewardConfig);
   const agentStateDim=Number(data.agent?.sDim);
   const currentSize=vecEnv?.getStateSize?.()||OBSERVATION_STATE_SIZES[observationVersion]||0;
-  const hintedObservationVersion=(typeof data.observationVersion==='string'?data.observationVersion:(typeof data.meta?.observationVersion==='string'?data.meta.observationVersion:observationVersion));
-  const dimSuggestedVersion=guessObservationVersionForStateDim(agentStateDim);
-  let desiredObservationVersion=normalizeObservationVersion(dimSuggestedVersion||hintedObservationVersion);
-  if(!dimSuggestedVersion&&Number.isFinite(agentStateDim)&&agentStateDim>0&&agentStateDim<currentSize){
+  const legacySize=OBSERVATION_STATE_SIZES[OBSERVATION_VERSIONS.legacy];
+  let desiredObservationVersion=(typeof data.observationVersion==='string'?data.observationVersion:(typeof data.meta?.observationVersion==='string'?data.meta.observationVersion:observationVersion));
+  if(Number.isFinite(agentStateDim)&&agentStateDim>0&&agentStateDim<currentSize&&agentStateDim===legacySize){
     desiredObservationVersion=OBSERVATION_VERSIONS.legacy;
   }
   desiredObservationVersion=normalizeObservationVersion(desiredObservationVersion);
@@ -8452,47 +8437,18 @@ async function loadTrainingFromFile(file){
     const boardSize=typeof data.gridSize==='number'?data.gridSize:typeof data.meta?.boardSize==='number'?data.meta.boardSize:+ui.gridSize.value;
     const agentStateDim=Number(data.agent?.sDim);
     const currentSize=vecEnv?.getStateSize?.()||OBSERVATION_STATE_SIZES[observationVersion]||0;
-    const hintedObservationVersion=(typeof data.observationVersion==='string'?data.observationVersion:(typeof data.meta?.observationVersion==='string'?data.meta.observationVersion:observationVersion));
-    const dimSuggestedVersion=guessObservationVersionForStateDim(agentStateDim);
-    let desiredObservationVersion=normalizeObservationVersion(dimSuggestedVersion||hintedObservationVersion);
-    if(!dimSuggestedVersion&&Number.isFinite(agentStateDim)&&agentStateDim>0&&agentStateDim<currentSize){
+    const legacySize=OBSERVATION_STATE_SIZES[OBSERVATION_VERSIONS.legacy];
+    let desiredObservationVersion=(typeof data.observationVersion==='string'?data.observationVersion:(typeof data.meta?.observationVersion==='string'?data.meta.observationVersion:observationVersion));
+    if(Number.isFinite(agentStateDim)&&agentStateDim>0&&agentStateDim<currentSize&&agentStateDim===legacySize){
       desiredObservationVersion=OBSERVATION_VERSIONS.legacy;
     }
     desiredObservationVersion=normalizeObservationVersion(desiredObservationVersion);
     ui.envCount.value=`${loadedEnvCount}`;
     ui.gridSize.value=`${boardSize}`;
     updateGridLabel();
-    const versionCandidates=[];
-    const pushVersion=version=>{
-      if(typeof version!=='string') return;
-      const normalized=normalizeObservationVersion(version);
-      if(!versionCandidates.includes(normalized)) versionCandidates.push(normalized);
-    };
-    pushVersion(desiredObservationVersion);
-    pushVersion(dimSuggestedVersion);
-    pushVersion(hintedObservationVersion);
-    pushVersion(observationVersion);
-    pushVersion(OBSERVATION_VERSIONS.legacy);
-    pushVersion(OBSERVATION_VERSIONS.extended);
-    let importError=null;
-    let appliedObservationVersion=desiredObservationVersion;
-    for(const candidate of versionCandidates){
-      try{
-        reconfigureEnvironment({count:loadedEnvCount,size:boardSize,observationVersion:candidate,force:true});
-        instantiateAgent(algo,{useCurrentUI:true});
-        await agent.importState(data.agent);
-        appliedObservationVersion=candidate;
-        importError=null;
-        break;
-      }catch(err){
-        importError=err;
-        console.warn('Retrying agent import with alternate observation version',candidate,err);
-      }
-    }
-    if(importError){
-      throw importError;
-    }
-    desiredObservationVersion=appliedObservationVersion;
+    reconfigureEnvironment({count:loadedEnvCount,size:boardSize,observationVersion:desiredObservationVersion,force:true});
+    instantiateAgent(algo,{useCurrentUI:true});
+    await agent.importState(data.agent);
     applyConfigToAgent();
     if(data.playback) setPlaybackMode(data.playback);
     if(data.mode) setTrainingMode(data.mode);
