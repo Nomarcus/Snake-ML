@@ -68,7 +68,7 @@ pip install -r requirements.txt
 
 | Script | Beskrivning | Standardparametrar |
 | ------ | ----------- | ------------------ |
-| `train_dqn.py` | Tränar en DQN-agent med åtta parallella miljöer. Renderar miljö 0 i realtid. | 500 000 steg, `CnnPolicy`, `tensorboard_log="./tb_snake/"` när flaggan används. |
+| `train_dqn.py` | Tränar en DQN-agent med valfritt antal parallella miljöer (`--parallel-envs`). Renderar miljö 0 i realtid. | 500 000 steg, `CnnPolicy`, `tensorboard_log="./tb_snake/"` när flaggan används. |
 | `train_ppo.py` | Tränar en PPO-agent med samma miljö och motsvarande loggning. | `learning_rate=3e-4`, `gamma=0.975`, `n_steps=2048`, m.fl. |
 
 Samtliga skript tar emot följande vanliga flaggor:
@@ -77,6 +77,7 @@ Samtliga skript tar emot följande vanliga flaggor:
 * `--grid-size <int>` – rutnätsstorlek (10–20 rekommenderas).
 * `--tensorboard` – aktivera TensorBoard-loggar.
 * `--seed <int>` – sätt slumpfrö.
+* `--parallel-envs <int>` – antal miljöer som körs samtidigt (standard 8).
 
 ### Multi-run launcher
 
