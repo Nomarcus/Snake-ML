@@ -204,13 +204,14 @@ class MLP:
         grad = grad_output
         for layer in reversed(range(len(self.weights))):
             a_prev = activations[layer]
+            weight = self.weights[layer]
             grad_w = a_prev.T @ grad
             grad_b = grad.sum(axis=0)
+            if layer > 0:
+                grad = grad @ weight.T
+                grad = grad * (pre_activations[layer - 1] > 0)
             self.weights[layer] -= learning_rate * grad_w
             self.biases[layer] -= learning_rate * grad_b
-            if layer > 0:
-                grad = grad @ self.weights[layer].T
-                grad = grad * (pre_activations[layer - 1] > 0)
 
     def copy(self) -> "MLP":
         clone = MLP(self.layer_sizes)
