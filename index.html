@@ -1200,10 +1200,10 @@ footer{
       </div>
       <div class="curriculum-controls">
         <label for="curriculumLength">Startlängd</label>
-        <input type="range" id="curriculumLength" min="1" max="200" step="1" value="1">
-        <span class="mono" id="curriculumLengthReadout">1</span>
+        <input type="range" id="curriculumLength" min="1" max="200" step="1" value="3">
+        <span class="mono" id="curriculumLengthReadout">3</span>
       </div>
-      <span class="hint">Tränar masken i längre former för att förbättra sen-spel-beteende.</span>
+      <span class="hint">Ställer in startlängden; med curriculum aktiverat används längre startformer genom hela körningen.</span>
     </div>
     <div class="field block auto-ppo-field hidden" id="autoPpoField">
       <label class="toggle" for="autoPpoToggle">
@@ -4732,13 +4732,14 @@ let trainingMode='manual';
 let autoPilot=null;
 const CURRICULUM_MANUAL_MIN=1;
 const CURRICULUM_MANUAL_MAX=200;
+const CURRICULUM_BASE_DEFAULT=3;
 
 const curriculumState={
   manualEnabled:false,
-  manualLength:CURRICULUM_MANUAL_MIN,
+  manualLength:CURRICULUM_BASE_DEFAULT,
   autoCursor:0,
   perEnvLengths:[],
-  lastStartLength:CURRICULUM_MANUAL_MIN,
+  lastStartLength:CURRICULUM_BASE_DEFAULT,
   getBaselineStartLength(envIndex=0){
     if(vecEnv&&typeof vecEnv.getEnv==='function'){
       const envRef=vecEnv.getEnv(envIndex);
@@ -4752,7 +4753,7 @@ const curriculumState={
       }
     }
     const cols=Math.max(2,(COLS|0));
-    return Math.max(1,Math.min(3,cols-1));
+    return Math.max(1,Math.min(CURRICULUM_BASE_DEFAULT,cols-1));
   },
   load(){
     if(typeof localStorage==='undefined') return;
@@ -4769,7 +4770,7 @@ const curriculumState={
             CURRICULUM_MANUAL_MAX,
           );
         }
-        if(this.manualEnabled) this.lastStartLength=this.manualLength;
+        this.lastStartLength=this.manualLength;
       }
     }catch(err){
       console.warn('Failed to load curriculum settings',err);
@@ -4789,7 +4790,13 @@ const curriculumState={
   setManualEnabled(value){
     this.manualEnabled=!!value;
     this.autoCursor=0;
-    if(this.manualEnabled) this.lastStartLength=this.manualLength;
+    if(this.manualEnabled || trainingMode!=='auto'){
+      this.lastStartLength=this.manualLength;
+    }
+    if(this.perEnvLengths.length){
+      const fillValue=(this.manualEnabled||trainingMode!=='auto')?this.manualLength:0;
+      this.perEnvLengths=this.perEnvLengths.map(()=>fillValue);
+    }
     this.save();
   },
   setManualLength(value){
@@ -4803,7 +4810,8 @@ const curriculumState={
   resize(count){
     const size=Math.max(1,count|0);
     if(this.perEnvLengths.length!==size){
-      this.perEnvLengths=new Array(size).fill(this.manualEnabled?this.manualLength:0);
+      const fillValue=(this.manualEnabled||trainingMode!=='auto')?this.manualLength:0;
+      this.perEnvLengths=new Array(size).fill(fillValue);
     }
   },
   computeAutoStage(){
@@ -4824,10 +4832,9 @@ const curriculumState={
   },
   getStartLength(envIndex,{record=true,forEval=false}={}){
     let desired=null;
-    if(this.manualEnabled){
+    const usingManual=this.manualEnabled||trainingMode!=='auto';
+    if(usingManual){
       desired=this.manualLength;
-    }else if(trainingMode!=='auto'){
-      desired=this.getBaselineStartLength(envIndex);
     }else{
       const options=this.computeAutoOptions();
       const base=Math.max(0,episode)+this.autoCursor+envIndex;
@@ -4837,11 +4844,8 @@ const curriculumState={
       }
     }
     const rounded=Math.round(desired);
-    if(this.manualEnabled){
+    if(usingManual){
       return clamp(rounded,CURRICULUM_MANUAL_MIN,CURRICULUM_MANUAL_MAX);
-    }
-    if(trainingMode!=='auto'){
-      return Math.max(CURRICULUM_MANUAL_MIN,rounded);
     }
     return clamp(rounded,3,30);
   },
@@ -5728,11 +5732,9 @@ function bindUI(){
     if(enabled){
       curriculumState.setManualLength(ui.curriculumLength?.value||curriculumState.manualLength);
     }
-    if(curriculumState.manualEnabled){
-      curriculumState.perEnvLengths=curriculumState.perEnvLengths.map(()=>curriculumState.manualLength);
-    }else{
-      curriculumState.perEnvLengths=curriculumState.perEnvLengths.map(()=>0);
-    }
+    const usingManual=curriculumState.manualEnabled||trainingMode!=='auto';
+    const fillValue=usingManual?curriculumState.manualLength:0;
+    curriculumState.perEnvLengths=curriculumState.perEnvLengths.map(()=>fillValue);
     if(vecEnv){
       seedContexts(true);
     }else{
@@ -5744,15 +5746,16 @@ function bindUI(){
   ui.curriculumLength?.addEventListener('input',()=>{
     const previousLength=curriculumState.manualLength;
     curriculumState.setManualLength(ui.curriculumLength.value);
-    if(curriculumState.manualEnabled){
-      const lengthChanged=previousLength!==curriculumState.manualLength;
+    const usingManual=curriculumState.manualEnabled||trainingMode!=='auto';
+    const lengthChanged=previousLength!==curriculumState.manualLength;
+    if(usingManual){
       curriculumState.perEnvLengths=curriculumState.perEnvLengths.map(()=>curriculumState.manualLength);
-      if(lengthChanged){
-        if(vecEnv){
-          seedContexts(true);
-        }else{
-          contexts.forEach(ctx=>ctx.needsReset=true);
-        }
+    }
+    if(lengthChanged&&usingManual){
+      if(vecEnv){
+        seedContexts(true);
+      }else{
+        contexts.forEach(ctx=>ctx.needsReset=true);
       }
     }
     updateReadouts();
@@ -6121,7 +6124,8 @@ function updateRewardReadouts(){
     ui.curriculumLengthReadout.textContent=`${curriculumState.manualLength|0}`;
   }
   if(ui.curriculumLength){
-    ui.curriculumLength.disabled=!curriculumState.manualEnabled;
+    const disableSlider=trainingMode==='auto' && !curriculumState.manualEnabled;
+    ui.curriculumLength.disabled=disableSlider;
     ui.curriculumLength.value=`${curriculumState.manualLength|0}`;
   }
   if(ui.curriculumToggle){
