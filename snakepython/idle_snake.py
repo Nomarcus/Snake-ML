@@ -982,7 +982,7 @@ class TrainingViewer:
         self._draw_snake(snake)
 
         status_text = (
-            f"Episod {episode}/{self.total_episodes} | Steg {step}/{self.steps_per_episode} | "
+            f"Episod {episode}/{self.total_episodes} | Steg {step} | "
             f"Reward {total_reward:6.1f} | Δ {last_reward:5.2f} | ε={epsilon:.3f} | "
             f"Senaste: {self._format_cause(cause)} | Förlust {loss:7.4f}"
         )
