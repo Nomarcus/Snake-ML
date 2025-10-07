@@ -9,6 +9,7 @@ import sys
 import time
 from collections import deque
 from dataclasses import dataclass, field
+from functools import partial
 from pathlib import Path
 from typing import Deque, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -21,6 +22,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - tydligare fel i IDLE
     ) from exc
 
 import tkinter as tk
+from tkinter import filedialog, messagebox
 
 # ---------------------------------------------------------------------------
 # Game configuration
@@ -1061,6 +1063,479 @@ class TrainingViewer:
 
 
 # ---------------------------------------------------------------------------
+# Interaktiv träningskontroll för IDLE
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class TrainingStats:
+    episodes: int = 0
+    total_reward: float = 0.0
+    total_length: float = 0.0
+    best_length: int = 0
+    last_episode_reward: float = 0.0
+    last_episode_length: float = 0.0
+
+    def reset(self) -> None:
+        self.episodes = 0
+        self.total_reward = 0.0
+        self.total_length = 0.0
+        self.best_length = 0
+        self.last_episode_reward = 0.0
+        self.last_episode_length = 0.0
+
+    def record(self, reward: float, length: float) -> None:
+        self.episodes += 1
+        self.total_reward += reward
+        self.total_length += length
+        self.best_length = max(self.best_length, int(length))
+        self.last_episode_reward = reward
+        self.last_episode_length = length
+
+    @property
+    def average_reward(self) -> float:
+        return self.total_reward / self.episodes if self.episodes else 0.0
+
+    @property
+    def average_length(self) -> float:
+        return self.total_length / self.episodes if self.episodes else 0.0
+
+
+class IdleTrainerApp:
+    """Tkinter-gränssnitt för att styra träning och visa statistik live."""
+
+    def __init__(self, *, load_path: Optional[Path | str] = None) -> None:
+        self.env = IdleSnakeEnv()
+        self.stats = TrainingStats()
+        self.training_active = False
+        self.last_reward: float = 0.0
+        self.last_loss: Optional[float] = None
+        self.current_state: Optional[np.ndarray] = None
+        self.current_episode_reward: float = 0.0
+        self.current_episode_steps: int = 0
+        self._syncing_params = False
+        self._pending_message: Optional[str] = None
+
+        self.agent = self._load_initial_agent(load_path)
+
+        self.root = tk.Tk()
+        self.root.title("Snake-ML – Träningskontroll")
+        self.root.configure(bg="#101010")
+        self.root.resizable(False, False)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        self._build_ui()
+        self._reset_episode()
+        self._sync_param_entries_from_agent()
+        if self._pending_message:
+            self._log_message(self._pending_message)
+        else:
+            self._log_message("Klar att starta träning.")
+        self.root.after(50, self._training_loop)
+
+    def _load_initial_agent(self, load_path: Optional[Path | str]) -> DoubleDQNAgent:
+        if load_path is not None:
+            try:
+                agent = DoubleDQNAgent.load(load_path)
+            except Exception as exc:  # pragma: no cover - användarfeedback
+                print(f"Kunde inte ladda modellen '{load_path}': {exc}", file=sys.stderr)
+            else:
+                if agent.state_size != self.env.state_size:
+                    print(
+                        "Den laddade modellen matchar inte rutnätets storlek och kan inte användas.",
+                        file=sys.stderr,
+                    )
+                else:
+                    name = Path(load_path).name if isinstance(load_path, (str, Path)) else "modell"
+                    self._pending_message = f"Laddade modell från {name}."
+                    return agent
+            self._pending_message = "Misslyckades att ladda angiven modell. Startar med ny agent."
+        return DoubleDQNAgent(state_size=self.env.state_size, action_size=len(ACTION_VECTORS))
+
+    def _build_ui(self) -> None:
+        main = tk.Frame(self.root, bg="#101010")
+        main.pack(fill="both", expand=True, padx=16, pady=16)
+
+        pixel_size = GRID_SIZE * CELL_SIZE
+        self.canvas = tk.Canvas(
+            main,
+            width=pixel_size,
+            height=pixel_size,
+            bg="#151515",
+            highlightthickness=0,
+        )
+        self.canvas.grid(row=0, column=0, rowspan=4, sticky="nsew")
+
+        sidebar = tk.Frame(main, bg="#101010")
+        sidebar.grid(row=0, column=1, sticky="nw", padx=(16, 0))
+
+        self.stats_var = tk.StringVar()
+        stats_label = tk.Label(
+            sidebar,
+            textvariable=self.stats_var,
+            justify="left",
+            wraplength=320,
+            anchor="w",
+            font=("Segoe UI", 11),
+            bg="#101010",
+            fg="#f5f5f5",
+        )
+        stats_label.pack(fill="x")
+
+        self.detail_var = tk.StringVar()
+        detail_label = tk.Label(
+            sidebar,
+            textvariable=self.detail_var,
+            justify="left",
+            wraplength=320,
+            anchor="w",
+            font=("Segoe UI", 10),
+            bg="#101010",
+            fg="#cddc39",
+        )
+        detail_label.pack(fill="x", pady=(4, 8))
+
+        self._create_buttons(sidebar)
+
+        params_container = tk.Frame(sidebar, bg="#101010")
+        params_container.pack(fill="x", pady=(12, 8))
+
+        header = tk.Label(
+            params_container,
+            text="Hyperparametrar",
+            font=("Segoe UI", 11, "bold"),
+            anchor="w",
+            bg="#101010",
+            fg="#f5f5f5",
+        )
+        header.pack(fill="x", pady=(0, 6))
+
+        self.param_vars: Dict[str, tk.StringVar] = {}
+        param_specs = [
+            ("learning_rate", "Lärhastighet", float),
+            ("gamma", "Gamma", float),
+            ("epsilon", "Epsilon", float),
+            ("epsilon_min", "Min epsilon", float),
+            ("epsilon_decay", "Epsilon-förfall", float),
+            ("batch_size", "Batch-storlek", int),
+            ("target_sync_interval", "Synkintervall", int),
+        ]
+        for name, label, value_type in param_specs:
+            row = tk.Frame(params_container, bg="#101010")
+            row.pack(fill="x", pady=2)
+            tk.Label(
+                row,
+                text=label,
+                width=18,
+                anchor="w",
+                bg="#101010",
+                fg="#d0d0d0",
+                font=("Segoe UI", 10),
+            ).pack(side="left")
+            var = tk.StringVar()
+            entry = tk.Entry(
+                row,
+                textvariable=var,
+                width=10,
+                justify="right",
+                bg="#1c1c1c",
+                fg="#f5f5f5",
+                insertbackground="#f5f5f5",
+                font=("Consolas", 10),
+            )
+            entry.pack(side="left", padx=(4, 0))
+            var.trace_add("write", partial(self._on_param_change, name, var, value_type))
+            self.param_vars[name] = var
+
+        steps_frame = tk.Frame(params_container, bg="#101010")
+        steps_frame.pack(fill="x", pady=(8, 0))
+        tk.Label(
+            steps_frame,
+            text="Steg per uppdatering",
+            anchor="w",
+            bg="#101010",
+            fg="#d0d0d0",
+            font=("Segoe UI", 10),
+        ).pack(side="left")
+        self.steps_per_tick_var = tk.IntVar(value=4)
+        steps_spin = tk.Spinbox(
+            steps_frame,
+            from_=1,
+            to=256,
+            textvariable=self.steps_per_tick_var,
+            width=5,
+            justify="right",
+            bg="#1c1c1c",
+            fg="#f5f5f5",
+            insertbackground="#f5f5f5",
+        )
+        steps_spin.pack(side="left", padx=(8, 0))
+
+        self.message_var = tk.StringVar()
+        message_label = tk.Label(
+            sidebar,
+            textvariable=self.message_var,
+            justify="left",
+            wraplength=320,
+            anchor="w",
+            font=("Segoe UI", 10),
+            bg="#101010",
+            fg="#90caf9",
+        )
+        message_label.pack(fill="x", pady=(8, 0))
+
+    def _create_buttons(self, parent: tk.Misc) -> None:
+        button_frame = tk.Frame(parent, bg="#101010")
+        button_frame.pack(fill="x", pady=(0, 8))
+
+        btn_specs = [
+            ("Starta träning", self.start_training),
+            ("Pausa", self.pause_training),
+            ("Spara modell", self.save_model),
+            ("Ladda modell", self.load_model),
+            ("Återställ statistik", self.reset_stats),
+        ]
+        for text, command in btn_specs:
+            button = tk.Button(
+                button_frame,
+                text=text,
+                command=command,
+                width=20,
+                bg="#2e7d32" if "Starta" in text else "#455a64",
+                fg="#f5f5f5",
+                activebackground="#1b5e20",
+                activeforeground="#f5f5f5",
+                relief="flat",
+                pady=6,
+                font=("Segoe UI", 10, "bold" if "Starta" in text else "normal"),
+            )
+            button.pack(fill="x", pady=3)
+
+    def _reset_episode(self) -> None:
+        self.current_state = self.env.reset()
+        self.current_episode_reward = 0.0
+        self.current_episode_steps = 0
+        self.last_reward = 0.0
+        self._update_canvas(self.env.snapshot())
+        self._update_stats_label()
+
+    def _training_loop(self) -> None:
+        if self.training_active and self.current_state is not None:
+            try:
+                steps = max(1, int(self.steps_per_tick_var.get()))
+            except (TypeError, ValueError):
+                steps = 1
+            for _ in range(steps):
+                if not self.training_active:
+                    break
+                self._run_training_step()
+        self._update_canvas(self.env.snapshot())
+        self._update_stats_label()
+        self.root.after(50, self._training_loop)
+
+    def _run_training_step(self) -> None:
+        assert self.current_state is not None
+        action = self.agent.select_action(self.current_state)
+        next_state, reward, done, info = self.env.step(action)
+        transition = Transition(
+            state=self.current_state.copy(),
+            action=action,
+            reward=reward,
+            next_state=next_state.copy(),
+            done=done,
+        )
+        self.agent.push(transition)
+        loss = self.agent.learn()
+        if loss is not None:
+            self.last_loss = loss
+        self.agent.decay_epsilon()
+
+        self.current_state = next_state
+        self.current_episode_reward += reward
+        self.current_episode_steps = int(info.get("steps", self.current_episode_steps + 1))
+        self.last_reward = reward
+
+        if done:
+            self.stats.record(self.current_episode_reward, self.env.max_length)
+            self._reset_episode()
+
+    def _update_canvas(self, snapshot: Dict[str, object]) -> None:
+        self.canvas.delete("all")
+        self._draw_background()
+        self._draw_fruit(snapshot.get("fruit"))
+        snake = snapshot.get("snake") or []
+        self._draw_snake(list(snake))
+
+    def _draw_background(self) -> None:
+        pixel_size = GRID_SIZE * CELL_SIZE
+        for row in range(GRID_SIZE):
+            color = "#1f1f1f" if row % 2 == 0 else "#232323"
+            self.canvas.create_rectangle(
+                0,
+                row * CELL_SIZE,
+                pixel_size,
+                (row + 1) * CELL_SIZE,
+                fill=color,
+                width=0,
+            )
+
+    def _draw_snake(self, snake: List[Point]) -> None:
+        for index, (x, y) in enumerate(snake):
+            color = "#8bc34a" if index == 0 else "#4caf50"
+            self.canvas.create_rectangle(
+                x * CELL_SIZE,
+                y * CELL_SIZE,
+                (x + 1) * CELL_SIZE,
+                (y + 1) * CELL_SIZE,
+                fill=color,
+                outline="#1b5e20",
+                width=1,
+            )
+
+    def _draw_fruit(self, fruit: Optional[Point]) -> None:
+        if fruit is None:
+            return
+        x, y = fruit
+        self.canvas.create_oval(
+            x * CELL_SIZE + 4,
+            y * CELL_SIZE + 4,
+            (x + 1) * CELL_SIZE - 4,
+            (y + 1) * CELL_SIZE - 4,
+            fill="#ff9800",
+            outline="#ef6c00",
+            width=1,
+        )
+
+    def _update_stats_label(self) -> None:
+        avg_reward = self.stats.average_reward
+        avg_length = self.stats.average_length
+        best_length = self.stats.best_length
+        current_length = len(self.env.snake)
+        self.stats_var.set(
+            (
+                f"Episoder: {self.stats.episodes} | Medelpoäng: {avg_reward:.2f} | "
+                f"Medellängd: {avg_length:.2f} | Längsta längd: {best_length} | "
+                f"Nuvarande längd: {current_length} | Senaste episodpoäng: {self.stats.last_episode_reward:.2f} | "
+                f"Senaste längd: {self.stats.last_episode_length:.2f}"
+            )
+        )
+        loss_text = f"{self.last_loss:.4f}" if self.last_loss is not None else "…"
+        self.detail_var.set(
+            (
+                f"Episod {self.stats.episodes + 1} | Steg {self.current_episode_steps} | "
+                f"Nuvarande längd: {len(self.env.snake)} | Max längd: {self.env.max_length} | "
+                f"Senaste reward: {self.last_reward:+.2f} | Episodreward: {self.current_episode_reward:.2f} | "
+                f"Förlust: {loss_text} | ε={self.agent.epsilon:.3f}"
+            )
+        )
+
+    def _log_message(self, message: str) -> None:
+        self.message_var.set(message)
+
+    def start_training(self) -> None:
+        if not self.training_active:
+            self.training_active = True
+            self._log_message("Träning pågår…")
+
+    def pause_training(self) -> None:
+        if self.training_active:
+            self.training_active = False
+            self._log_message("Träningen pausades.")
+
+    def reset_stats(self) -> None:
+        self.stats.reset()
+        self._log_message("Statistiken återställdes.")
+        self._update_stats_label()
+
+    def load_model(self) -> None:
+        path = filedialog.askopenfilename(
+            title="Välj modell att ladda",
+            filetypes=[("Double DQN-modeller", "*.npz"), ("Alla filer", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            agent = DoubleDQNAgent.load(path)
+        except Exception as exc:  # pragma: no cover - användarfeedback
+            messagebox.showerror("Fel", f"Kunde inte ladda modellen:\n{exc}")
+            return
+        if agent.state_size != self.env.state_size:
+            messagebox.showerror(
+                "Fel",
+                "Modellen använder ett annat rutnätsformat och kan inte laddas i denna miljö.",
+            )
+            return
+        self.pause_training()
+        self.agent = agent
+        self._sync_param_entries_from_agent()
+        self._reset_episode()
+        name = Path(path).name
+        self._log_message(f"Laddade modell från {name}.")
+
+    def save_model(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="Spara Double DQN-modell",
+            defaultextension=".npz",
+            initialfile="idle_double_dqn.npz",
+            filetypes=[("Double DQN-modeller", "*.npz"), ("Alla filer", "*.*")],
+        )
+        if not path:
+            return
+        try:
+            saved_path = self.agent.save(path)
+        except Exception as exc:  # pragma: no cover - användarfeedback
+            messagebox.showerror("Fel", f"Kunde inte spara modellen:\n{exc}")
+            return
+        name = Path(saved_path).name
+        self._log_message(f"Modellen sparades till {name}.")
+
+    def _sync_param_entries_from_agent(self) -> None:
+        self._syncing_params = True
+        for name, var in self.param_vars.items():
+            value = getattr(self.agent, name)
+            var.set(self._format_param_value(value))
+        self._syncing_params = False
+
+    def _format_param_value(self, value: float | int) -> str:
+        if isinstance(value, float):
+            return f"{value:.6g}"
+        return str(int(value))
+
+    def _on_param_change(self, name: str, var: tk.StringVar, value_type: type, *_: object) -> None:
+        if self._syncing_params:
+            return
+        text = var.get().strip()
+        if not text:
+            return
+        try:
+            value = value_type(text)
+        except ValueError:
+            return
+        if isinstance(value, float) and not math.isfinite(value):
+            return
+        if value_type is int:
+            value = max(1, int(value))
+        setattr(self.agent, name, value)
+
+    def _on_close(self) -> None:
+        self.training_active = False
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def run(self) -> None:
+        self.root.mainloop()
+
+
+def start_idle_trainer_ui(load_path: Optional[Path | str] = None) -> None:
+    """Starta det interaktiva Tk-gränssnittet för träning."""
+
+    app = IdleTrainerApp(load_path=load_path)
+    app.run()
+
+
+# ---------------------------------------------------------------------------
 # Training / evaluation CLI
 # ---------------------------------------------------------------------------
 
@@ -1227,13 +1702,15 @@ def main(argv: Optional[List[str]] = None) -> None:
             save_path=args.save_model,
             visualize=args.visualize_training,
         )
-    elif args.load_model:
-        agent = DoubleDQNAgent.load(args.load_model)
-        print(f"Laddade agent från {args.load_model}.")
+    if args.evaluate or args.autopilot:
+        if agent is None:
+            if args.load_model:
+                agent = DoubleDQNAgent.load(args.load_model)
+                print(f"Laddade agent från {args.load_model}.")
+            else:
+                raise SystemExit("Ingen agent att använda. Träna först eller ladda en modell.")
 
     if args.evaluate:
-        if agent is None:
-            raise SystemExit("Ingen agent att utvärdera. Träna först eller ladda en modell.")
         scores = evaluate_agent(agent, args.evaluate, args.steps, seed=args.seed)
         avg = sum(scores) / len(scores)
         best = max(scores)
@@ -1243,7 +1720,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             f"Bäst: {best:.2f} | Sämst: {worst:.2f}"
         )
 
-    if args.play or (agent and args.autopilot):
+    if args.play or (args.autopilot and agent is not None):
         try:
             start_game(agent=agent, autopilot=args.autopilot)
         except tk.TclError as exc:  # pragma: no cover - headless safeguard
@@ -1254,9 +1731,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             )
             raise SystemExit(1) from exc
     elif args.train == 0 and args.evaluate == 0:
-        # Default behaviour when running without flags.
+        # Default behaviour when running without flaggar: visa den nya träningskontrollen.
         try:
-            start_game(agent=None, autopilot=False)
+            start_idle_trainer_ui(load_path=args.load_model if agent is None else None)
         except tk.TclError as exc:  # pragma: no cover - headless safeguard
             print(
                 "Det gick inte att starta Tkinter. Om du kör skriptet på en server utan skärm",
