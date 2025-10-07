@@ -8,9 +8,9 @@ import random
 import sys
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Deque, Dict, Iterable, List, Optional, Tuple
+from typing import Deque, Dict, Iterable, List, Optional, Set, Tuple
 
 try:  # NumPy krävs för Double DQN-implementationen
     import numpy as np
@@ -30,11 +30,51 @@ CELL_SIZE = 32  # Pixels per tile
 STEP_DELAY = 120  # Milliseconds between snake moves
 START_LENGTH = 3
 
-# Reward/score configuration
-FRUIT_REWARD = 10.0
-STEP_PENALTY = -1.0
-WALL_PENALTY = -10.0
-SELF_PENALTY = -10.0
+# Reward configuration mirroring the web project defaults
+
+
+@dataclass
+class RewardConfig:
+    step_penalty: float = 0.01
+    turn_penalty: float = 0.001
+    approach_bonus: float = 0.03
+    retreat_penalty: float = 0.03
+    loop_penalty: float = 0.5
+    tight_loop_penalty: float = 1.2
+    revisit_penalty: float = 0.05
+    dead_end_penalty: float = 0.5
+    wall_penalty: float = 10.0
+    self_penalty: float = 25.5
+    timeout_penalty: float = 5.0
+    fruit_reward: float = 10.0
+    growth_bonus: float = 1.0
+    compact_weight: float = 0.0
+    compact_bonus: float = 0.25
+    trap_penalty: float = 1.2
+    space_gain_bonus: float = 0.05
+
+
+REWARD_BREAKDOWN_KEYS: Tuple[str, ...] = (
+    "stepPenalty",
+    "turnPenalty",
+    "approachBonus",
+    "retreatPenalty",
+    "loopPenalty",
+    "tightLoopPenalty",
+    "revisitPenalty",
+    "deadEndPenalty",
+    "trapPenalty",
+    "spaceGainBonus",
+    "fruitReward",
+    "growthBonus",
+    "compactness",
+    "wallPenalty",
+    "selfPenalty",
+    "timeoutPenalty",
+)
+
+VISIT_DECAY = 0.995
+LOOP_PATTERNS = {(1, 2, 1, 2), (2, 1, 2, 1)}
 
 Direction = Tuple[int, int]
 Point = Tuple[int, int]
@@ -318,82 +358,329 @@ class DoubleDQNAgent:
 class IdleSnakeEnv:
     """Lightweight snake environment for headless Double DQN training."""
 
-    def __init__(self, grid_size: int = GRID_SIZE, seed: Optional[int] = None) -> None:
+    def __init__(
+        self,
+        grid_size: int = GRID_SIZE,
+        seed: Optional[int] = None,
+        reward_config: Optional[RewardConfig] = None,
+    ) -> None:
         self.grid_size = grid_size
         self.random = random.Random(seed)
+        self.reward_config = reward_config or RewardConfig()
+        self.state = np.zeros(grid_size_state_size(grid_size), dtype=np.float32)
+        self.total_cells = grid_size * grid_size
         self.snake: List[Point] = []
+        self.snake_set: Set[Point] = set()
         self.direction_index: int = 1
         self.fruit: Point = (0, 0)
         self.pending_growth = 0
-        self.state = np.zeros(grid_size_state_size(grid_size), dtype=np.float32)
+        self.steps_since_fruit = 0
+        self.total_reward = 0.0
+        self.max_length = START_LENGTH
+        self.prev_slack = 0.0
+        self.last_slack_delta = 0.0
+        self.last_free_space_ratio = 1.0
+        self.relative_history: Deque[int] = deque(maxlen=6)
+        self.head_history: Deque[Point] = deque(maxlen=12)
+        self.freedom_history: Deque[float] = deque(maxlen=20)
+        self.visit_map: List[List[float]] = []
+        self.episode_breakdown = self._make_reward_breakdown()
+        self.steps_taken = 0
+        self.fruits_eaten = 0
+        self.reward_breakdown = self._make_reward_breakdown()
 
     @property
     def state_size(self) -> int:
         return grid_size_state_size(self.grid_size)
 
+    def _make_reward_breakdown(self) -> Dict[str, float]:
+        breakdown = {key: 0.0 for key in REWARD_BREAKDOWN_KEYS}
+        breakdown["total"] = 0.0
+        return breakdown
+
+    def _decay_visits(self) -> None:
+        if not self.visit_map:
+            return
+        for y in range(self.grid_size):
+            row = self.visit_map[y]
+            for x in range(self.grid_size):
+                row[x] *= VISIT_DECAY
+
+    def _relative_action(self, previous: int, current: int) -> int:
+        if current == previous:
+            return 0
+        if current == (previous - 1) % len(ACTION_VECTORS):
+            return 1  # left turn
+        if current == (previous + 1) % len(ACTION_VECTORS):
+            return 2  # right turn
+        return 0
+
+    def _free_space_from(self, start: Point, tail_will_move: bool) -> int:
+        blocked = set(self.snake_set)
+        blocked.discard(start)
+        if tail_will_move and self.snake:
+            blocked.discard(self.snake[-1])
+        seen: Set[Point] = set()
+        queue: List[Point] = [start]
+        while queue:
+            x, y = queue.pop()
+            if (x, y) in seen or (x, y) in blocked:
+                continue
+            seen.add((x, y))
+            for nx, ny in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if 0 <= nx < self.grid_size and 0 <= ny < self.grid_size:
+                    queue.append((nx, ny))
+            if len(seen) > self.total_cells:
+                break
+        return len(seen)
+
+    def _compute_slack(self) -> float:
+        if not self.snake:
+            return 0.0
+        xs = [segment[0] for segment in self.snake]
+        ys = [segment[1] for segment in self.snake]
+        width = max(xs) - min(xs) + 1
+        height = max(ys) - min(ys) + 1
+        area = width * height
+        return max(0.0, float(area - len(self.snake)))
+
     def reset(self) -> np.ndarray:
         start_x = self.grid_size // 2
         start_y = self.grid_size // 2
         self.snake = [(start_x - i, start_y) for i in range(START_LENGTH)]
+        self.snake_set = set(self.snake)
         self.direction_index = 1
         self.pending_growth = 0
+        self.steps_since_fruit = 0
+        self.total_reward = 0.0
+        self.steps_taken = 0
+        self.fruits_eaten = 0
+        self.max_length = len(self.snake)
+        self.prev_slack = self._compute_slack()
+        self.last_slack_delta = 0.0
+        self.last_free_space_ratio = 1.0
+        self.relative_history.clear()
+        self.head_history.clear()
+        self.freedom_history.clear()
+        self.visit_map = [[0.0 for _ in range(self.grid_size)] for _ in range(self.grid_size)]
+        self.episode_breakdown = self._make_reward_breakdown()
+        self.reward_breakdown = self._make_reward_breakdown()
         self._spawn_fruit()
         self.state = build_state_vector(self.snake, self.fruit, self.direction_index, self.grid_size)
         return self.state.copy()
 
-    def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict[str, str]]:
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, Dict[str, object]]:
         if action < 0 or action >= len(ACTION_VECTORS):
             raise ValueError("Action out of range")
+
         current_direction = ACTION_VECTORS[self.direction_index]
         chosen_direction = ACTION_VECTORS[action]
         if chosen_direction == OPPOSITE[current_direction]:
             chosen_direction = current_direction
             action = self.direction_index
-        self.direction_index = DIRECTION_TO_INDEX[chosen_direction]
+        new_direction_index = DIRECTION_TO_INDEX[chosen_direction]
+        relative_action = self._relative_action(self.direction_index, new_direction_index)
+        self.direction_index = new_direction_index
 
         head_x, head_y = self.snake[0]
         dx, dy = chosen_direction
         new_head = (head_x + dx, head_y + dy)
 
-        reward = STEP_PENALTY
+        fx, fy = self.fruit
+        prev_distance = abs(head_x - fx) + abs(head_y - fy)
+        will_grow = new_head == self.fruit or self.pending_growth > 0
+        hits_wall = not (0 <= new_head[0] < self.grid_size and 0 <= new_head[1] < self.grid_size)
+        body_to_check = self.snake if will_grow else self.snake[:-1]
+        hits_self = new_head in body_to_check
+        space_before = self._free_space_from(self.snake[0], tail_will_move=self.pending_growth == 0)
+
+        reward = 0.0
         done = False
         cause = "step"
+        step_breakdown = self._make_reward_breakdown()
 
-        if not (0 <= new_head[0] < self.grid_size and 0 <= new_head[1] < self.grid_size):
-            reward += WALL_PENALTY + SELF_PENALTY
+        if hits_wall or hits_self:
+            penalty = self.reward_config.wall_penalty if hits_wall else self.reward_config.self_penalty
+            reward -= penalty
+            key = "wallPenalty" if hits_wall else "selfPenalty"
+            step_breakdown[key] -= penalty
+            cause = "wall" if hits_wall else "self"
             done = True
-            cause = "wall"
-        elif new_head in self.snake:
-            reward += SELF_PENALTY
-            done = True
-            cause = "self"
         else:
+            self._decay_visits()
             self.snake.insert(0, new_head)
-            if new_head == self.fruit:
-                reward += FRUIT_REWARD
+            self.snake_set.add(new_head)
+            ate_fruit = new_head == self.fruit
+            if ate_fruit:
                 self.pending_growth += 1
+                self.fruits_eaten += 1
+                reward += self.reward_config.fruit_reward
+                step_breakdown["fruitReward"] += self.reward_config.fruit_reward
+                self.steps_since_fruit = 0
                 self._spawn_fruit()
                 cause = "fruit"
-            if self.pending_growth > 0:
-                self.pending_growth -= 1
             else:
-                self.snake.pop()
+                self.steps_since_fruit += 1
+                if self.pending_growth > 0:
+                    self.pending_growth -= 1
+                else:
+                    tail = self.snake.pop()
+                    self.snake_set.discard(tail)
 
-        if done:
-            next_state = self.state.copy()
-        else:
+            nx, ny = new_head
+            revisit_penalty = self.visit_map[ny][nx] * self.reward_config.revisit_penalty
+            if revisit_penalty:
+                reward -= revisit_penalty
+                step_breakdown["revisitPenalty"] -= revisit_penalty
+            self.visit_map[ny][nx] = min(1.0, self.visit_map[ny][nx] + 0.3)
+
+            reward -= self.reward_config.step_penalty
+            step_breakdown["stepPenalty"] -= self.reward_config.step_penalty
+
+            if relative_action in (1, 2):
+                reward -= self.reward_config.turn_penalty
+                step_breakdown["turnPenalty"] -= self.reward_config.turn_penalty
+
+            new_distance = abs(new_head[0] - fx) + abs(new_head[1] - fy)
+            if new_distance < prev_distance:
+                reward += self.reward_config.approach_bonus
+                step_breakdown["approachBonus"] += self.reward_config.approach_bonus
+            elif new_distance > prev_distance:
+                reward -= self.reward_config.retreat_penalty
+                step_breakdown["retreatPenalty"] -= self.reward_config.retreat_penalty
+
+            space_after = self._free_space_from(new_head, tail_will_move=self.pending_growth == 0)
+            need = len(self.snake) + 2
+            denom = max(1, need)
+
+            if space_after < need:
+                penalty = self.reward_config.trap_penalty * (1.0 + (need - space_after) / denom)
+                reward -= penalty
+                step_breakdown["trapPenalty"] -= penalty
+            elif self.reward_config.space_gain_bonus > 0 and space_after > space_before:
+                bonus = self.reward_config.space_gain_bonus * min(1.0, (space_after - space_before) / denom)
+                reward += bonus
+                step_breakdown["spaceGainBonus"] += bonus
+
+            margin = 5
+            min_reachable = len(self.snake) + (1 if self.pending_growth > 0 else 0) + margin
+            if min_reachable > 0:
+                ratio = space_after / max(1, min_reachable)
+                base = -0.5 * (1.0 - ratio)
+                if base:
+                    dead_end_reward = base * self.reward_config.dead_end_penalty
+                    reward += dead_end_reward
+                    step_breakdown["deadEndPenalty"] += dead_end_reward
+
+            freedom_ratio = max(0.0, min(1.0, space_after / max(1, self.total_cells)))
+            self.freedom_history.append(freedom_ratio)
+            if len(self.freedom_history) > self.freedom_history.maxlen:
+                self.freedom_history.popleft()
+            avg_freedom = sum(self.freedom_history) / len(self.freedom_history)
+            trend = freedom_ratio - (self.freedom_history[0] if self.freedom_history else freedom_ratio)
+
+            if trend < -0.05 and avg_freedom < 0.15:
+                long_term_penalty = -self.reward_config.trap_penalty * abs(trend) * 4.0
+                reward += long_term_penalty
+                step_breakdown["trapPenalty"] += long_term_penalty
+            if trend > 0.03 and avg_freedom > 0.2:
+                long_term_bonus = self.reward_config.compact_bonus * trend * 5.0
+                reward += long_term_bonus
+                step_breakdown["compactness"] += long_term_bonus
+
+            prev_ratio = self.last_free_space_ratio
+            drop = max(0.0, prev_ratio - freedom_ratio)
+            penalty_factor = 0.0
+            if len(self.snake) > 4 and new_head in self.head_history:
+                penalty_factor += 1.0
+            if drop > 0.0:
+                penalty_factor += min(1.5, drop * 12.0)
+            if penalty_factor > 0.0 and self.reward_config.tight_loop_penalty != 0.0:
+                loop_penalty = self.reward_config.tight_loop_penalty * penalty_factor
+                reward -= loop_penalty
+                step_breakdown["tightLoopPenalty"] -= loop_penalty
+            self.last_free_space_ratio = freedom_ratio
+
+            self.head_history.append(new_head)
+            if len(self.head_history) > self.head_history.maxlen:
+                self.head_history.popleft()
+
+            self.relative_history.append(relative_action)
+            if len(self.relative_history) > self.relative_history.maxlen:
+                self.relative_history.popleft()
+            if len(self.relative_history) >= 4:
+                last_four = tuple(list(self.relative_history)[-4:])
+                if last_four in LOOP_PATTERNS:
+                    reward -= self.reward_config.loop_penalty
+                    step_breakdown["loopPenalty"] -= self.reward_config.loop_penalty
+
+            slack = self._compute_slack()
+            slack_delta = self.prev_slack - slack
+            if self.reward_config.compact_weight != 0.0 and slack_delta != 0.0:
+                compact_reward = slack_delta * self.reward_config.compact_weight
+                reward += compact_reward
+                step_breakdown["compactness"] += compact_reward
+            self.last_slack_delta = slack_delta
+            self.prev_slack = slack
+
+            if len(self.snake) > self.max_length:
+                gain = len(self.snake) - self.max_length
+                growth_bonus = self.reward_config.growth_bonus * gain
+                reward += growth_bonus
+                step_breakdown["growthBonus"] += growth_bonus
+                self.max_length = len(self.snake)
+
+            if self.steps_since_fruit > self.total_cells * 2:
+                reward -= self.reward_config.timeout_penalty
+                step_breakdown["timeoutPenalty"] -= self.reward_config.timeout_penalty
+                done = True
+                cause = "timeout"
+
+        step_breakdown["total"] = reward
+        self.total_reward += reward
+        self.steps_taken += 1
+
+        for key, value in step_breakdown.items():
+            if key == "total":
+                continue
+            self.episode_breakdown[key] += value
+        self.episode_breakdown["total"] += reward
+        self.reward_breakdown = {key: (self.episode_breakdown[key] if key != "total" else self.episode_breakdown["total"]) for key in self.episode_breakdown}
+
+        if not done:
             next_state = build_state_vector(self.snake, self.fruit, self.direction_index, self.grid_size)
             self.state = next_state.copy()
-        return next_state, reward, done, {"cause": cause}
+        else:
+            next_state = self.state.copy()
+
+        info: Dict[str, object] = {
+            "cause": cause,
+            "breakdown": step_breakdown,
+            "fruits": self.fruits_eaten,
+            "steps": self.steps_taken,
+        }
+        return next_state, reward, done, info
 
     def _spawn_fruit(self) -> None:
         free_cells = [
             (x, y)
             for x in range(self.grid_size)
             for y in range(self.grid_size)
-            if (x, y) not in self.snake
+            if (x, y) not in self.snake_set
         ]
         self.fruit = self.random.choice(free_cells) if free_cells else self.snake[0]
+
+    def snapshot(self) -> Dict[str, object]:
+        """Return a shallow copy of the current game state for visualisering."""
+
+        return {
+            "snake": list(self.snake),
+            "fruit": self.fruit,
+            "direction_index": self.direction_index,
+            "pending_growth": self.pending_growth,
+            "reward_breakdown": dict(self.reward_breakdown),
+            "total_reward": self.total_reward,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -403,6 +690,7 @@ class IdleSnakeEnv:
 
 @dataclass
 class Score:
+    reward_config: RewardConfig = field(default_factory=RewardConfig)
     fruits: int = 0
     steps: int = 0
     reward: float = 0.0
@@ -414,14 +702,14 @@ class Score:
 
     def apply_step(self, outcome: str) -> None:
         self.steps += 1
-        self.reward += STEP_PENALTY
+        self.reward -= self.reward_config.step_penalty
         if outcome == "fruit":
             self.fruits += 1
-            self.reward += FRUIT_REWARD - STEP_PENALTY
+            self.reward += self.reward_config.fruit_reward
         elif outcome == "wall":
-            self.reward += WALL_PENALTY
+            self.reward -= self.reward_config.wall_penalty
         elif outcome == "self":
-            self.reward += SELF_PENALTY
+            self.reward -= self.reward_config.self_penalty
 
 
 class SnakeCanvas(tk.Canvas):
@@ -602,6 +890,165 @@ class SnakeCanvas(tk.Canvas):
         return "step"
 
 
+class TrainingViewer:
+    """Lightweight Tkinter-visualisering av träningsmiljön."""
+
+    def __init__(
+        self,
+        *,
+        grid_size: int,
+        total_episodes: int,
+        steps_per_episode: int,
+        cell_size: int = CELL_SIZE,
+        delay_ms: int = STEP_DELAY,
+    ) -> None:
+        self.grid_size = grid_size
+        self.total_episodes = total_episodes
+        self.steps_per_episode = steps_per_episode
+        self.cell_size = cell_size
+        self.delay = max(delay_ms / 1000.0, 0.0)
+        self._last_draw = 0.0
+        self.closed = False
+
+        self.root = tk.Tk()
+        self.root.title("Snake-ML – Träningsvisualisering")
+        self.root.configure(bg="#101010")
+        self.root.resizable(False, False)
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+
+        self.status = tk.Label(
+            self.root,
+            text="Initierar träning…",
+            font=("Segoe UI", 12),
+            anchor="w",
+            padx=12,
+            pady=8,
+            bg="#101010",
+            fg="#f5f5f5",
+        )
+        self.status.pack(fill="x")
+
+        pixel_size = self.grid_size * self.cell_size
+        self.canvas = tk.Canvas(
+            self.root,
+            width=pixel_size,
+            height=pixel_size,
+            bg="#151515",
+            highlightthickness=0,
+        )
+        self.canvas.pack()
+
+        self._draw_background()
+        self.root.update_idletasks()
+        self.root.update()
+
+    def update(
+        self,
+        *,
+        snapshot: Dict[str, object],
+        episode: int,
+        step: int,
+        epsilon: float,
+        total_reward: float,
+        last_reward: float,
+        cause: str,
+        loss: float,
+    ) -> None:
+        if self.closed:
+            return
+        now = time.perf_counter()
+        if now - self._last_draw < self.delay:
+            self.root.update_idletasks()
+            self.root.update()
+            return
+        self._last_draw = now
+
+        snake = list(snapshot.get("snake", []))
+        fruit = snapshot.get("fruit")
+
+        self.canvas.delete("all")
+        self._draw_background()
+        self._draw_fruit(fruit)
+        self._draw_snake(snake)
+
+        status_text = (
+            f"Episod {episode}/{self.total_episodes} | Steg {step}/{self.steps_per_episode} | "
+            f"Reward {total_reward:6.1f} | Δ {last_reward:5.2f} | ε={epsilon:.3f} | "
+            f"Senaste: {self._format_cause(cause)} | Förlust {loss:7.4f}"
+        )
+        self.status.config(text=status_text)
+
+        self.root.update_idletasks()
+        self.root.update()
+
+    def episode_done(self) -> None:
+        if self.closed:
+            return
+        current = self.status.cget("text")
+        if "| Slut" not in current:
+            self.status.config(text=f"{current} | Slut på episod")
+        self.root.update_idletasks()
+        self.root.update()
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def _draw_background(self) -> None:
+        pixel_size = self.grid_size * self.cell_size
+        for row in range(self.grid_size):
+            color = "#1f1f1f" if row % 2 == 0 else "#232323"
+            self.canvas.create_rectangle(
+                0,
+                row * self.cell_size,
+                pixel_size,
+                (row + 1) * self.cell_size,
+                fill=color,
+                width=0,
+            )
+
+    def _draw_snake(self, snake: List[Point]) -> None:
+        for index, (x, y) in enumerate(snake):
+            color = "#8bc34a" if index == 0 else "#4caf50"
+            self.canvas.create_rectangle(
+                x * self.cell_size,
+                y * self.cell_size,
+                (x + 1) * self.cell_size,
+                (y + 1) * self.cell_size,
+                fill=color,
+                outline="#1b5e20",
+                width=1,
+            )
+
+    def _draw_fruit(self, fruit: Optional[Point]) -> None:
+        if fruit is None:
+            return
+        x, y = fruit
+        self.canvas.create_oval(
+            x * self.cell_size + 4,
+            y * self.cell_size + 4,
+            (x + 1) * self.cell_size - 4,
+            (y + 1) * self.cell_size - 4,
+            fill="#ff9800",
+            outline="#ef6c00",
+            width=1,
+        )
+
+    def _format_cause(self, cause: str) -> str:
+        translations = {
+            "fruit": "frukt",
+            "wall": "vägg",
+            "self": "kollision",
+            "step": "steg",
+        }
+        return translations.get(cause, cause)
+
+
 # ---------------------------------------------------------------------------
 # Training / evaluation CLI
 # ---------------------------------------------------------------------------
@@ -614,6 +1061,7 @@ def train_double_dqn(
     seed: Optional[int] = None,
     load_path: Optional[Path | str] = None,
     save_path: Optional[Path | str] = None,
+    visualize: bool = False,
 ) -> DoubleDQNAgent:
     env = IdleSnakeEnv(seed=seed)
     if load_path is not None:
@@ -625,6 +1073,20 @@ def train_double_dqn(
 
     rewards: List[float] = []
     start_time = time.time()
+    viewer: Optional[TrainingViewer] = None
+    if visualize:
+        try:
+            viewer = TrainingViewer(
+                grid_size=env.grid_size,
+                total_episodes=episodes,
+                steps_per_episode=steps_per_episode,
+            )
+        except tk.TclError as exc:
+            print(
+                "Det gick inte att starta träningsvisualiseringen (Tkinter). Fortsätter utan grafiskt läge.",
+                file=sys.stderr,
+            )
+            viewer = None
 
     for episode in range(1, episodes + 1):
         state = env.reset()
@@ -632,7 +1094,7 @@ def train_double_dqn(
         losses: List[float] = []
         for step in range(steps_per_episode):
             action = agent.select_action(state)
-            next_state, reward, done, _ = env.step(action)
+            next_state, reward, done, info = env.step(action)
             agent.push(Transition(state, action, reward, next_state, done))
             loss = agent.learn()
             if loss is not None:
@@ -640,6 +1102,21 @@ def train_double_dqn(
             agent.decay_epsilon()
             state = next_state
             total_reward += reward
+            if viewer is not None:
+                try:
+                    viewer.update(
+                        snapshot=env.snapshot(),
+                        episode=episode,
+                        step=step + 1,
+                        epsilon=agent.epsilon,
+                        total_reward=total_reward,
+                        last_reward=reward,
+                        cause=info.get("cause", "step"),
+                        loss=losses[-1] if losses else 0.0,
+                    )
+                except tk.TclError:
+                    print("Träningsfönstret stängdes – fortsätter träningen utan visualisering.")
+                    viewer = None
             if done:
                 break
         rewards.append(total_reward)
@@ -652,10 +1129,18 @@ def train_double_dqn(
                 f"Senaste episod: {total_reward:6.2f} | Förlust: {mean_loss:8.4f} | "
                 f"ε={agent.epsilon:.3f} | Tid: {duration:5.1f}s"
             )
+        if viewer is not None:
+            try:
+                viewer.episode_done()
+            except tk.TclError:
+                print("Träningsfönstret stängdes – fortsätter träningen utan visualisering.")
+                viewer = None
 
     if save_path is not None:
         path = agent.save(save_path)
         print(f"Sparade modellen till {path}.")
+    if viewer is not None:
+        viewer.close()
     return agent
 
 
@@ -710,6 +1195,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--evaluate", type=int, metavar="EP", help="Kör utvärdering med angivet antal episoder", default=0)
     parser.add_argument("--play", action="store_true", help="Starta Tkinter-spelet")
     parser.add_argument("--autopilot", action="store_true", help="Aktivera autopilot när spelet startas")
+    parser.add_argument(
+        "--visualize-training",
+        action="store_true",
+        help="Visa träningsmiljön live i ett Tkinter-fönster",
+    )
     return parser.parse_args(argv)
 
 
@@ -724,6 +1214,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             seed=args.seed,
             load_path=args.load_model,
             save_path=args.save_model,
+            visualize=args.visualize_training,
         )
     elif args.load_model:
         agent = DoubleDQNAgent.load(args.load_model)
