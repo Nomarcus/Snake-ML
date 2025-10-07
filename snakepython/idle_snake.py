@@ -914,6 +914,9 @@ class TrainingViewer:
         self.root.resizable(False, False)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
+        pixel_size = self.grid_size * self.cell_size
+        margin = 16
+
         self.status = tk.Label(
             self.root,
             text="Initierar träning…",
@@ -921,12 +924,12 @@ class TrainingViewer:
             anchor="w",
             padx=12,
             pady=8,
+            width=80,
             bg="#101010",
             fg="#f5f5f5",
         )
         self.status.pack(fill="x")
 
-        pixel_size = self.grid_size * self.cell_size
         self.canvas = tk.Canvas(
             self.root,
             width=pixel_size,
@@ -934,7 +937,16 @@ class TrainingViewer:
             bg="#151515",
             highlightthickness=0,
         )
-        self.canvas.pack()
+        self.canvas.pack(padx=margin, pady=margin)
+
+        view_size = pixel_size + 2 * margin
+        self.root.update_idletasks()
+        status_height = self.status.winfo_height()
+        total_height = view_size + status_height
+        geometry = f"{view_size}x{total_height}"
+        self.root.geometry(geometry)
+        self.root.minsize(view_size, total_height)
+        self.root.maxsize(view_size, total_height)
 
         self._draw_background()
         self.root.update_idletasks()
