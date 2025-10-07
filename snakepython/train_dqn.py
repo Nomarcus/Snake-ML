@@ -76,6 +76,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grid-size", type=int, default=15, help="Snake grid size")
     parser.add_argument("--tensorboard", action="store_true", help="Enable TensorBoard logging")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument(
+        "--parallel-envs",
+        type=int,
+        default=8,
+        help="Number of simultaneous environments to train on",
+    )
     parser.add_argument("--run-name", type=str, default=None, help="Custom run identifier used for saved models and logs")
     parser.add_argument("--headless", action="store_true", help="Disable pygame rendering (useful for batch jobs)")
     return parser.parse_args()
@@ -105,7 +111,13 @@ def main() -> None:
     models_dir = Path("snakepython") / "models"
     models_dir.mkdir(parents=True, exist_ok=True)
 
-    vec_env = build_vector_env(args.grid_size, n_envs=8, seed=args.seed, render_first_env=not args.headless)
+    n_envs = max(1, int(args.parallel_envs))
+    vec_env = build_vector_env(
+        args.grid_size,
+        n_envs=n_envs,
+        seed=args.seed,
+        render_first_env=not args.headless,
+    )
 
     policy_kwargs = dict(net_arch=[256, 256])
     if args.tensorboard:
