@@ -1202,6 +1202,14 @@ footer{
         <label for="curriculumLength">Startlängd</label>
         <input type="range" id="curriculumLength" min="1" max="200" step="1" value="3">
         <span class="mono" id="curriculumLengthReadout">3</span>
+        <label for="startPattern">Startmönster</label>
+        <select id="startPattern">
+          <option value="line" selected>I rad (standard)</option>
+          <option value="block">Kub (2×2)</option>
+          <option value="edge">Vid kanten</option>
+          <option value="spiral">Spiral inåt</option>
+          <option value="random">Slumpa varje gång</option>
+        </select>
       </div>
       <span class="hint">Ställer in startlängden; med curriculum aktiverat används längre startformer genom hela körningen.</span>
     </div>
@@ -2053,6 +2061,87 @@ class SnakeEnv{
     const maxForward=this.cols*this.rows;
     const length=Math.max(1,Math.min(safeDesired,maxForward));
     this.baseStartLength=length;
+    const requestedPattern=(options?.startPattern)||this._readPatternSelection();
+    const resolvedPattern=this._resolvePattern(requestedPattern);
+    const patternLayout=this._buildPatternLayout(resolvedPattern,length);
+    const oriented=this._orientSegments(patternLayout.segments,patternLayout.direction);
+    this.snake=oriented.segments;
+    const head=this.snake[0];
+    const neck=this.snake[1]||{x:head.x-1,y:head.y};
+    let dir={x:head.x-neck.x,y:head.y-neck.y};
+    if(dir.x===0&&dir.y===0){
+      const fallbackDir=oriented.direction||patternLayout.direction;
+      dir=fallbackDir?{x:fallbackDir.x,y:fallbackDir.y}:{x:1,y:0};
+    }
+    this.dir=dir;
+    this.snakeSet=new Set(this.snake.map(p=>`${p.x},${p.y}`));
+    this.visit=new Float32Array(this.cols*this.rows).fill(0);
+    this.actionHist=[];
+    this.placeFruit();
+    this.rewardBreakdown=this._makeRewardBreakdown();
+    this.steps=0;
+    this.stepsSinceFruit=0;
+    this.alive=true;
+    this.prevSlack=this.computeSlack();
+    this.lastSlackDelta=0;
+    const spaceRatio=this.freeSpaceFrom(head.x,head.y,true)/(this.cols*this.rows);
+    this.lastFreeSpaceRatio=Number.isFinite(spaceRatio)?spaceRatio:1;
+    this.headHistory=[];
+    this.headHistory.push(`${head.x},${head.y}`);
+    this.maxLength=this.snake.length;
+    this.startPattern=resolvedPattern;
+    this.startPatternLabel=this._patternLabel(resolvedPattern);
+    this.loopHits=0;
+    this.revisitAccum=0;
+    this.timeToFruitAccum=0;
+    this.timeToFruitCount=0;
+    this.episodeFruit=0;
+    this.lastCrash=null;
+    this.freedomHistory=[];
+    if(this.overlayEl){
+      this.overlayEl.remove();
+      this.overlayEl=null;
+    }
+    return this.getState();
+  }
+  _readPatternSelection(){
+    if(typeof document==='undefined') return 'line';
+    const select=document.getElementById('startPattern');
+    return select?.value||'line';
+  }
+  _resolvePattern(pattern){
+    const normalized=typeof pattern==='string'?pattern.toLowerCase():'line';
+    if(normalized==='random'){
+      const pool=['line','block','edge','spiral'];
+      return pool[(Math.random()*pool.length)|0];
+    }
+    return ['line','block','edge','spiral'].includes(normalized)?normalized:'line';
+  }
+  _patternLabel(pattern){
+    switch(pattern){
+      case 'block': return 'Kub (2×2)';
+      case 'edge': return 'Vid kanten';
+      case 'spiral': return 'Spiral inåt';
+      case 'line':
+      default:
+        return 'I rad (standard)';
+    }
+  }
+  _buildPatternLayout(pattern,length){
+    const fallback=()=>({segments:this._serpentineLayout(length),direction:null});
+    switch(pattern){
+      case 'block':
+        return this._blockLayout(length,fallback);
+      case 'edge':
+        return this._edgeLayout(length,fallback);
+      case 'spiral':
+        return this._spiralLayout(length,fallback);
+      case 'line':
+      default:
+        return {segments:this._serpentineLayout(length),direction:null};
+    }
+  }
+  _serpentineLayout(length){
     const layout=[];
     if(length<=this.cols){
       const cy=(this.rows/2|0);
@@ -2082,43 +2171,175 @@ class SnakeEnv{
       layout.push({x:0,y:0});
     }
     layout.reverse();
-    this.snake=layout;
-    const head=this.snake[0];
-    const neck=this.snake[1]||{x:head.x-1,y:head.y};
-    this.dir={x:head.x-neck.x,y:head.y-neck.y};
-    if(this.dir.x===0&&this.dir.y===0){
-      this.dir={x:1,y:0};
+    return layout.slice(0,length);
+  }
+  _extendTail(layout,length,preferredDirs=[]){
+    const dirs=[{x:1,y:0},{x:0,y:1},{x:-1,y:0},{x:0,y:-1}];
+    const used=new Set(layout.map(p=>`${p.x},${p.y}`));
+    let tail=layout[layout.length-1];
+    let lastDir=null;
+    if(layout.length>=2){
+      const beforeTail=layout[layout.length-2];
+      lastDir={x:tail.x-beforeTail.x,y:tail.y-beforeTail.y};
     }
-    this.snakeSet=new Set(this.snake.map(p=>`${p.x},${p.y}`));
-    this.visit=new Float32Array(this.cols*this.rows).fill(0);
-    this.actionHist=[];
-    this.spawnFruit();
-    this.rewardBreakdown=this._makeRewardBreakdown();
-    this.steps=0;
-    this.stepsSinceFruit=0;
-    this.alive=true;
-    this.prevSlack=this.computeSlack();
-    this.lastSlackDelta=0;
-    const spaceRatio=this.freeSpaceFrom(head.x,head.y,true)/(this.cols*this.rows);
-    this.lastFreeSpaceRatio=Number.isFinite(spaceRatio)?spaceRatio:1;
-    this.headHistory=[];
-    this.headHistory.push(`${head.x},${head.y}`);
-    this.maxLength=this.snake.length;
-    this.loopHits=0;
-    this.revisitAccum=0;
-    this.timeToFruitAccum=0;
-    this.timeToFruitCount=0;
-    this.episodeFruit=0;
-    this.lastCrash=null;
-    this.freedomHistory=[];
-    if(this.overlayEl){
-      this.overlayEl.remove();
-      this.overlayEl=null;
+    while(layout.length<length){
+      const candidates=[lastDir,...preferredDirs,...dirs].filter(Boolean);
+      let next=null;
+      for(const dir of candidates){
+        const cand={x:tail.x+dir.x,y:tail.y+dir.y};
+        if(cand.x<0||cand.y<0||cand.x>=this.cols||cand.y>=this.rows) continue;
+        const key=`${cand.x},${cand.y}`;
+        if(used.has(key)) continue;
+        next={...cand};
+        lastDir=dir;
+        break;
+      }
+      if(!next){
+        break;
+      }
+      layout.push(next);
+      used.add(`${next.x},${next.y}`);
+      tail=next;
     }
-    return this.getState();
+    return layout;
+  }
+  _blockLayout(length,fallback){
+    const cx=Math.max(0,Math.floor((this.cols-2)/2));
+    const cy=Math.max(0,Math.floor((this.rows-2)/2));
+    const base=[
+      {x:cx+1,y:cy},
+      {x:cx,y:cy},
+      {x:cx,y:cy+1},
+      {x:cx+1,y:cy+1},
+    ].filter(p=>p.x>=0&&p.y>=0&&p.x<this.cols&&p.y<this.rows);
+    if(!base.length){
+      return fallback();
+    }
+    let layout=base.slice(0,Math.min(length,base.length));
+    if(layout.length<length){
+      layout=this._extendTail(layout,length,[{x:1,y:0},{x:0,y:1},{x:-1,y:0},{x:0,y:-1}]);
+    }
+    if(layout.length<length){
+      return fallback();
+    }
+    return {segments:layout,direction:null};
+  }
+  _edgeLayout(length,fallback){
+    const edges=['top','bottom','left','right'];
+    const edge=edges[(Math.random()*edges.length)|0];
+    const layout=[];
+    if((edge==='top'||edge==='bottom')&&length>=this.cols){
+      return fallback();
+    }
+    if((edge==='left'||edge==='right')&&length>=this.rows){
+      return fallback();
+    }
+    if(edge==='top'){
+      const margin=Math.max(0,this.cols-length);
+      const start=Math.max(0,Math.floor(margin/2));
+      for(let i=0;i<length;i+=1){
+        layout.push({x:start+i,y:0});
+      }
+      layout.reverse();
+      return {segments:layout,direction:null};
+    }
+    if(edge==='bottom'){
+      const margin=Math.max(0,this.cols-length);
+      const start=Math.max(0,Math.floor(margin/2));
+      for(let i=0;i<length;i+=1){
+        layout.push({x:start+i,y:this.rows-1});
+      }
+      return {segments:layout,direction:null};
+    }
+    if(edge==='left'){
+      const margin=Math.max(0,this.rows-length);
+      const start=Math.max(0,Math.floor(margin/2));
+      for(let i=0;i<length;i+=1){
+        layout.push({x:0,y:start+i});
+      }
+      layout.reverse();
+      return {segments:layout,direction:null};
+    }
+    const margin=Math.max(0,this.rows-length);
+    const start=Math.max(0,Math.floor(margin/2));
+    for(let i=0;i<length;i+=1){
+      layout.push({x:this.cols-1,y:start+i});
+    }
+    return {segments:layout,direction:null};
+  }
+  _spiralLayout(length,fallback){
+    const layout=[];
+    let left=0,right=this.cols-1,top=0,bottom=this.rows-1;
+    while(layout.length<length&&left<=right&&top<=bottom){
+      for(let x=left;x<=right&&layout.length<length;x+=1){
+        layout.push({x,y:top});
+      }
+      top+=1;
+      for(let y=top;y<=bottom&&layout.length<length;y+=1){
+        layout.push({x:right,y});
+      }
+      right-=1;
+      if(top>bottom||left>right) break;
+      for(let x=right;x>=left&&layout.length<length;x-=1){
+        layout.push({x,y:bottom});
+      }
+      bottom-=1;
+      for(let y=bottom;y>=top&&layout.length<length;y-=1){
+        layout.push({x:left,y});
+      }
+      left+=1;
+    }
+    if(!layout.length){
+      return fallback();
+    }
+    const trimmed=layout.slice(0,length);
+    if(trimmed.length<length){
+      return fallback();
+    }
+    const segments=trimmed.slice().reverse();
+    return {segments,direction:null};
+  }
+  _orientSegments(segments,preferredDir=null){
+    const base=(segments||[]).map(p=>({x:p.x,y:p.y}));
+    if(!base.length){
+      return {segments:[{x:0,y:0}],direction:preferredDir};
+    }
+    const total=base.length;
+    const set=new Set(base.map(p=>`${p.x},${p.y}`));
+    const tryOffsets=(targetDir)=>{
+      for(let offset=0;offset<total;offset+=1){
+        const rotated=[...base.slice(offset),...base.slice(0,offset)];
+        if(rotated.length<2){
+          const dir=targetDir||preferredDir||{x:1,y:0};
+          return {segments:rotated,direction:dir};
+        }
+        const head=rotated[0];
+        const neck=rotated[1];
+        const dir={x:head.x-neck.x,y:head.y-neck.y};
+        if(dir.x===0&&dir.y===0) continue;
+        if(targetDir&&(dir.x!==targetDir.x||dir.y!==targetDir.y)) continue;
+        const next={x:head.x+dir.x,y:head.y+dir.y};
+        const tail=rotated[rotated.length-1];
+        const tailKey=`${tail.x},${tail.y}`;
+        const key=`${next.x},${next.y}`;
+        const inBounds=next.x>=0&&next.y>=0&&next.x<this.cols&&next.y<this.rows;
+        const occupied=set.has(key)&&key!==tailKey;
+        if(inBounds&&!occupied){
+          return {segments:rotated,direction:dir};
+        }
+      }
+      return null;
+    };
+    if(preferredDir){
+      const match=tryOffsets(preferredDir);
+      if(match) return match;
+    }
+    const any=tryOffsets(null);
+    if(any) return any;
+    return {segments:base,direction:preferredDir};
   }
   idx(x,y){return y*this.cols+x;}
-  spawnFruit(){
+  placeFruit(){
     const free=[];
     for(let y=0;y<this.rows;y++){
       for(let x=0;x<this.cols;x++){
@@ -2126,6 +2347,9 @@ class SnakeEnv{
       }
     }
     this.fruit=free.length?free[(Math.random()*free.length)|0]:{x:-1,y:-1};
+  }
+  spawnFruit(){
+    this.placeFruit();
   }
   turn(a){
     const d=this.dir;
@@ -2370,7 +2594,7 @@ class SnakeEnv{
       r+=R.fruitReward;
       breakdown.fruitReward+=R.fruitReward;
       this.snakeSet.add(`${nx},${ny}`);
-      this.spawnFruit();
+      this.placeFruit();
       this.timeToFruitAccum+=this.stepsSinceFruit;
       this.timeToFruitCount++;
       this.stepsSinceFruit=0;
@@ -3896,11 +4120,13 @@ function snapshotEnv(environment){
   return {
     snake:environment.snake.map(p=>({x:p.x,y:p.y})),
     fruit:environment.fruit?{x:environment.fruit.x,y:environment.fruit.y}:{x:-1,y:-1},
+    pattern:environment.startPatternLabel||null,
   };
 }
 const cloneState=state=>({
   snake:state.snake.map(p=>({x:p.x,y:p.y})),
   fruit:{x:state.fruit.x,y:state.fruit.y},
+  pattern:state.pattern||null,
 });
 const BG_COLOR='#101532';
 const GRID_COLOR='rgba(135,143,210,0.16)';
@@ -4023,6 +4249,7 @@ function drawFrame(from,to,t){
   });
   drawSnakeSegments(segments);
   drawOverlay(to);
+  drawPatternLabel(to);
 }
 function drawGrid(){
   bctx.save();
@@ -4145,6 +4372,17 @@ function drawOverlay(state){
     }
   }
   ctx.restore();
+}
+function drawPatternLabel(state){
+  const label=state?.pattern;
+  if(!label) return;
+  bctx.save();
+  bctx.font='600 16px "Inter", sans-serif';
+  bctx.fillStyle='rgba(226,232,255,0.85)';
+  bctx.textAlign='right';
+  bctx.textBaseline='top';
+  bctx.fillText(`Pattern: ${label}`,board.width-14,12);
+  bctx.restore();
 }
 function drawRoundedRect(x,y,w,h,r){
   const radius=Math.max(2,Math.min(r,Math.min(w,h)/2));
