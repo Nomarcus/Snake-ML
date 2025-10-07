@@ -19,14 +19,6 @@ python train_dqn.py # startar DQN-träning med realtidsrendering
 
 > Tips: Lägg till flaggan `--tensorboard` till träningsskripten för att aktivera TensorBoard-loggning under `./tb_snake/`.
 
-### Köra skripten via IDLE (Windows)
-
-1. Öppna **IDLE (Python)** och välj `File → Open...`, peka på exempelvis `train_dqn.py` inuti mappen `snakepython`.
-2. Kör först installationssteget en gång genom att öppna `install.sh` i en vanlig kommandotolk och köra `bash install.sh` (om du saknar Bash kan du istället skapa miljön manuellt med `py -m venv .venv` följt av `.\.venv\Scripts\activate` och `py -m pip install -r requirements.txt`).
-3. Tillbaka i IDLE: välj `Run → Run Module` (F5). När fönstret med ormen dyker upp är träningen igång. Om du vill dölja renderingen kan du sätta flaggan `--headless` högst upp i `if __name__ == "__main__":`-blocket eller köra skriptet från kommandoraden.
-
-> Notera: IDLE använder den Python-installation du startade programmet med. Se till att samma installation har tillgång till det virtuella envet `.venv` (via `Select Interpreter` eller genom att aktivera `.venv` innan du startar IDLE).
-
 ## Manuella installationssteg
 
 Föredrar du att göra allt manuellt kan du följa dessa steg:
@@ -108,7 +100,7 @@ Växla mellan "Browser Agent" och "Python Model (ONNX)" i Watch-läget och spara
 
 **Renderingen hackar när jag kör flera miljöer.** Endast miljö `index 0` renderas i realtid för att undvika att pygame-fönster krockar. Övriga miljöer körs i bakgrunden.
 
-**Kan jag köra utan rendering?** Ja, sätt miljön i silent mode via flaggan `--headless` på träningsskripten. Miljön kommer då inte att öppna något fönster.
+**Kan jag köra utan rendering?** Ja, sätt miljön i silent mode via flaggan `--no-render` på träningsskripten. Miljön kommer då inte att öppna något fönster.
 
 **Hur återupptar jag träning från en sparad modell?** Båda träningsskripten accepterar flaggan `--load <model_path>` för att återuppta träning.
 
