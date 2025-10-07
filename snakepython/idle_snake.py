@@ -395,6 +395,16 @@ class IdleSnakeEnv:
         ]
         self.fruit = self.random.choice(free_cells) if free_cells else self.snake[0]
 
+    def snapshot(self) -> Dict[str, object]:
+        """Return a shallow copy of the current game state for visualisering."""
+
+        return {
+            "snake": list(self.snake),
+            "fruit": self.fruit,
+            "direction_index": self.direction_index,
+            "pending_growth": self.pending_growth,
+        }
+
 
 # ---------------------------------------------------------------------------
 # Tkinter score tracking and rendering
@@ -602,6 +612,165 @@ class SnakeCanvas(tk.Canvas):
         return "step"
 
 
+class TrainingViewer:
+    """Lightweight Tkinter-visualisering av träningsmiljön."""
+
+    def __init__(
+        self,
+        *,
+        grid_size: int,
+        total_episodes: int,
+        steps_per_episode: int,
+        cell_size: int = CELL_SIZE,
+        delay_ms: int = STEP_DELAY,
+    ) -> None:
+        self.grid_size = grid_size
+        self.total_episodes = total_episodes
+        self.steps_per_episode = steps_per_episode
+        self.cell_size = cell_size
+        self.delay = max(delay_ms / 1000.0, 0.0)
+        self._last_draw = 0.0
+        self.closed = False
+
+        self.root = tk.Tk()
+        self.root.title("Snake-ML – Träningsvisualisering")
+        self.root.configure(bg="#101010")
+        self.root.resizable(False, False)
+        self.root.protocol("WM_DELETE_WINDOW", self.close)
+
+        self.status = tk.Label(
+            self.root,
+            text="Initierar träning…",
+            font=("Segoe UI", 12),
+            anchor="w",
+            padx=12,
+            pady=8,
+            bg="#101010",
+            fg="#f5f5f5",
+        )
+        self.status.pack(fill="x")
+
+        pixel_size = self.grid_size * self.cell_size
+        self.canvas = tk.Canvas(
+            self.root,
+            width=pixel_size,
+            height=pixel_size,
+            bg="#151515",
+            highlightthickness=0,
+        )
+        self.canvas.pack()
+
+        self._draw_background()
+        self.root.update_idletasks()
+        self.root.update()
+
+    def update(
+        self,
+        *,
+        snapshot: Dict[str, object],
+        episode: int,
+        step: int,
+        epsilon: float,
+        total_reward: float,
+        last_reward: float,
+        cause: str,
+        loss: float,
+    ) -> None:
+        if self.closed:
+            return
+        now = time.perf_counter()
+        if now - self._last_draw < self.delay:
+            self.root.update_idletasks()
+            self.root.update()
+            return
+        self._last_draw = now
+
+        snake = list(snapshot.get("snake", []))
+        fruit = snapshot.get("fruit")
+
+        self.canvas.delete("all")
+        self._draw_background()
+        self._draw_fruit(fruit)
+        self._draw_snake(snake)
+
+        status_text = (
+            f"Episod {episode}/{self.total_episodes} | Steg {step}/{self.steps_per_episode} | "
+            f"Reward {total_reward:6.1f} | Δ {last_reward:5.2f} | ε={epsilon:.3f} | "
+            f"Senaste: {self._format_cause(cause)} | Förlust {loss:7.4f}"
+        )
+        self.status.config(text=status_text)
+
+        self.root.update_idletasks()
+        self.root.update()
+
+    def episode_done(self) -> None:
+        if self.closed:
+            return
+        current = self.status.cget("text")
+        if "| Slut" not in current:
+            self.status.config(text=f"{current} | Slut på episod")
+        self.root.update_idletasks()
+        self.root.update()
+
+    def close(self) -> None:
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
+
+    def _draw_background(self) -> None:
+        pixel_size = self.grid_size * self.cell_size
+        for row in range(self.grid_size):
+            color = "#1f1f1f" if row % 2 == 0 else "#232323"
+            self.canvas.create_rectangle(
+                0,
+                row * self.cell_size,
+                pixel_size,
+                (row + 1) * self.cell_size,
+                fill=color,
+                width=0,
+            )
+
+    def _draw_snake(self, snake: List[Point]) -> None:
+        for index, (x, y) in enumerate(snake):
+            color = "#8bc34a" if index == 0 else "#4caf50"
+            self.canvas.create_rectangle(
+                x * self.cell_size,
+                y * self.cell_size,
+                (x + 1) * self.cell_size,
+                (y + 1) * self.cell_size,
+                fill=color,
+                outline="#1b5e20",
+                width=1,
+            )
+
+    def _draw_fruit(self, fruit: Optional[Point]) -> None:
+        if fruit is None:
+            return
+        x, y = fruit
+        self.canvas.create_oval(
+            x * self.cell_size + 4,
+            y * self.cell_size + 4,
+            (x + 1) * self.cell_size - 4,
+            (y + 1) * self.cell_size - 4,
+            fill="#ff9800",
+            outline="#ef6c00",
+            width=1,
+        )
+
+    def _format_cause(self, cause: str) -> str:
+        translations = {
+            "fruit": "frukt",
+            "wall": "vägg",
+            "self": "kollision",
+            "step": "steg",
+        }
+        return translations.get(cause, cause)
+
+
 # ---------------------------------------------------------------------------
 # Training / evaluation CLI
 # ---------------------------------------------------------------------------
@@ -614,6 +783,7 @@ def train_double_dqn(
     seed: Optional[int] = None,
     load_path: Optional[Path | str] = None,
     save_path: Optional[Path | str] = None,
+    visualize: bool = False,
 ) -> DoubleDQNAgent:
     env = IdleSnakeEnv(seed=seed)
     if load_path is not None:
@@ -625,6 +795,20 @@ def train_double_dqn(
 
     rewards: List[float] = []
     start_time = time.time()
+    viewer: Optional[TrainingViewer] = None
+    if visualize:
+        try:
+            viewer = TrainingViewer(
+                grid_size=env.grid_size,
+                total_episodes=episodes,
+                steps_per_episode=steps_per_episode,
+            )
+        except tk.TclError as exc:
+            print(
+                "Det gick inte att starta träningsvisualiseringen (Tkinter). Fortsätter utan grafiskt läge.",
+                file=sys.stderr,
+            )
+            viewer = None
 
     for episode in range(1, episodes + 1):
         state = env.reset()
@@ -632,7 +816,7 @@ def train_double_dqn(
         losses: List[float] = []
         for step in range(steps_per_episode):
             action = agent.select_action(state)
-            next_state, reward, done, _ = env.step(action)
+            next_state, reward, done, info = env.step(action)
             agent.push(Transition(state, action, reward, next_state, done))
             loss = agent.learn()
             if loss is not None:
@@ -640,6 +824,21 @@ def train_double_dqn(
             agent.decay_epsilon()
             state = next_state
             total_reward += reward
+            if viewer is not None:
+                try:
+                    viewer.update(
+                        snapshot=env.snapshot(),
+                        episode=episode,
+                        step=step + 1,
+                        epsilon=agent.epsilon,
+                        total_reward=total_reward,
+                        last_reward=reward,
+                        cause=info.get("cause", "step"),
+                        loss=losses[-1] if losses else 0.0,
+                    )
+                except tk.TclError:
+                    print("Träningsfönstret stängdes – fortsätter träningen utan visualisering.")
+                    viewer = None
             if done:
                 break
         rewards.append(total_reward)
@@ -652,10 +851,18 @@ def train_double_dqn(
                 f"Senaste episod: {total_reward:6.2f} | Förlust: {mean_loss:8.4f} | "
                 f"ε={agent.epsilon:.3f} | Tid: {duration:5.1f}s"
             )
+        if viewer is not None:
+            try:
+                viewer.episode_done()
+            except tk.TclError:
+                print("Träningsfönstret stängdes – fortsätter träningen utan visualisering.")
+                viewer = None
 
     if save_path is not None:
         path = agent.save(save_path)
         print(f"Sparade modellen till {path}.")
+    if viewer is not None:
+        viewer.close()
     return agent
 
 
@@ -710,6 +917,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument("--evaluate", type=int, metavar="EP", help="Kör utvärdering med angivet antal episoder", default=0)
     parser.add_argument("--play", action="store_true", help="Starta Tkinter-spelet")
     parser.add_argument("--autopilot", action="store_true", help="Aktivera autopilot när spelet startas")
+    parser.add_argument(
+        "--visualize-training",
+        action="store_true",
+        help="Visa träningsmiljön live i ett Tkinter-fönster",
+    )
     return parser.parse_args(argv)
 
 
@@ -724,6 +936,7 @@ def main(argv: Optional[List[str]] = None) -> None:
             seed=args.seed,
             load_path=args.load_model,
             save_path=args.save_model,
+            visualize=args.visualize_training,
         )
     elif args.load_model:
         agent = DoubleDQNAgent.load(args.load_model)
