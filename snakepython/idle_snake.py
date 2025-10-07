@@ -678,8 +678,6 @@ class IdleSnakeEnv:
             "fruit": self.fruit,
             "direction_index": self.direction_index,
             "pending_growth": self.pending_growth,
-            "reward_breakdown": dict(self.reward_breakdown),
-            "total_reward": self.total_reward,
         }
 
 
