@@ -27,6 +27,31 @@ en enkel `tkinter`-ruta, styrs med piltangenterna och håller reda på poäng,
 insamlade frukter och antal steg. Tryck `Space` för att starta om och `Escape`
 för att stänga fönstret.
 
+### Träna Double DQN direkt från IDLE
+
+`idle_snake.py` innehåller nu en hel Double DQN-implementation skriven i ren
+Python/NumPy. Du kan träna, spara och spela upp agenten utan att lämna IDLE:
+
+```bash
+python idle_snake.py --train 1000 --steps 600 --save-model idle_dqn.npz
+```
+
+* `--train` anger hur många episoder som ska köras.
+* `--steps` sätter maxsteg per episod.
+* `--save-model` sparar vikterna i ett `.npz`-paket.
+* `--load-model` kan användas för att återuppta träning eller spela med en
+  tidigare tränad agent.
+
+Vill du titta på agenten efter träning kan du starta spelet med autopilotläget
+påslaget:
+
+```bash
+python idle_snake.py --load-model idle_dqn.npz --play --autopilot
+```
+
+Terminalen skriver ut träningsstatistik var tionde episod och autopilot kan
+slås av/på i spelet genom att trycka på `A`.
+
 ## Manuella installationssteg
 
 Föredrar du att göra allt manuellt kan du följa dessa steg:
