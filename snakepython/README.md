@@ -19,6 +19,14 @@ python train_dqn.py # startar DQN-träning med realtidsrendering
 
 > Tips: Lägg till flaggan `--tensorboard` till träningsskripten för att aktivera TensorBoard-loggning under `./tb_snake/`.
 
+## Spela direkt i IDLE (utan extra installationer)
+
+Vill du bara spela ett klassiskt Snake utan att installera något? Öppna filen
+`snakepython/idle_snake.py` i IDLE och kör `Run > Run Module`. Spelet använder
+en enkel `tkinter`-ruta, styrs med piltangenterna och håller reda på poäng,
+insamlade frukter och antal steg. Tryck `Space` för att starta om och `Escape`
+för att stänga fönstret.
+
 ## Manuella installationssteg
 
 Föredrar du att göra allt manuellt kan du följa dessa steg:
