@@ -17,8 +17,8 @@ from typing import List
 import numpy as np
 from stable_baselines3 import DQN
 from stable_baselines3.common.callbacks import BaseCallback
-from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv
+from stable_baselines3.common.vec_env.util import make_vec_env
 
 from snake_env import SnakeEnv
 
