@@ -1,0 +1,115 @@
+# Snake-ML Python-port
+
+Det här projektet är en Python-port av Marcus Peterssons Snake-ML med stöd för Gymnasium, Stable-Baselines3, PyTorch och ONNX-export. Repositoriet återskapar hela logiken från webbläsarversionen och gör det möjligt att träna ormen i realtid via `pygame`, köra flera miljöer parallellt och exportera modeller till Snake-ML:s "Watch"-läge.
+
+## Förutsättningar
+
+* Python 3.10+ (3.11 rekommenderas)
+* `pip` och `virtualenv`/`venv`
+* Systempaket för att kunna kompilera PyTorch och använda `pygame` (exempelvis `sudo apt-get install python3-dev python3-venv build-essential libSDL2-dev` på Debian/Ubuntu)
+
+## Snabbstart
+
+```bash
+cd snakepython
+./install.sh        # skapar virtuell miljö .venv/ och installerar dependencies
+source .venv/bin/activate
+python train_dqn.py # startar DQN-träning med realtidsrendering
+```
+
+> Tips: Lägg till flaggan `--tensorboard` till träningsskripten för att aktivera TensorBoard-loggning under `./tb_snake/`.
+
+### Köra skripten via IDLE (Windows)
+
+1. Öppna **IDLE (Python)** och välj `File → Open...`, peka på exempelvis `train_dqn.py` inuti mappen `snakepython`.
+2. Kör först installationssteget en gång genom att öppna `install.sh` i en vanlig kommandotolk och köra `bash install.sh` (om du saknar Bash kan du istället skapa miljön manuellt med `py -m venv .venv` följt av `.\.venv\Scripts\activate` och `py -m pip install -r requirements.txt`).
+3. Tillbaka i IDLE: välj `Run → Run Module` (F5). När fönstret med ormen dyker upp är träningen igång. Om du vill dölja renderingen kan du sätta flaggan `--headless` högst upp i `if __name__ == "__main__":`-blocket eller köra skriptet från kommandoraden.
+
+> Notera: IDLE använder den Python-installation du startade programmet med. Se till att samma installation har tillgång till det virtuella envet `.venv` (via `Select Interpreter` eller genom att aktivera `.venv` innan du startar IDLE).
+
+## Manuella installationssteg
+
+Föredrar du att göra allt manuellt kan du följa dessa steg:
+
+```bash
+cd snakepython
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+## Träna modeller
+
+| Script | Beskrivning | Standardparametrar |
+| ------ | ----------- | ------------------ |
+| `train_dqn.py` | Tränar en DQN-agent med åtta parallella miljöer. Renderar miljö 0 i realtid. | 500 000 steg, `CnnPolicy`, `tensorboard_log="./tb_snake/"` när flaggan används. |
+| `train_ppo.py` | Tränar en PPO-agent med samma miljö och motsvarande loggning. | `learning_rate=3e-4`, `gamma=0.975`, `n_steps=2048`, m.fl. |
+
+Samtliga skript tar emot följande vanliga flaggor:
+
+* `--timesteps <int>` – antal träningssteg (standard 500_000).
+* `--grid-size <int>` – rutnätsstorlek (10–20 rekommenderas).
+* `--tensorboard` – aktivera TensorBoard-loggar.
+* `--seed <int>` – sätt slumpfrö.
+
+### Multi-run launcher
+
+För att starta flera oberoende träningssessioner (t.ex. på olika seeds) kan du använda `utils/run_multi_train.py`:
+
+```bash
+python utils/run_multi_train.py --runs 4 --algo dqn --timesteps 200000
+```
+
+Detta skapar fyra processer som var och en sparar modeller i `models/<algo>_snake_runX.zip` och loggar till `tb_snake/runX/`.
+
+## Utvärdera en modell
+
+När träningen är klar kan du spela upp agenten i tio episoder:
+
+```bash
+python evaluate.py --model models/dqn_snake_<timestamp>.zip
+```
+
+Fönstret visar ormen live och terminalen skriver `Episode N | Reward: X | Fruits: Y | Steps: Z`.
+
+## Export till ONNX och JSON
+
+```bash
+python export_model.py --model models/dqn_snake_<timestamp>.zip
+```
+
+Skriptet skapar:
+
+* `export/snake_agent.onnx` – ONNX-modellen (inputformat `[1, 3, grid_size, grid_size]`).
+* `export/snake_agent.json` – meta- och viktinformation som kan laddas i Snake-ML:s webbläsargränssnitt.
+
+## Integration med Snake-ML-webben
+
+Lägg till följande i webbkoden:
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+<button id="loadPythonModelBtn">🧠 Load Trained Model (Python)</button>
+```
+
+När knappen klickas:
+
+```javascript
+const session = await ort.InferenceSession.create('export/snake_agent.onnx');
+const input = new ort.Tensor('float32', gridData, [1, 3, gridSize, gridSize]);
+const output = await session.run({ input });
+const action = output.action.data[0];
+```
+
+Växla mellan "Browser Agent" och "Python Model (ONNX)" i Watch-läget och spara valet i `localStorage`.
+
+## Vanliga frågor
+
+**Renderingen hackar när jag kör flera miljöer.** Endast miljö `index 0` renderas i realtid för att undvika att pygame-fönster krockar. Övriga miljöer körs i bakgrunden.
+
+**Kan jag köra utan rendering?** Ja, sätt miljön i silent mode via flaggan `--headless` på träningsskripten. Miljön kommer då inte att öppna något fönster.
+
+**Hur återupptar jag träning från en sparad modell?** Båda träningsskripten accepterar flaggan `--load <model_path>` för att återuppta träning.
+
+Lycka till med träningen!
