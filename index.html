@@ -21,7 +21,7 @@
 body{
   margin:0;
   min-height:100vh;
-  background:linear-gradient(160deg,#08091f 0%,#0c1333 45%,#130f35 100%);
+  background:#030915;
   color:var(--ink);
   font:14px/1.5 "Inter","Segoe UI",Roboto,sans-serif;
   position:relative;
@@ -33,11 +33,11 @@ body::before{
   inset:0;
   z-index:-1;
   background:
-    radial-gradient(115% 85% at 18% 18%,rgba(59,130,246,0.38) 0%,rgba(59,130,246,0) 68%),
-    radial-gradient(90% 95% at 82% 18%,rgba(168,85,247,0.36) 0%,rgba(88,28,135,0) 72%),
-    radial-gradient(110% 120% at 52% 110%,rgba(236,72,153,0.28) 0%,rgba(24,10,48,0) 70%),
-    linear-gradient(150deg,#0b1027 0%,#0f1338 40%,#1a0f3f 100%);
-  filter:saturate(1.15);
+    radial-gradient(120% 80% at 15% 15%,rgba(59,130,246,0.35) 0%,rgba(59,130,246,0) 65%),
+    radial-gradient(90% 90% at 85% 20%,rgba(34,197,94,0.25) 0%,rgba(13,148,136,0) 70%),
+    radial-gradient(120% 120% at 50% 110%,rgba(147,51,234,0.25) 0%,rgba(15,23,42,0) 70%),
+    linear-gradient(135deg,#07121c 0%,#0a1f24 38%,#0f2c1c 100%);
+  filter:saturate(1.2);
   pointer-events:none;
 }
 header{
@@ -164,9 +164,9 @@ h2{
   width:100%;
   aspect-ratio:1/1;
   border-radius:26px;
-  background:linear-gradient(140deg,#1a1f5d 0%,#241a78 50%,#371463 100%);
-  border:1px solid rgba(129,140,248,0.28);
-  box-shadow:0 48px 110px rgba(17,12,60,0.75);
+  background:radial-gradient(150% 140% at 28% 18%,#0d2a2a 0%,#071621 52%,#040b15 100%);
+  border:1px solid rgba(34,197,94,0.18);
+  box-shadow:0 40px 90px rgba(4,12,24,0.6);
   position:relative;
   overflow:hidden;
 }
@@ -4167,67 +4167,14 @@ const cloneState=state=>({
   fruit:{x:state.fruit.x,y:state.fruit.y},
   pattern:state.pattern||null,
 });
-const GRID_COLOR='rgba(23,30,83,0.55)';
-const GRID_BORDER_COLOR='rgba(255,255,255,0.14)';
-const BOARD_GRADIENT_STOPS=[
-  {stop:0,color:hexToRgb('#202a8f')},
-  {stop:0.45,color:hexToRgb('#4338ca')},
-  {stop:1,color:hexToRgb('#7c3aed')},
-];
-const SNAKE_GRADIENT_STOPS=[
-  {stop:0,color:hexToRgb('#fb923c')},
-  {stop:0.45,color:hexToRgb('#f43f5e')},
-  {stop:1,color:hexToRgb('#8b5cf6')},
-];
-
-function hexToRgb(hex){
-  const normalized=hex.replace('#','');
-  const bigint=parseInt(normalized.length===3
-    ? normalized.split('').map(ch=>ch+ch).join('')
-    : normalized,16);
-  return {
-    r:(bigint>>16)&255,
-    g:(bigint>>8)&255,
-    b:bigint&255,
-  };
-}
-
-function mixRgb(a,b,t){
-  const factor=clamp(Number.isNaN(t)?0:t,0,1);
-  return {
-    r:a.r+(b.r-a.r)*factor,
-    g:a.g+(b.g-a.g)*factor,
-    b:a.b+(b.b-a.b)*factor,
-  };
-}
-
-function rgbToString({r,g,b},alpha=1){
-  return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${alpha})`;
-}
-
-function lightenColor(rgb,amount){
-  return mixRgb(rgb,{r:255,g:255,b:255},amount);
-}
-
-function darkenColor(rgb,amount){
-  return mixRgb(rgb,{r:0,g:0,b:0},amount);
-}
-
-function gradientColor(stops,t){
-  if(!Array.isArray(stops)||!stops.length) return {r:255,g:255,b:255};
-  const target=clamp(Number.isNaN(t)?0:t,0,1);
-  let previous=stops[0];
-  for(let i=1;i<stops.length;i++){
-    const current=stops[i];
-    if(target<=current.stop){
-      const span=current.stop-previous.stop||1;
-      const local=(target-previous.stop)/span;
-      return mixRgb(previous.color,current.color,local);
-    }
-    previous=current;
-  }
-  return stops[stops.length-1].color;
-}
+const BG_COLOR='#04101a';
+const GRID_COLOR='rgba(148,255,223,0.12)';
+const HEAD_GRADIENT=['#34d399','#047857'];
+const BODY_GRADIENT=['#22c55e','#065f46'];
+const HEAD_GLOW='rgba(52,211,153,0.55)';
+const BODY_GLOW='rgba(16,185,129,0.45)';
+const HEAD_STROKE='rgba(134,239,172,0.9)';
+const BODY_STROKE='rgba(21,128,61,0.65)';
 let lastDrawnState=snapshotEnv(env);
 let renderQueue=[];
 let currentAnim=null;
@@ -4383,8 +4330,7 @@ function drawGrid(){
       const py=y*CELL;
       const xp=COLS>1?x/(COLS-1):0;
       const yp=ROWS>1?y/(ROWS-1):0;
-      const blendRatio=xp*0.8+yp*0.2;
-      const blend=clamp(Number.isNaN(blendRatio)?0:blendRatio,0,1);
+      const blend=clamp01(xp*0.8+yp*0.2);
       const base=gradientColor(BOARD_GRADIENT_STOPS,blend);
       const liftAmount=0.2-yp*0.08;
       const cellTone=lightenColor(base,0.18+Math.max(0,liftAmount));
@@ -4425,10 +4371,8 @@ function computeSegmentPalette(index,total){
   const count=total<=0?1:total;
   const ratio=count>1?index/(count-1):0;
   const eased=Math.pow(ratio,0.78);
-  const rawGrowth=(count-2)/28;
-  const growthFactor=clamp(Number.isNaN(rawGrowth)?0:rawGrowth,0,1);
-  const rawProgress=eased*(0.7+growthFactor*0.25)+growthFactor*0.1;
-  const paletteProgress=clamp(Number.isNaN(rawProgress)?0:rawProgress,0,1);
+  const growthFactor=clamp01((count-2)/28);
+  const paletteProgress=clamp01(eased*(0.7+growthFactor*0.25)+growthFactor*0.1);
   const base=gradientColor(SNAKE_GRADIENT_STOPS,paletteProgress);
   const headBoost=index===0?0.12:0;
   const top=lightenColor(base,0.26+headBoost);
@@ -4473,39 +4417,36 @@ function drawSnakeSegments(segments){
   bctx.lineJoin='round';
   const head=segments[0];
   const neck=segments[1]||head;
-  const total=segments.length;
   segments.forEach((seg,i)=>{
     const isHead=i===0;
-    const palette=computeSegmentPalette(i,total);
-    const size=isHead?CELL*0.86:CELL*0.76;
+    const colors=isHead?HEAD_GRADIENT:BODY_GRADIENT;
+    const glow=isHead?HEAD_GLOW:BODY_GLOW;
+    const size=isHead?CELL*0.84:CELL*0.74;
     const offset=(CELL-size)/2;
-    const radius=Math.min(size*0.5,14);
+    const radius=Math.min(size*0.48,14);
     const x=seg.x*CELL+offset;
     const y=seg.y*CELL+offset;
     const gradient=bctx.createLinearGradient(x,y,x,y+size);
-    gradient.addColorStop(0,rgbToString(palette.top));
-    gradient.addColorStop(1,rgbToString(palette.bottom));
-    bctx.shadowBlur=isHead?32:20;
-    bctx.shadowColor=rgbToString(palette.glow,isHead?0.7:0.5);
+    gradient.addColorStop(0,colors[0]);
+    gradient.addColorStop(1,colors[1]);
+    bctx.shadowBlur=isHead?26:14;
+    bctx.shadowColor=glow;
     bctx.fillStyle=gradient;
     fillRoundedRect(x,y,size,size,radius);
     bctx.shadowBlur=0;
-
-    const sheen=bctx.createRadialGradient(x+size*0.68,y+size*0.32,0,x+size*0.68,y+size*0.32,size*1.05);
-    sheen.addColorStop(0,'rgba(255,255,255,0.25)');
-    sheen.addColorStop(0.5,'rgba(255,255,255,0.08)');
+    const sheen=bctx.createRadialGradient(x+size*0.6,y+size*0.35,0,x+size*0.6,y+size*0.35,size*0.95);
+    sheen.addColorStop(0,'rgba(255,255,255,0.22)');
+    sheen.addColorStop(0.55,'rgba(255,255,255,0.08)');
     sheen.addColorStop(1,'rgba(255,255,255,0)');
     bctx.fillStyle=sheen;
     fillRoundedRect(x,y,size,size,radius);
-
-    const belly=bctx.createLinearGradient(x,y+size*0.35,x,y+size);
+    const belly=bctx.createLinearGradient(x,y+size*0.25,x,y+size);
     belly.addColorStop(0,'rgba(255,255,255,0)');
-    belly.addColorStop(1,rgbToString(lightenColor(palette.bottom,0.32),0.32));
+    belly.addColorStop(1,'rgba(203,255,198,0.28)');
     bctx.fillStyle=belly;
     fillRoundedRect(x,y,size,size,radius);
-
-    bctx.lineWidth=isHead?2.3:1.6;
-    bctx.strokeStyle=rgbToString(palette.stroke,isHead?0.95:0.85);
+    bctx.lineWidth=isHead?2.2:1.4;
+    bctx.strokeStyle=isHead?HEAD_STROKE:BODY_STROKE;
     strokeRoundedRect(x,y,size,size,radius);
   });
   drawSnakeHeadDetails(head,neck);
