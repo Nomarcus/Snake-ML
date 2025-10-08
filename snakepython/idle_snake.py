@@ -54,6 +54,8 @@ class RewardConfig:
     compact_bonus: float = 0.25
     trap_penalty: float = 1.2
     space_gain_bonus: float = 0.05
+    tail_follow_bonus: float = 0.1
+    tail_follow_threshold: float = 0.15
 
 
 REWARD_BREAKDOWN_KEYS: Tuple[str, ...] = (
@@ -67,6 +69,7 @@ REWARD_BREAKDOWN_KEYS: Tuple[str, ...] = (
     "deadEndPenalty",
     "trapPenalty",
     "spaceGainBonus",
+    "tailFollowBonus",
     "fruitReward",
     "growthBonus",
     "compactness",
@@ -489,6 +492,13 @@ class IdleSnakeEnv:
         dx, dy = chosen_direction
         new_head = (head_x + dx, head_y + dy)
 
+        tail_before = self.snake[-1] if self.snake else None
+        tail_distance_before = (
+            abs(head_x - tail_before[0]) + abs(head_y - tail_before[1])
+            if tail_before is not None
+            else None
+        )
+
         fx, fy = self.fruit
         prev_distance = abs(head_x - fx) + abs(head_y - fy)
         will_grow = new_head == self.fruit or self.pending_growth > 0
@@ -514,6 +524,14 @@ class IdleSnakeEnv:
             self.snake.insert(0, new_head)
             self.snake_set.add(new_head)
             ate_fruit = new_head == self.fruit
+            tail_distance_after = (
+                abs(new_head[0] - tail_before[0]) + abs(new_head[1] - tail_before[1])
+                if tail_before is not None
+                else None
+            )
+
+            tail_moved = False
+
             if ate_fruit:
                 self.pending_growth += 1
                 self.fruits_eaten += 1
@@ -529,6 +547,7 @@ class IdleSnakeEnv:
                 else:
                     tail = self.snake.pop()
                     self.snake_set.discard(tail)
+                    tail_moved = True
 
             nx, ny = new_head
             revisit_penalty = self.visit_map[ny][nx] * self.reward_config.revisit_penalty
@@ -581,6 +600,23 @@ class IdleSnakeEnv:
                 self.freedom_history.popleft()
             avg_freedom = sum(self.freedom_history) / len(self.freedom_history)
             trend = freedom_ratio - (self.freedom_history[0] if self.freedom_history else freedom_ratio)
+
+            if (
+                tail_before is not None
+                and tail_distance_before is not None
+                and tail_distance_after is not None
+                and self.reward_config.tail_follow_bonus > 0.0
+                and not ate_fruit
+                and tail_moved
+            ):
+                improvement = tail_distance_before - tail_distance_after
+                if improvement > 0:
+                    threshold = max(1e-6, self.reward_config.tail_follow_threshold)
+                    pressure = max(0.0, min(1.0, (threshold - freedom_ratio) / threshold))
+                    if pressure > 0.0:
+                        bonus = self.reward_config.tail_follow_bonus * improvement * pressure
+                        reward += bonus
+                        step_breakdown["tailFollowBonus"] += bonus
 
             if trend < -0.05 and avg_freedom < 0.15:
                 long_term_penalty = -self.reward_config.trap_penalty * abs(trend) * 4.0

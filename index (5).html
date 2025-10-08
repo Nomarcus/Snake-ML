@@ -1435,6 +1435,18 @@ footer{
             <span class="mono" id="rewardDeadEndReadout">0.50</span>
           </label>
         </div>
+        <div class="row">
+          <label>Tail follow bonus
+            <span class="hint">Rewards hugging the tail when free space is running low.</span>
+            <input type="range" id="rewardTailFollow" min="0" max="1" step="0.01" value="0.10">
+            <span class="mono" id="rewardTailFollowReadout">0.10</span>
+          </label>
+          <label>Tail space threshold
+            <span class="hint">Tail bonus activates when the free-space ratio drops below this level.</span>
+            <input type="range" id="rewardTailThreshold" min="0" max="0.5" step="0.005" value="0.15">
+            <span class="mono" id="rewardTailThresholdReadout">0.150</span>
+          </label>
+        </div>
       </div>
       <div class="stack">
         <h3>High-impact rewards</h3>
@@ -1846,6 +1858,8 @@ const REWARD_DEFAULTS={
   compactBonus:0.25,
   trapPenalty:1.2,
   spaceGainBonus:0.05,
+  tailFollowBonus:0.1,
+  tailFollowThreshold:0.15,
   bfsWeight:0.2,
   hamiltonWeight:0.05,
   usePathHelpers:true,
@@ -1856,6 +1870,7 @@ const REWARD_COMPONENTS=[
   {key:'growthBonus',label:'Growth bonus',sign:'positive'},
   {key:'approachBonus',label:'Toward fruit bonus',sign:'positive'},
   {key:'spaceGainBonus',label:'Open space bonus',sign:'positive'},
+  {key:'tailFollowBonus',label:'Tail follow bonus',sign:'positive'},
   {key:'bfsHelper',label:'BFS helper bonus',sign:'positive'},
   {key:'hamiltonHelper',label:'Hamilton helper bonus',sign:'positive'},
   {key:'compactness',label:'Compactness bonus',sign:'neutral'},
@@ -1883,6 +1898,7 @@ const REWARD_LABELS={
   deadEndPenalty:'Dead-end penalty',
   trapPenalty:'Trap penalty',
   spaceGainBonus:'Space bonus',
+  tailFollowBonus:'Tail follow bonus',
   wallPenalty:'Wall crash penalty',
   selfPenalty:'Self crash penalty',
   timeoutPenalty:'Timeout penalty',
@@ -1907,6 +1923,8 @@ const REWARD_INPUT_IDS={
   deadEndPenalty:'rewardDeadEnd',
   trapPenalty:'rewardTrap',
   spaceGainBonus:'rewardSpace',
+  tailFollowBonus:'rewardTailFollow',
+  tailFollowThreshold:'rewardTailThreshold',
   wallPenalty:'rewardWall',
   selfPenalty:'rewardSelf',
   timeoutPenalty:'rewardTimeout',
@@ -2193,6 +2211,10 @@ class SnakeEnv{
     const hitsWall=nx<0||ny<0||nx>=this.cols||ny>=this.rows;
     const bodyToCheck=willGrow?this.snake:this.snake.slice(0,-1);
     const hitsBody=bodyToCheck.some(seg=>seg.x===nx && seg.y===ny);
+    const tailBefore=this.snake.length?this.snake[this.snake.length-1]:null;
+    const tailDistanceBefore=tailBefore?Math.abs(head.x-tailBefore.x)+Math.abs(head.y-tailBefore.y):null;
+    let tailDistanceAfter=tailBefore?Math.abs(nx-tailBefore.x)+Math.abs(ny-tailBefore.y):null;
+    let tailChasing=false;
     if(hitsWall||hitsBody){
       this.alive=false;
       const crashReward=hitsWall?-R.wallPenalty:-R.selfPenalty;
@@ -2388,6 +2410,21 @@ class SnakeEnv{
       }else if(nd>pd){
         r-=R.retreatPenalty;
         breakdown.retreatPenalty-=R.retreatPenalty;
+      }
+      tailChasing=true;
+    }
+    if(tailChasing && tailDistanceBefore!==null && tailDistanceAfter!==null && (R.tailFollowBonus??0)!==0){
+      const improvement=tailDistanceBefore-tailDistanceAfter;
+      if(improvement>0){
+        const threshold=Math.max(1e-6,R.tailFollowThreshold??0.15);
+        const pressure=Math.max(0,Math.min(1,(threshold-freedomRatio)/threshold));
+        if(pressure>0){
+          const bonus=R.tailFollowBonus*improvement*pressure;
+          if(bonus!==0){
+            r+=bonus;
+            breakdown.tailFollowBonus=(breakdown.tailFollowBonus??0)+bonus;
+          }
+        }
       }
     }
     if(R.usePathHelpers){
@@ -4644,6 +4681,10 @@ const ui={
   rewardSpaceReadout:document.getElementById('rewardSpaceReadout'),
   rewardDeadEnd:document.getElementById('rewardDeadEnd'),
   rewardDeadEndReadout:document.getElementById('rewardDeadEndReadout'),
+  rewardTailFollow:document.getElementById('rewardTailFollow'),
+  rewardTailFollowReadout:document.getElementById('rewardTailFollowReadout'),
+  rewardTailThreshold:document.getElementById('rewardTailThreshold'),
+  rewardTailThresholdReadout:document.getElementById('rewardTailThresholdReadout'),
   rewardFruit:document.getElementById('rewardFruit'),
   rewardFruitReadout:document.getElementById('rewardFruitReadout'),
   rewardGrowth:document.getElementById('rewardGrowth'),
@@ -5718,7 +5759,7 @@ function bindUI(){
     updateReadouts();
     applyEnvCountFromUI();
   });
-  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardTightLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardDeadEnd','rewardFruit','rewardGrowth','rewardCompact'];
+  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardTightLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardDeadEnd','rewardTailFollow','rewardTailThreshold','rewardFruit','rewardGrowth','rewardCompact'];
   const updateRewards=()=>{ updateRewardReadouts(); applyRewardsToEnv(); };
   rewardIds.forEach(id=>ui[id]?.addEventListener('input',updateRewards));
   ui.curriculumToggle?.addEventListener('change',()=>{
@@ -6112,6 +6153,8 @@ function updateRewardReadouts(){
   ui.rewardTrapReadout.textContent=(+ui.rewardTrap.value).toFixed(2);
   ui.rewardSpaceReadout.textContent=(+ui.rewardSpace.value).toFixed(2);
   ui.rewardDeadEndReadout.textContent=(+ui.rewardDeadEnd.value).toFixed(2);
+  if(ui.rewardTailFollow) ui.rewardTailFollowReadout.textContent=(+ui.rewardTailFollow.value).toFixed(2);
+  if(ui.rewardTailThreshold) ui.rewardTailThresholdReadout.textContent=(+ui.rewardTailThreshold.value).toFixed(3);
   ui.rewardFruitReadout.textContent=(+ui.rewardFruit.value).toFixed(1);
   ui.rewardGrowthReadout.textContent=(+ui.rewardGrowth.value).toFixed(1);
   ui.rewardCompactReadout.textContent=(+ui.rewardCompact.value).toFixed(3);
@@ -6143,6 +6186,8 @@ function getRewardConfigFromUI(){
     trapPenalty:+ui.rewardTrap.value,
     spaceGainBonus:+ui.rewardSpace.value,
     deadEndPenalty:+ui.rewardDeadEnd.value,
+    tailFollowBonus:+ui.rewardTailFollow.value,
+    tailFollowThreshold:+ui.rewardTailThreshold.value,
     fruitReward:+ui.rewardFruit.value,
     growthBonus:+ui.rewardGrowth.value,
     compactWeight:+ui.rewardCompact.value,
@@ -6176,6 +6221,8 @@ function applyRewardConfigToUI(config={}){
   if(config.trapPenalty!==undefined) ui.rewardTrap.value=config.trapPenalty;
   if(config.spaceGainBonus!==undefined) ui.rewardSpace.value=config.spaceGainBonus;
   if(config.deadEndPenalty!==undefined) ui.rewardDeadEnd.value=config.deadEndPenalty;
+  if(config.tailFollowBonus!==undefined) ui.rewardTailFollow.value=config.tailFollowBonus;
+  if(config.tailFollowThreshold!==undefined) ui.rewardTailThreshold.value=config.tailFollowThreshold;
   if(config.fruitReward!==undefined) ui.rewardFruit.value=config.fruitReward;
   if(config.growthBonus!==undefined) ui.rewardGrowth.value=config.growthBonus;
   if(config.compactWeight!==undefined) ui.rewardCompact.value=config.compactWeight;
@@ -6225,6 +6272,8 @@ class AutoPPOController{
           timeoutPenalty:6.0,
           trapPenalty:0.35,
           spaceGainBonus:0.12,
+          tailFollowBonus:0.12,
+          tailFollowThreshold:0.18,
           deadEndPenalty:0.35,
           fruitReward:14,
           growthBonus:1.0,
@@ -6251,6 +6300,8 @@ class AutoPPOController{
           timeoutPenalty:5.8,
           trapPenalty:0.38,
           spaceGainBonus:0.16,
+          tailFollowBonus:0.12,
+          tailFollowThreshold:0.17,
           deadEndPenalty:0.36,
           fruitReward:16,
           growthBonus:1.25,
@@ -6277,6 +6328,8 @@ class AutoPPOController{
           timeoutPenalty:5.8,
           trapPenalty:0.42,
           spaceGainBonus:0.2,
+          tailFollowBonus:0.14,
+          tailFollowThreshold:0.16,
           deadEndPenalty:0.36,
           fruitReward:18,
           growthBonus:1.4,
@@ -6303,6 +6356,8 @@ class AutoPPOController{
           timeoutPenalty:5.4,
           trapPenalty:0.45,
           spaceGainBonus:0.24,
+          tailFollowBonus:0.16,
+          tailFollowThreshold:0.15,
           deadEndPenalty:0.34,
           fruitReward:17.5,
           growthBonus:1.5,
@@ -6329,6 +6384,8 @@ class AutoPPOController{
           timeoutPenalty:5.6,
           trapPenalty:0.44,
           spaceGainBonus:0.2,
+          tailFollowBonus:0.14,
+          tailFollowThreshold:0.16,
           deadEndPenalty:0.36,
           fruitReward:18.2,
           growthBonus:1.55,
@@ -6355,6 +6412,8 @@ class AutoPPOController{
           timeoutPenalty:5.0,
           trapPenalty:0.48,
           spaceGainBonus:0.3,
+          tailFollowBonus:0.18,
+          tailFollowThreshold:0.14,
           deadEndPenalty:0.32,
           fruitReward:19,
           growthBonus:1.65,
