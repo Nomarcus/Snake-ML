@@ -21,9 +21,24 @@
 body{
   margin:0;
   min-height:100vh;
-  background:radial-gradient(160% 140% at 20% -20%,#202866 0%,#131834 45%,#090d1f 100%);
+  background:linear-gradient(160deg,#08091f 0%,#0c1333 45%,#130f35 100%);
   color:var(--ink);
   font:14px/1.5 "Inter","Segoe UI",Roboto,sans-serif;
+  position:relative;
+  overflow-x:hidden;
+}
+body::before{
+  content:"";
+  position:fixed;
+  inset:0;
+  z-index:-1;
+  background:
+    radial-gradient(115% 85% at 18% 18%,rgba(59,130,246,0.38) 0%,rgba(59,130,246,0) 68%),
+    radial-gradient(90% 95% at 82% 18%,rgba(168,85,247,0.36) 0%,rgba(88,28,135,0) 72%),
+    radial-gradient(110% 120% at 52% 110%,rgba(236,72,153,0.28) 0%,rgba(24,10,48,0) 70%),
+    linear-gradient(150deg,#0b1027 0%,#0f1338 40%,#1a0f3f 100%);
+  filter:saturate(1.15);
+  pointer-events:none;
 }
 header{
   padding:20px 0;
@@ -149,9 +164,11 @@ h2{
   width:100%;
   aspect-ratio:1/1;
   border-radius:26px;
-  background:radial-gradient(140% 140% at 30% 20%,#273067 0%,#151a3a 50%,#0d1127 100%);
-  border:1px solid rgba(128,140,210,0.25);
-  box-shadow:0 40px 80px rgba(8,12,42,0.55);
+  background:linear-gradient(140deg,#1a1f5d 0%,#241a78 50%,#371463 100%);
+  border:1px solid rgba(129,140,248,0.28);
+  box-shadow:0 48px 110px rgba(17,12,60,0.75);
+  position:relative;
+  overflow:hidden;
 }
 .controls{
   display:flex;
@@ -1145,6 +1162,11 @@ footer{
         <button type="button" class="pill" data-speed="turbo">Turbo</button>
       </div>
       <div class="field compact">
+        <label for="liveSpeed">Live speed</label>
+        <input type="range" id="liveSpeed" min="30" max="200" step="5" value="110">
+        <span class="mono" id="liveSpeedReadout">110&nbsp;ms</span>
+      </div>
+      <div class="field compact">
         <label for="gridSize">Board size</label>
         <input type="range" id="gridSize" min="10" max="30" step="1" value="20">
         <span class="mono" id="gridLabel">20×20</span>
@@ -1457,10 +1479,17 @@ footer{
             <input type="range" id="rewardGrowth" min="0" max="50" step="0.1" value="1.0">
             <span class="mono" id="rewardGrowthReadout">1.0</span>
           </label>
-          <label>Compactness bonus
-            <span class="hint">Rewards tighter body packing inside the bounding box.</span>
+          <label>Compactness weight
+            <span class="hint">Scales how strongly compact shapes influence the reward.</span>
             <input type="range" id="rewardCompact" min="0" max="5.0" step="0.001" value="0.000">
             <span class="mono" id="rewardCompactReadout">0.000</span>
+          </label>
+        </div>
+        <div class="row">
+          <label>Compactness bonus
+            <span class="hint">Sets the actual bonus applied when the body stays tight.</span>
+            <input type="range" id="rewardCompactBonus" min="0" max="1.5" step="0.01" value="0.25">
+            <span class="mono" id="rewardCompactBonusReadout">0.25</span>
           </label>
         </div>
       </div>
@@ -1478,6 +1507,13 @@ footer{
           Hamilton Weight:
           <input type="range" id="hamSlider" min="0" max="10" step="0.01" value="0.05">
           <span id="hamVal">0.05</span>
+        </label><br>
+
+        <label>
+          Helper Alignment Penalty:
+          <span class="hint">Penalty applied when the agent ignores planner guidance.</span>
+          <input type="range" id="rewardHelperPenalty" min="0" max="5" step="0.05" value="0.25">
+          <span class="mono" id="rewardHelperPenaltyReadout">0.25</span>
         </label><br>
 
         <label>
@@ -1898,6 +1934,7 @@ const REWARD_LABELS={
   growthBonus:'Growth bonus',
   compactWeight:'Compactness weight',
   compactness:'Compactness bonus',
+  compactBonus:'Compactness bonus',
   bfsHelper:'BFS helper bonus',
   hamiltonHelper:'Hamilton helper bonus',
   bfsWeight:'BFS helper weight',
@@ -1921,9 +1958,11 @@ const REWARD_INPUT_IDS={
   fruitReward:'rewardFruit',
   growthBonus:'rewardGrowth',
   compactWeight:'rewardCompact',
+  compactBonus:'rewardCompactBonus',
   bfsWeight:'bfsSlider',
   hamiltonWeight:'hamSlider',
   usePathHelpers:'usePathHelpers',
+  helperAlignmentPenalty:'rewardHelperPenalty',
 };
 const RECENT_EPISODES_MAX=32;
 const ROLLUP_WINDOW=1000;
@@ -4128,12 +4167,67 @@ const cloneState=state=>({
   fruit:{x:state.fruit.x,y:state.fruit.y},
   pattern:state.pattern||null,
 });
-const BG_COLOR='#101532';
-const GRID_COLOR='rgba(135,143,210,0.16)';
-const HEAD_GRADIENT=['#f472b6','#c084fc'];
-const BODY_GRADIENT=['#8b5cf6','#6366f1'];
-const HEAD_GLOW='rgba(244,114,182,0.65)';
-const BODY_GLOW='rgba(99,102,241,0.5)';
+const GRID_COLOR='rgba(23,30,83,0.55)';
+const GRID_BORDER_COLOR='rgba(255,255,255,0.14)';
+const BOARD_GRADIENT_STOPS=[
+  {stop:0,color:hexToRgb('#202a8f')},
+  {stop:0.45,color:hexToRgb('#4338ca')},
+  {stop:1,color:hexToRgb('#7c3aed')},
+];
+const SNAKE_GRADIENT_STOPS=[
+  {stop:0,color:hexToRgb('#fb923c')},
+  {stop:0.45,color:hexToRgb('#f43f5e')},
+  {stop:1,color:hexToRgb('#8b5cf6')},
+];
+
+function hexToRgb(hex){
+  const normalized=hex.replace('#','');
+  const bigint=parseInt(normalized.length===3
+    ? normalized.split('').map(ch=>ch+ch).join('')
+    : normalized,16);
+  return {
+    r:(bigint>>16)&255,
+    g:(bigint>>8)&255,
+    b:bigint&255,
+  };
+}
+
+function mixRgb(a,b,t){
+  const factor=clamp(Number.isNaN(t)?0:t,0,1);
+  return {
+    r:a.r+(b.r-a.r)*factor,
+    g:a.g+(b.g-a.g)*factor,
+    b:a.b+(b.b-a.b)*factor,
+  };
+}
+
+function rgbToString({r,g,b},alpha=1){
+  return `rgba(${Math.round(r)},${Math.round(g)},${Math.round(b)},${alpha})`;
+}
+
+function lightenColor(rgb,amount){
+  return mixRgb(rgb,{r:255,g:255,b:255},amount);
+}
+
+function darkenColor(rgb,amount){
+  return mixRgb(rgb,{r:0,g:0,b:0},amount);
+}
+
+function gradientColor(stops,t){
+  if(!Array.isArray(stops)||!stops.length) return {r:255,g:255,b:255};
+  const target=clamp(Number.isNaN(t)?0:t,0,1);
+  let previous=stops[0];
+  for(let i=1;i<stops.length;i++){
+    const current=stops[i];
+    if(target<=current.stop){
+      const span=current.stop-previous.stop||1;
+      const local=(target-previous.stop)/span;
+      return mixRgb(previous.color,current.color,local);
+    }
+    previous=current;
+  }
+  return stops[stops.length-1].color;
+}
 let lastDrawnState=snapshotEnv(env);
 let renderQueue=[];
 let currentAnim=null;
@@ -4223,8 +4317,7 @@ async function waitForRenderIdle(){
 }
 function drawFrame(from,to,t){
   if(renderSuspended) return;
-  bctx.fillStyle=BG_COLOR;
-  bctx.fillRect(0,0,board.width,board.height);
+  drawBoardSurface();
   drawGrid();
   const sameFruit=from.fruit.x===to.fruit.x&&from.fruit.y===to.fruit.y;
   if(from.fruit.x>=0&&!sameFruit) drawFruit(from.fruit,1-t);
@@ -4251,11 +4344,62 @@ function drawFrame(from,to,t){
   drawOverlay(to);
   drawPatternLabel(to);
 }
+
+function drawBoardSurface(){
+  bctx.save();
+  const baseGradient=bctx.createLinearGradient(0,0,board.width,board.height);
+  baseGradient.addColorStop(0,'#1a1f5d');
+  baseGradient.addColorStop(0.52,'#241a78');
+  baseGradient.addColorStop(1,'#35145f');
+  bctx.fillStyle=baseGradient;
+  bctx.fillRect(0,0,board.width,board.height);
+
+  const topSheen=bctx.createLinearGradient(0,0,0,board.height);
+  topSheen.addColorStop(0,'rgba(255,255,255,0.14)');
+  topSheen.addColorStop(0.4,'rgba(255,255,255,0.05)');
+  topSheen.addColorStop(1,'rgba(2,6,23,0)');
+  bctx.fillStyle=topSheen;
+  bctx.fillRect(0,0,board.width,board.height);
+
+  const vignette=bctx.createRadialGradient(
+    board.width*0.52,
+    board.height*0.56,
+    0,
+    board.width*0.52,
+    board.height*0.56,
+    Math.max(board.width,board.height)*0.9
+  );
+  vignette.addColorStop(0,'rgba(14,19,48,0)');
+  vignette.addColorStop(1,'rgba(5,8,26,0.68)');
+  bctx.fillStyle=vignette;
+  bctx.fillRect(0,0,board.width,board.height);
+  bctx.restore();
+}
 function drawGrid(){
   bctx.save();
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      const px=x*CELL;
+      const py=y*CELL;
+      const xp=COLS>1?x/(COLS-1):0;
+      const yp=ROWS>1?y/(ROWS-1):0;
+      const blendRatio=xp*0.8+yp*0.2;
+      const blend=clamp(Number.isNaN(blendRatio)?0:blendRatio,0,1);
+      const base=gradientColor(BOARD_GRADIENT_STOPS,blend);
+      const liftAmount=0.2-yp*0.08;
+      const cellTone=lightenColor(base,0.18+Math.max(0,liftAmount));
+      bctx.fillStyle=rgbToString(cellTone,0.92);
+      bctx.fillRect(px,py,CELL+1,CELL+1);
+
+      const floorShade=darkenColor(base,0.45);
+      bctx.fillStyle=rgbToString(floorShade,0.18+yp*0.22);
+      bctx.fillRect(px,py+CELL*0.72,CELL+1,CELL*0.28);
+    }
+  }
+
+  bctx.globalAlpha=0.55;
   bctx.strokeStyle=GRID_COLOR;
   bctx.lineWidth=1;
-  bctx.shadowBlur=0;
   for(let x=0;x<=COLS;x++){
     const px=x*CELL;
     bctx.beginPath();
@@ -4270,8 +4414,30 @@ function drawGrid(){
     bctx.lineTo(board.width,py);
     bctx.stroke();
   }
+  bctx.globalAlpha=1;
+  bctx.lineWidth=1.6;
+  bctx.strokeStyle=GRID_BORDER_COLOR;
+  bctx.strokeRect(0.8,0.8,board.width-1.6,board.height-1.6);
   bctx.restore();
 }
+
+function computeSegmentPalette(index,total){
+  const count=total<=0?1:total;
+  const ratio=count>1?index/(count-1):0;
+  const eased=Math.pow(ratio,0.78);
+  const rawGrowth=(count-2)/28;
+  const growthFactor=clamp(Number.isNaN(rawGrowth)?0:rawGrowth,0,1);
+  const rawProgress=eased*(0.7+growthFactor*0.25)+growthFactor*0.1;
+  const paletteProgress=clamp(Number.isNaN(rawProgress)?0:rawProgress,0,1);
+  const base=gradientColor(SNAKE_GRADIENT_STOPS,paletteProgress);
+  const headBoost=index===0?0.12:0;
+  const top=lightenColor(base,0.26+headBoost);
+  const bottom=darkenColor(base,0.28-Math.max(0,0.12-ratio*0.12));
+  const glow=lightenColor(base,0.42+headBoost*0.6);
+  const stroke=lightenColor(base,0.18+headBoost*0.5);
+  return {top,bottom,glow,stroke,ratio};
+}
+
 function drawFruit(fruit,alpha=1){
   if(fruit.x<0||fruit.y<0) return;
   const cx=(fruit.x+0.5)*CELL;
@@ -4288,35 +4454,146 @@ function drawFruit(fruit,alpha=1){
   bctx.beginPath();
   bctx.arc(cx,cy,radius,0,Math.PI*2);
   bctx.fill();
+  bctx.shadowBlur=0;
+  const leafGradient=bctx.createLinearGradient(cx,cy-radius,cx+radius*0.4,cy-radius*1.4);
+  leafGradient.addColorStop(0,`rgba(34,197,94,${alpha})`);
+  leafGradient.addColorStop(1,`rgba(14,116,144,${alpha*0.6})`);
+  bctx.fillStyle=leafGradient;
+  bctx.beginPath();
+  bctx.moveTo(cx-radius*0.1,cy-radius*0.8);
+  bctx.quadraticCurveTo(cx+radius*0.8,cy-radius*1.4,cx+radius*0.25,cy-radius*1.65);
+  bctx.quadraticCurveTo(cx-radius*0.4,cy-radius*1.25,cx-radius*0.15,cy-radius*0.85);
+  bctx.closePath();
+  bctx.fill();
   bctx.restore();
 }
 function drawSnakeSegments(segments){
   if(!segments.length) return;
   bctx.save();
+  bctx.lineJoin='round';
+  const head=segments[0];
+  const neck=segments[1]||head;
+  const total=segments.length;
   segments.forEach((seg,i)=>{
-    const colors=i===0?HEAD_GRADIENT:BODY_GRADIENT;
-    const glow=i===0?HEAD_GLOW:BODY_GLOW;
-    const size=CELL*0.74;
+    const isHead=i===0;
+    const palette=computeSegmentPalette(i,total);
+    const size=isHead?CELL*0.86:CELL*0.76;
     const offset=(CELL-size)/2;
-    const radius=Math.min(size*0.45,12);
+    const radius=Math.min(size*0.5,14);
     const x=seg.x*CELL+offset;
     const y=seg.y*CELL+offset;
     const gradient=bctx.createLinearGradient(x,y,x,y+size);
-    gradient.addColorStop(0,colors[0]);
-    gradient.addColorStop(1,colors[1]);
-    bctx.shadowBlur=i===0?18:12;
-    bctx.shadowColor=glow;
+    gradient.addColorStop(0,rgbToString(palette.top));
+    gradient.addColorStop(1,rgbToString(palette.bottom));
+    bctx.shadowBlur=isHead?32:20;
+    bctx.shadowColor=rgbToString(palette.glow,isHead?0.7:0.5);
     bctx.fillStyle=gradient;
-    drawRoundedRect(x,y,size,size,radius);
+    fillRoundedRect(x,y,size,size,radius);
     bctx.shadowBlur=0;
-    const highlight=bctx.createRadialGradient(x+size*0.35,y+size*0.35,0,x+size*0.35,y+size*0.35,size*0.9);
-    highlight.addColorStop(0,'rgba(255,255,255,0.32)');
-    highlight.addColorStop(1,'rgba(255,255,255,0)');
-    bctx.fillStyle=highlight;
-    drawRoundedRect(x,y,size,size,radius);
+
+    const sheen=bctx.createRadialGradient(x+size*0.68,y+size*0.32,0,x+size*0.68,y+size*0.32,size*1.05);
+    sheen.addColorStop(0,'rgba(255,255,255,0.25)');
+    sheen.addColorStop(0.5,'rgba(255,255,255,0.08)');
+    sheen.addColorStop(1,'rgba(255,255,255,0)');
+    bctx.fillStyle=sheen;
+    fillRoundedRect(x,y,size,size,radius);
+
+    const belly=bctx.createLinearGradient(x,y+size*0.35,x,y+size);
+    belly.addColorStop(0,'rgba(255,255,255,0)');
+    belly.addColorStop(1,rgbToString(lightenColor(palette.bottom,0.32),0.32));
+    bctx.fillStyle=belly;
+    fillRoundedRect(x,y,size,size,radius);
+
+    bctx.lineWidth=isHead?2.3:1.6;
+    bctx.strokeStyle=rgbToString(palette.stroke,isHead?0.95:0.85);
+    strokeRoundedRect(x,y,size,size,radius);
   });
+  drawSnakeHeadDetails(head,neck);
   bctx.restore();
 }
+
+function drawSnakeHeadDetails(head,neck){
+  if(!head) return;
+  const size=CELL*0.84;
+  const offset=(CELL-size)/2;
+  const cx=head.x*CELL+offset+size/2;
+  const cy=head.y*CELL+offset+size/2;
+  const nx=neck?.x??head.x;
+  const ny=neck?.y??head.y;
+  const dirX=head.x-nx;
+  const dirY=head.y-ny;
+  const angle=Math.atan2(dirY,dirX)||0;
+  const cos=Math.cos(angle);
+  const sin=Math.sin(angle);
+  const perpX=-sin;
+  const perpY=cos;
+  const eyeForward=size*0.26;
+  const eyeSpread=size*0.18;
+  const eyeRadius=size*0.09;
+  const pupilRadius=eyeRadius*0.45;
+  const pupilOffset=size*0.05;
+  const eyeBaseX=cx+cos*eyeForward;
+  const eyeBaseY=cy+sin*eyeForward;
+  bctx.save();
+  const eyes=[1,-1].map(sign=>({
+    x:eyeBaseX+perpX*eyeSpread*sign,
+    y:eyeBaseY+perpY*eyeSpread*sign,
+  }));
+  eyes.forEach(({x,y})=>{
+    bctx.fillStyle='rgba(255,255,255,0.96)';
+    bctx.beginPath();
+    bctx.arc(x,y,eyeRadius,0,Math.PI*2);
+    bctx.fill();
+    bctx.fillStyle='rgba(30,64,175,0.85)';
+    bctx.beginPath();
+    bctx.arc(x+cos*pupilOffset,y+sin*pupilOffset,pupilRadius,0,Math.PI*2);
+    bctx.fill();
+    bctx.fillStyle='rgba(255,255,255,0.75)';
+    bctx.beginPath();
+    bctx.arc(x+cos*pupilOffset*0.35,y+sin*pupilOffset*0.35,pupilRadius*0.35,0,Math.PI*2);
+    bctx.fill();
+  });
+  const tongueBase=size*0.46;
+  const tongueLength=size*0.45;
+  const tongueWidth=size*0.08;
+  const forkWidth=tongueWidth*1.7;
+  const baseX=cx+cos*tongueBase;
+  const baseY=cy+sin*tongueBase;
+  const tipX=cx+cos*(tongueBase+tongueLength);
+  const tipY=cy+sin*(tongueBase+tongueLength);
+  bctx.fillStyle='rgba(248,113,113,0.9)';
+  bctx.beginPath();
+  bctx.moveTo(baseX+perpX*tongueWidth,baseY+perpY*tongueWidth);
+  bctx.lineTo(tipX+perpX*forkWidth,tipY+perpY*forkWidth);
+  bctx.lineTo(tipX,tipY);
+  bctx.lineTo(tipX-perpX*forkWidth,tipY-perpY*forkWidth);
+  bctx.lineTo(baseX-perpX*tongueWidth,baseY-perpY*tongueWidth);
+  bctx.closePath();
+  bctx.fill();
+  bctx.restore();
+}
+
+function roundedRectPath(x,y,w,h,r){
+  const radius=Math.max(2,Math.min(r,Math.min(w,h)/2));
+  bctx.beginPath();
+  bctx.moveTo(x+radius,y);
+  bctx.arcTo(x+w,y,x+w,y+h,radius);
+  bctx.arcTo(x+w,y+h,x,y+h,radius);
+  bctx.arcTo(x,y+h,x,y,radius);
+  bctx.arcTo(x,y,x+w,y,radius);
+  bctx.closePath();
+}
+
+function fillRoundedRect(x,y,w,h,r){
+  roundedRectPath(x,y,w,h,r);
+  bctx.fill();
+}
+
+function strokeRoundedRect(x,y,w,h,r){
+  roundedRectPath(x,y,w,h,r);
+  bctx.stroke();
+}
+
 function drawOverlay(state){
   if(!window.overlayVisible) return;
   const ctx=bctx;
@@ -4384,18 +4661,6 @@ function drawPatternLabel(state){
   bctx.fillText(`Pattern: ${label}`,board.width-14,12);
   bctx.restore();
 }
-function drawRoundedRect(x,y,w,h,r){
-  const radius=Math.max(2,Math.min(r,Math.min(w,h)/2));
-  bctx.beginPath();
-  bctx.moveTo(x+radius,y);
-  bctx.arcTo(x+w,y,x+w,y+h,radius);
-  bctx.arcTo(x+w,y+h,x,y+h,radius);
-  bctx.arcTo(x,y+h,x,y,radius);
-  bctx.arcTo(x,y,x+w,y,radius);
-  bctx.closePath();
-  bctx.fill();
-}
-
 /* ---------------- App state ---------------- */
 const playbackModes={
   cinematic:{label:'Smooth realtime',frameMs:110,stepsPerFrame:1,renderEvery:1,queueTarget:60},
@@ -4777,6 +5042,8 @@ const ui={
   lrBadge:document.getElementById('lrBadge'),
   playbackLabel:document.getElementById('playbackLabel'),
   playbackButtons:Array.from(document.querySelectorAll('#playbackGroup .pill')),
+  liveSpeed:document.getElementById('liveSpeed'),
+  liveSpeedReadout:document.getElementById('liveSpeedReadout'),
   gridSize:document.getElementById('gridSize'),
   gridLabel:document.getElementById('gridLabel'),
   showPathOverlay:document.getElementById('showPathOverlay'),
@@ -4888,10 +5155,14 @@ const ui={
   rewardGrowthReadout:document.getElementById('rewardGrowthReadout'),
   rewardCompact:document.getElementById('rewardCompact'),
   rewardCompactReadout:document.getElementById('rewardCompactReadout'),
+  rewardCompactBonus:document.getElementById('rewardCompactBonus'),
+  rewardCompactBonusReadout:document.getElementById('rewardCompactBonusReadout'),
   bfsSlider:document.getElementById('bfsSlider'),
   bfsVal:document.getElementById('bfsVal'),
   hamSlider:document.getElementById('hamSlider'),
   hamVal:document.getElementById('hamVal'),
+  rewardHelperPenalty:document.getElementById('rewardHelperPenalty'),
+  rewardHelperPenaltyReadout:document.getElementById('rewardHelperPenaltyReadout'),
   usePathHelpers:document.getElementById('usePathHelpers'),
   kEpisodes:document.getElementById('kEpisodes'),
   kAvgRw:document.getElementById('kAvgRw'),
@@ -5358,6 +5629,20 @@ function updateTestSpeedFromUI(){
   if(ui.testSpeedValue){
     const delay=Math.round(testPlaybackDelay);
     ui.testSpeedValue.textContent=`${delay}\u202Fms`;
+  }
+}
+
+function updateLiveSpeedFromUI(){
+  if(!ui.liveSpeed) return;
+  const raw=Number(ui.liveSpeed.value);
+  if(Number.isFinite(raw)){
+    const ms=Math.max(30,Math.min(200,Math.round(raw)));
+    playbackModes.cinematic.frameMs=ms;
+    playbackModes.watch.frameMs=Math.max(40,ms+30);
+    if(ui.liveSpeedReadout){
+      ui.liveSpeedReadout.textContent=`${ms}\u202Fms`;
+    }
+    refreshPlaybackLabel();
   }
 }
 
@@ -5904,6 +6189,9 @@ function bindUI(){
   ui.testSpeed?.addEventListener('input',()=>{
     updateTestSpeedFromUI();
   });
+  ui.liveSpeed?.addEventListener('input',()=>{
+    updateLiveSpeedFromUI();
+  });
   ui.aiRunLimit?.addEventListener('change',()=>{
     applyAiRunLimitFromUI();
   });
@@ -5960,7 +6248,7 @@ function bindUI(){
     updateReadouts();
     applyEnvCountFromUI();
   });
-  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardTightLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardDeadEnd','rewardFruit','rewardGrowth','rewardCompact'];
+  const rewardIds=['rewardStep','rewardTurn','rewardApproach','rewardRetreat','rewardLoop','rewardTightLoop','rewardRevisit','rewardWall','rewardSelf','rewardTimeout','rewardTrap','rewardSpace','rewardDeadEnd','rewardFruit','rewardGrowth','rewardCompact','rewardCompactBonus','rewardHelperPenalty'];
   const updateRewards=()=>{ updateRewardReadouts(); applyRewardsToEnv(); };
   rewardIds.forEach(id=>ui[id]?.addEventListener('input',updateRewards));
   ui.curriculumToggle?.addEventListener('change',()=>{
@@ -6038,6 +6326,7 @@ function bindUI(){
   updateAutoLogVisibility();
   updateAiIntervalReadout();
   updateTestSpeedFromUI();
+  updateLiveSpeedFromUI();
   syncTestLengthDisplays();
   setTestModeActive(false);
   setAiAutoStyle(aiAutoTuneStyle,{announce:false});
@@ -6224,13 +6513,25 @@ function setTrainingMode(mode){
   updateAiRunLimitHint();
   if(wasTraining&&!watching) startTraining();
 }
+function formatPlaybackLabel(){
+  if(liveViewHidden) return 'Rendering paused';
+  const mode=playbackModes[playbackMode]||playbackModes.cinematic;
+  const ms=Number.isFinite(mode.frameMs)?Math.round(mode.frameMs):null;
+  return ms?`${mode.label} • ${ms}\u202Fms`:mode.label;
+}
+
+function refreshPlaybackLabel(){
+  if(!ui.playbackLabel) return;
+  ui.playbackLabel.textContent=formatPlaybackLabel();
+}
+
 function setPlaybackMode(mode){
   if(!playbackModes[mode]) mode='cinematic';
   playbackMode=mode;
   ui.playbackButtons.forEach(btn=>{
     btn.classList.toggle('active',btn.dataset.speed===mode);
   });
-  ui.playbackLabel.textContent=liveViewHidden?'Rendering paused':playbackModes[mode].label;
+  refreshPlaybackLabel();
 }
 function setLiveViewHidden(hidden){
   hidden=!!hidden;
@@ -6251,7 +6552,7 @@ function setLiveViewHidden(hidden){
     renderActive=false;
     renderQueue.length=0;
     currentAnim=null;
-    ui.playbackLabel.textContent='Rendering paused';
+    refreshPlaybackLabel();
   }else{
     renderSuspended=false;
     setImmediateState(env);
@@ -6356,8 +6657,14 @@ function updateRewardReadouts(){
   ui.rewardFruitReadout.textContent=(+ui.rewardFruit.value).toFixed(1);
   ui.rewardGrowthReadout.textContent=(+ui.rewardGrowth.value).toFixed(1);
   ui.rewardCompactReadout.textContent=(+ui.rewardCompact.value).toFixed(3);
+  if(ui.rewardCompactBonusReadout){
+    ui.rewardCompactBonusReadout.textContent=(+ui.rewardCompactBonus.value).toFixed(2);
+  }
   ui.bfsVal.textContent=(+ui.bfsSlider.value).toFixed(2);
   ui.hamVal.textContent=(+ui.hamSlider.value).toFixed(2);
+  if(ui.rewardHelperPenaltyReadout){
+    ui.rewardHelperPenaltyReadout.textContent=(+ui.rewardHelperPenalty.value).toFixed(2);
+  }
   if(ui.curriculumLengthReadout){
     ui.curriculumLengthReadout.textContent=`${curriculumState.manualLength|0}`;
   }
@@ -6388,9 +6695,11 @@ function getRewardConfigFromUI(){
     fruitReward:+ui.rewardFruit.value,
     growthBonus:+ui.rewardGrowth.value,
     compactWeight:+ui.rewardCompact.value,
+    compactBonus:+ui.rewardCompactBonus.value,
     bfsWeight:+ui.bfsSlider.value,
     hamiltonWeight:+ui.hamSlider.value,
     usePathHelpers:ui.usePathHelpers.checked,
+    helperAlignmentPenalty:+ui.rewardHelperPenalty.value,
   };
 }
 function applyRewardsToEnv(){
@@ -6421,9 +6730,11 @@ function applyRewardConfigToUI(config={}){
   if(config.fruitReward!==undefined) ui.rewardFruit.value=config.fruitReward;
   if(config.growthBonus!==undefined) ui.rewardGrowth.value=config.growthBonus;
   if(config.compactWeight!==undefined) ui.rewardCompact.value=config.compactWeight;
+  if(config.compactBonus!==undefined) ui.rewardCompactBonus.value=config.compactBonus;
   if(config.bfsWeight!==undefined) ui.bfsSlider.value=config.bfsWeight;
   if(config.hamiltonWeight!==undefined) ui.hamSlider.value=config.hamiltonWeight;
   if(config.usePathHelpers!==undefined) ui.usePathHelpers.checked=!!config.usePathHelpers;
+  if(config.helperAlignmentPenalty!==undefined) ui.rewardHelperPenalty.value=config.helperAlignmentPenalty;
   updateRewardReadouts();
   applyRewardsToEnv();
 }
