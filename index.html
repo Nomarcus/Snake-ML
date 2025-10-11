@@ -1177,6 +1177,7 @@ footer{
       <select id="algoSelect">
         <option value="dueling">Dueling Double DQN</option>
         <option value="vanilla">Classic DQN</option>
+        <option value="evo">Evolutionary DQN</option>
         <option value="policy">Policy Gradient (REINFORCE)</option>
         <option value="a2c">Advantage Actor-Critic</option>
         <option value="ppo">Proximal Policy Optimization</option>
@@ -3279,6 +3280,444 @@ class DQNAgent{
   }
   setEntropy(){}
 }
+class EvolutionaryDQNAgent{
+  constructor(sDim,aDim,cfg={}){
+    this.kind='evo';
+    this.sDim=sDim;
+    this.aDim=aDim;
+    this.envCount=Math.max(1,cfg.envCount??1);
+    this.populationSize=Math.max(2,cfg.populationSize??Math.max(4,this.envCount));
+    this.eliteFraction=Math.min(0.8,Math.max(0.1,cfg.eliteFraction??0.33));
+    this.mutationScale=cfg.mutationScale??0.02;
+    this.evolutionInterval=Math.max(this.populationSize,Math.floor(cfg.evolutionInterval??(this.populationSize*5)));
+    this.minEpisodesBeforeEvolve=cfg.minEpisodesBeforeEvolve??this.populationSize;
+    this.assignments=new Map();
+    this.memberActiveCounts=new Array(this.populationSize).fill(0);
+    this.activeMembers=new Set();
+    this.episodeCounter=0;
+    this.lastEvolutionEpisode=0;
+    this.rewardConfig=cfg.rewardConfig?{...cfg.rewardConfig}:null;
+    this.generation=0;
+    const baseCfg={...cfg};
+    delete baseCfg.populationSize;
+    delete baseCfg.eliteFraction;
+    delete baseCfg.mutationScale;
+    delete baseCfg.evolutionInterval;
+    delete baseCfg.minEpisodesBeforeEvolve;
+    baseCfg.envCount=1;
+    this.members=Array.from({length:this.populationSize},()=>({
+      agent:new DQNAgent(sDim,aDim,baseCfg),
+      episodes:0,
+      totalReward:0,
+      averageReward:0,
+    }));
+    const reference=this.members[0]?.agent;
+    if(reference){
+      for(let i=1;i<this.members.length;i++){
+        this.mutateFromParent(i,0,true);
+      }
+    }
+    this.bufferProxy=this.createBufferProxy();
+    Object.defineProperty(this,'buffer',{
+      configurable:true,
+      get:()=>this.bufferProxy,
+    });
+    this._epsilon=reference?.epsilon??1;
+    Object.defineProperty(this,'epsilon',{
+      get:()=>this._epsilon,
+      set:value=>{
+        if(!Number.isFinite(value)) return;
+        this._epsilon=value;
+        this.members.forEach(member=>{ member.agent.epsilon=value; });
+      },
+    });
+    this._learnRepeats=cfg.learnRepeats??1;
+    Object.defineProperty(this,'learnRepeats',{
+      get:()=>this._learnRepeats,
+      set:value=>{
+        const repeats=Math.max(1,Math.floor(value)||1);
+        this._learnRepeats=repeats;
+        this.members.forEach(member=>{ member.agent.learnRepeats=repeats; });
+      },
+    });
+    this.learnRepeats=this._learnRepeats;
+    this.updateSharedParamsFromMembers();
+  }
+  createBufferProxy(){
+    return {
+      setCapacity:cap=>this.members.forEach(member=>member.agent.buffer.setCapacity(cap)),
+      setAlpha:val=>this.members.forEach(member=>member.agent.buffer.setAlpha(val)),
+      setBeta:val=>this.members.forEach(member=>member.agent.buffer.setBeta(val)),
+      setBetaIncrement:val=>this.members.forEach(member=>member.agent.buffer.setBetaIncrement?.(val)),
+      setPriorityEps:val=>this.members.forEach(member=>member.agent.buffer.setPriorityEps?.(val)),
+      toJSON:()=>{
+        const leader=this.getLeader();
+        return leader?.agent.buffer?.toJSON?.()??{cap:0,buf:[],pos:0};
+      },
+      size:()=>{
+        const leader=this.getLeader();
+        return leader?.agent.buffer?.size?.()??0;
+      },
+      get cap(){
+        const leader=this.getLeader();
+        return leader?.agent.buffer?.cap??0;
+      },
+      get alpha(){
+        const leader=this.getLeader();
+        return leader?.agent.buffer?.alpha??0;
+      },
+      get beta(){
+        const leader=this.getLeader();
+        return leader?.agent.buffer?.beta??0;
+      },
+      get betaIncrement(){
+        const leader=this.getLeader();
+        return leader?.agent.buffer?.betaIncrement??0;
+      },
+      get priorityEps(){
+        const leader=this.getLeader();
+        return leader?.agent.buffer?.priorityEps??0;
+      },
+    };
+  }
+  getLeader(){
+    if(!this.members.length) return null;
+    return this.members.reduce((best,current)=>{
+      if(!best) return current;
+      if(current.averageReward>best.averageReward) return current;
+      return best;
+    },null);
+  }
+  updateSharedParamsFromMembers(){
+    const leader=this.getLeader()||this.members[0];
+    if(!leader) return;
+    const agent=leader.agent;
+    this.gamma=agent.gamma;
+    this.lr=agent.lr;
+    this.batch=agent.batch;
+    this.epsStart=agent.epsStart;
+    this.epsEnd=agent.epsEnd;
+    this.epsDecay=agent.epsDecay;
+    this.nStep=agent.nStep;
+    this.layers=Array.isArray(agent.layers)?agent.layers.slice():[];
+    this.dueling=agent.dueling;
+    this.double=agent.double;
+    this.priorityEps=agent.priorityEps;
+    this._epsilon=agent.epsilon;
+  }
+  sampleNoise(std){
+    if(std<=0) return 0;
+    let u=0,v=0;
+    while(u===0) u=Math.random();
+    while(v===0) v=Math.random();
+    return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)*std;
+  }
+  mutateFromParent(targetIdx,parentIdx,initial=false){
+    const parent=this.members[parentIdx];
+    const target=this.members[targetIdx];
+    if(!parent||!target||parentIdx===targetIdx) return;
+    const parentWeights=parent.agent.online.getWeights();
+    const mutatedWeights=[];
+    const targetWeights=[];
+    const scale=(initial?this.mutationScale*2:this.mutationScale)||0;
+    parentWeights.forEach(weight=>{
+      const data=weight.dataSync();
+      const mutatedData=new Float32Array(data.length);
+      for(let i=0;i<data.length;i++){
+        mutatedData[i]=data[i]+this.sampleNoise(scale);
+      }
+      const mutated=tf.tensor(mutatedData,weight.shape,weight.dtype);
+      mutatedWeights.push(mutated);
+      targetWeights.push(mutated.clone());
+      weight.dispose();
+    });
+    target.agent.online.setWeights(mutatedWeights);
+    target.agent.target.setWeights(targetWeights);
+    mutatedWeights.forEach(w=>w.dispose());
+    targetWeights.forEach(w=>w.dispose());
+    this.resetMemberAfterMutation(targetIdx,initial);
+  }
+  resetMemberAfterMutation(index,initial=false){
+    const member=this.members[index];
+    if(!member) return;
+    const agent=member.agent;
+    const oldBuffer=agent.buffer;
+    agent.buffer=new ReplayBuffer(oldBuffer.cap,{
+      alpha:oldBuffer.alpha,
+      beta:oldBuffer.beta,
+      betaIncrement:oldBuffer.betaIncrement,
+      priorityEps:oldBuffer.priorityEps,
+    });
+    agent.nStepBuffers=Array.from({length:agent.envCount},()=>new NStepAccumulator(agent.nStep,agent.gamma));
+    agent.trainStep=0;
+    agent.optimizer=tf.train.adam(agent.lr);
+    agent.updateEpsilon(0);
+    member.episodes=0;
+    member.totalReward=0;
+    member.averageReward=0;
+    if(!initial) member.generation=this.generation;
+  }
+  assignMember(envIndex){
+    const existing=this.assignments.get(envIndex);
+    if(existing!==undefined) return existing;
+    let bestIdx=0;
+    let bestCount=Infinity;
+    for(let i=0;i<this.memberActiveCounts.length;i++){
+      const count=this.memberActiveCounts[i]??0;
+      if(count<bestCount){
+        bestCount=count;
+        bestIdx=i;
+      }
+    }
+    this.assignments.set(envIndex,bestIdx);
+    this.memberActiveCounts[bestIdx]=(this.memberActiveCounts[bestIdx]??0)+1;
+    this.activeMembers.add(bestIdx);
+    return bestIdx;
+  }
+  onContextReset(ctx){
+    const idx=this.assignMember(ctx.envIndex);
+    ctx.populationIndex=idx;
+  }
+  onEpisodeEnd(ctx,envIndex){
+    const idx=ctx?.populationIndex>=0?ctx.populationIndex:this.assignments.get(envIndex);
+    if(idx===undefined) return;
+    const member=this.members[idx];
+    member.episodes+=1;
+    member.totalReward+=ctx.totalReward;
+    member.averageReward=member.totalReward/Math.max(1,member.episodes);
+    this.episodeCounter+=1;
+    if(this.episodeCounter>=this.minEpisodesBeforeEvolve && this.episodeCounter-this.lastEvolutionEpisode>=this.evolutionInterval){
+      this.maybeEvolve();
+    }
+  }
+  maybeEvolve(){
+    if(this.members.length<2) return;
+    const ranked=this.members.map((member,idx)=>({member,idx})).sort((a,b)=>b.member.averageReward-a.member.averageReward);
+    const eliteCount=Math.max(1,Math.floor(this.populationSize*this.eliteFraction));
+    const parents=ranked.slice(0,eliteCount).length?ranked.slice(0,eliteCount):ranked.slice(0,1);
+    const rest=ranked.slice(eliteCount);
+    rest.forEach((entry,i)=>{
+      const parent=parents[i%parents.length];
+      if(parent) this.mutateFromParent(entry.idx,parent.idx);
+    });
+    this.members.forEach(member=>{
+      member.episodes=0;
+      member.totalReward=0;
+      member.averageReward=0;
+    });
+    this.lastEvolutionEpisode=this.episodeCounter;
+    this.generation+=1;
+    this.updateSharedParamsFromMembers();
+  }
+  setEnvCount(count){
+    this.envCount=Math.max(1,count|0);
+    this.assignments.clear();
+    this.memberActiveCounts=new Array(this.populationSize).fill(0);
+    this.activeMembers.clear();
+  }
+  setDouble(val){
+    this.double=!!val;
+    this.members.forEach(member=>{
+      member.agent.double=this.double;
+      member.agent.kind=this.double?'double-dqn':'dqn';
+    });
+  }
+  setGamma(val){
+    const num=Number(val);
+    this.gamma=Number.isFinite(num)?num:this.gamma;
+    this.members.forEach(member=>member.agent.setGamma(this.gamma));
+  }
+  setLearningRate(val){
+    const num=Number(val);
+    this.lr=Number.isFinite(num)?num:this.lr;
+    this.members.forEach(member=>member.agent.setLearningRate(this.lr));
+  }
+  setEpsilonSchedule({start,end,decay}={}){
+    const schedule={
+      start:start!==undefined?+start:undefined,
+      end:end!==undefined?+end:undefined,
+      decay:decay!==undefined?+decay:undefined,
+    };
+    this.epsStart=schedule.start!==undefined?schedule.start:this.epsStart;
+    this.epsEnd=schedule.end!==undefined?schedule.end:this.epsEnd;
+    this.epsDecay=schedule.decay!==undefined?schedule.decay:this.epsDecay;
+    this.members.forEach(member=>member.agent.setEpsilonSchedule?.(schedule));
+  }
+  setNStep(val){
+    const n=Math.max(1,val|0);
+    this.nStep=n;
+    this.members.forEach(member=>member.agent.setNStep(n));
+  }
+  updateEpsilon(step){
+    if(!Number.isFinite(step)) step=0;
+    let sum=0;
+    let count=0;
+    this.members.forEach(member=>{
+      const eps=member.agent.updateEpsilon?.(step);
+      if(Number.isFinite(eps)){
+        sum+=eps;
+        count++;
+      }
+    });
+    const leader=this.getLeader();
+    this._epsilon=leader?.agent.epsilon??(count?sum/count:this._epsilon);
+    return this._epsilon;
+  }
+  syncTarget(){
+    this.members.forEach(member=>member.agent.syncTarget());
+  }
+  act(state,envIndex=0){
+    if(envIndex===undefined||envIndex===null){
+      const leader=this.getLeader();
+      return leader?leader.agent.act(state):0;
+    }
+    const idx=this.assignMember(envIndex);
+    return this.members[idx]?.agent.act(state)??0;
+  }
+  greedyAction(state,envIndex=0){
+    const idx=envIndex===undefined?null:(this.assignments.get(envIndex)??null);
+    if(idx!==null){
+      return this.members[idx]?.agent.greedyAction(state)??0;
+    }
+    const leader=this.getLeader();
+    return leader?leader.agent.greedyAction(state):0;
+  }
+  recordTransition(envIndex,s,a,r,ns,d){
+    const idx=this.assignments.get(envIndex);
+    const target=idx!==undefined?this.members[idx]:this.members[this.assignMember(envIndex)];
+    target?.agent.recordTransition(s,a,r,ns,d);
+  }
+  drainPending(envIndex){
+    if(envIndex===undefined){
+      this.members.forEach(member=>member.agent.drainPending?.());
+      return;
+    }
+    const idx=this.assignments.get(envIndex);
+    if(idx===undefined) return;
+    this.members[idx]?.agent.drainPending?.();
+  }
+  async learn(){
+    if(!this.activeMembers.size) return null;
+    let total=0;
+    let count=0;
+    for(const idx of this.activeMembers){
+      const loss=await this.members[idx].agent.learn();
+      if(loss!==null && loss!==undefined){
+        total+=loss;
+        count++;
+      }
+    }
+    return count?total/count:null;
+  }
+  async finishEpisode(){
+    return null;
+  }
+  async exportState(){
+    const leader=this.getLeader();
+    const leaderBuffer=leader?.agent.buffer;
+    const population=[];
+    for(const member of this.members){
+      const state=await member.agent.exportState();
+      population.push({
+        ...state,
+        fitness:member.averageReward,
+        episodes:member.episodes,
+      });
+    }
+    return {
+      version:5,
+      kind:'evo',
+      sDim:this.sDim,
+      aDim:this.aDim,
+      config:{
+        gamma:this.gamma,
+        lr:this.lr,
+        batch:this.batch,
+        bufferSize:leaderBuffer?.cap,
+        epsStart:this.epsStart,
+        epsEnd:this.epsEnd,
+        epsDecay:this.epsDecay,
+        nStep:this.nStep,
+        priorityAlpha:leaderBuffer?.alpha,
+        priorityBeta:leaderBuffer?.beta,
+        priorityBetaIncrement:leaderBuffer?.betaIncrement,
+        priorityEps:leaderBuffer?.priorityEps,
+        dueling:this.dueling,
+        double:this.double,
+        layers:this.layers?.slice?.(),
+        learnRepeats:this.learnRepeats,
+        populationSize:this.populationSize,
+        eliteFraction:this.eliteFraction,
+        mutationScale:this.mutationScale,
+        evolutionInterval:this.evolutionInterval,
+        minEpisodesBeforeEvolve:this.minEpisodesBeforeEvolve,
+      },
+      generation:this.generation,
+      population,
+    };
+  }
+  async importState(state){
+    if(!state) throw new Error('Invalid state');
+    if(state.sDim && state.sDim!==this.sDim) throw new Error('State-dimension matchar inte');
+    if(state.aDim && state.aDim!==this.aDim) throw new Error('Action-dimension matchar inte');
+    const cfg=state.config||{};
+    const desiredPopulation=Math.max(2,cfg.populationSize??(Array.isArray(state.population)?state.population.length:this.populationSize));
+    this.populationSize=desiredPopulation;
+    this.eliteFraction=Math.min(0.8,Math.max(0.1,cfg.eliteFraction??this.eliteFraction));
+    this.mutationScale=cfg.mutationScale??this.mutationScale;
+    this.evolutionInterval=Math.max(this.populationSize,Math.floor(cfg.evolutionInterval??this.evolutionInterval));
+    this.minEpisodesBeforeEvolve=cfg.minEpisodesBeforeEvolve??this.minEpisodesBeforeEvolve;
+    const repeatsValue=cfg.learnRepeats??this._learnRepeats??1;
+    this._learnRepeats=Math.max(1,Math.floor(repeatsValue)||1);
+    const leader=this.getLeader();
+    const leaderBuffer=leader?.agent.buffer;
+    const baseCfg={
+      gamma:cfg.gamma??leader?.agent.gamma??this.gamma??0.98,
+      lr:cfg.lr??leader?.agent.lr??this.lr??0.0005,
+      batch:cfg.batch??leader?.agent.batch??this.batch??128,
+      bufferSize:cfg.bufferSize??leaderBuffer?.cap??50000,
+      epsStart:cfg.epsStart??leader?.agent.epsStart??this.epsStart??1,
+      epsEnd:cfg.epsEnd??leader?.agent.epsEnd??this.epsEnd??0.1,
+      epsDecay:cfg.epsDecay??leader?.agent.epsDecay??this.epsDecay??80000,
+      nStep:cfg.nStep??leader?.agent.nStep??this.nStep??3,
+      priorityAlpha:cfg.priorityAlpha??leaderBuffer?.alpha??0.6,
+      priorityBeta:cfg.priorityBeta??leaderBuffer?.beta??0.4,
+      priorityBetaIncrement:cfg.priorityBetaIncrement??leaderBuffer?.betaIncrement??0.000002,
+      priorityEps:cfg.priorityEps??leaderBuffer?.priorityEps??0.001,
+      dueling:cfg.dueling??leader?.agent.dueling??true,
+      double:cfg.double??leader?.agent.double??true,
+      layers:Array.isArray(cfg.layers)?cfg.layers.slice():leader?.agent.layers?.slice?.(),
+      learnRepeats:this._learnRepeats,
+      envCount:1,
+    };
+    this.members=Array.from({length:this.populationSize},()=>({
+      agent:new DQNAgent(this.sDim,this.aDim,baseCfg),
+      episodes:0,
+      totalReward:0,
+      averageReward:0,
+    }));
+    if(Array.isArray(state.population)){
+      for(let i=0;i<Math.min(state.population.length,this.members.length);i++){
+        await this.members[i].agent.importState(state.population[i]);
+      }
+    }else if(state.agent){
+      await this.members[0].agent.importState(state.agent);
+    }
+    this.assignments.clear();
+    this.memberActiveCounts=new Array(this.populationSize).fill(0);
+    this.activeMembers.clear();
+    this.generation=state.generation??0;
+    this.episodeCounter=0;
+    this.lastEvolutionEpisode=0;
+    this.members.forEach(member=>{
+      member.episodes=0;
+      member.totalReward=0;
+      member.averageReward=0;
+    });
+    this.learnRepeats=this._learnRepeats;
+    this.updateSharedParamsFromMembers();
+  }
+}
 class PolicyGradientAgent{
   constructor(sDim,aDim,cfg={}){
     this.kind='policy';
@@ -4482,6 +4921,21 @@ const AGENT_PRESETS={
       learnRepeats:cfg.learnRepeats??1,
     }),
   },
+  evo:{
+    label:'Evolutionary DQN',
+    badge:'Evo DQN',
+    type:'dqn',
+    defaults:{
+      gamma:0.985,lr:0.0004,
+      epsStart:1.0,epsEnd:0.08,epsDecay:90000,
+      batch:128,bufferSize:70000,targetSync:2200,
+      nStep:3,priorityAlpha:0.6,priorityBeta:0.45,
+      layers:[256,256,128],dueling:true,double:true,learnRepeats:2,
+      populationSize:6,eliteFraction:0.33,mutationScale:0.015,evolutionInterval:48,
+    },
+    description:'Population-based DQN that breeds and mutates top performers while continuing gradient updates.',
+    create:(sDim,aDim,cfg)=>new EvolutionaryDQNAgent(sDim,aDim,cfg),
+  },
   policy:{
     label:'Policy Gradient (REINFORCE)',
     badge:'Policy Grad',
@@ -4513,7 +4967,7 @@ const AGENT_PRESETS={
     create:(sDim,aDim,cfg)=>new PPOAgent(sDim,aDim,cfg),
   },
 };
-const DQN_AGENT_KINDS=new Set(['dqn','double-dqn']);
+const DQN_AGENT_KINDS=new Set(['dqn','double-dqn','evo']);
 const isDqnKind=kind=>DQN_AGENT_KINDS.has(kind);
 const isDqnAgent=agent=>agent&&isDqnKind(agent.kind);
 
@@ -6120,6 +6574,7 @@ function createContextSlot(index,state){
     fruits:0,
     steps:0,
     needsReset:false,
+    populationIndex:-1,
   };
 }
 function seedContexts(forceReset=true){
@@ -6143,6 +6598,9 @@ function seedContexts(forceReset=true){
     });
   }
   contexts=states.map((state,idx)=>createContextSlot(idx,state));
+  if(agent?.onContextReset){
+    contexts.forEach(ctx=>agent.onContextReset(ctx));
+  }
   env=vecEnv.getEnv(renderIndex)||vecEnv.getEnv(0);
   vecEnv.setOverlayFocus(renderIndex);
   if(env) setImmediateState(env);
@@ -6311,8 +6769,12 @@ function applyConfigToAgent(){
   if(isDqnAgent(agent)){
     if(ui.doubleToggle){
       const useDouble=!!ui.doubleToggle.checked;
-      agent.double=useDouble;
-      agent.kind=useDouble?'double-dqn':'dqn';
+      if(typeof agent.setDouble==='function'){
+        agent.setDouble(useDouble);
+      }else{
+        agent.double=useDouble;
+        agent.kind=useDouble?'double-dqn':'dqn';
+      }
     }
     agent.setEpsilonSchedule?.({
       start:+ui.epsStart.value,
@@ -8013,6 +8475,7 @@ async function finalizeContextEpisode(ctx,envIndex){
   });
   if(aiEpisodeHistory.length>6000) aiEpisodeHistory.shift();
   if(aiTuner) aiTuner.maybeTune({episode});
+  agent?.onEpisodeEnd?.(ctx,envIndex);
   ctx.totalReward=0;
   ctx.fruits=0;
   ctx.steps=0;
@@ -8135,6 +8598,7 @@ async function performVectorStep(mode){
       ctx.fruits=0;
       ctx.steps=0;
       ctx.needsReset=false;
+      agent?.onContextReset?.(ctx);
       if(ctx.envIndex===renderIndex){
         env=vecEnv.getEnv(renderIndex)||env;
         vecEnv.setOverlayFocus(renderIndex);
@@ -8151,7 +8615,7 @@ async function performVectorStep(mode){
   if(shouldRender && displayEnv){
     before=snapshotEnv(displayEnv);
   }
-  const actions=contexts.map(ctx=>agent.act(ctx.state));
+  const actions=contexts.map(ctx=>agent.act(ctx.state,ctx.envIndex));
   const {nextStates,rewards,dones,ateFruit}=vecEnv.step(actions);
   renderTick++;
   if(shouldRender && displayEnv){
@@ -8968,7 +9432,8 @@ async function readLatestCheckpoint(){
 }
 async function applyCheckpointData(data){
   if(!data||!data.agent) throw new Error('Invalid checkpoint');
-  const kind=isDqnKind(data.agent.kind)?'dueling':(AGENT_PRESETS[data.agent.kind]?data.agent.kind:'dueling');
+  const rawKind=data.agent?.kind;
+  const kind=AGENT_PRESETS[rawKind]?rawKind:(isDqnKind(rawKind)?'dueling':'dueling');
   const preset=AGENT_PRESETS[kind];
   if(preset){
     applyPresetToUI({...preset.defaults,...(data.agent.config||{})});
