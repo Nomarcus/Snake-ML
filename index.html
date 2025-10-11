@@ -2009,7 +2009,7 @@ function assignArray(target,source,mapper=v=>v){
 
 /* ---------------- Snake environment ---------------- */
 class SnakeEnv{
-  constructor(cols=20,rows=20,{rewardConfig={},observationVersion=DEFAULT_OBSERVATION_VERSION}={}){
+  constructor(cols=5,rows=5,{rewardConfig={},observationVersion=DEFAULT_OBSERVATION_VERSION}={}){
     this.cols=cols;
     this.rows=rows;
     this.setRewardConfig(rewardConfig);
