@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Snake Simulation - Intelligent Snake Experience</title>
+  <script defer src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js"></script>
   <style>
     * {
       margin: 0;
@@ -882,71 +883,7 @@
     </div>
   </div>
   <script>
-    const TF_SOURCES = [
-      'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.20.0/dist/tf.min.js',
-      './node_modules/@tensorflow/tfjs/dist/tf.min.js'
-    ];
-    function ensureTfReady() {
-      if (window.tf) return Promise.resolve(window.tf);
-      if (!ensureTfReady.promise) {
-        ensureTfReady.promise = (async () => {
-          for (const src of TF_SOURCES) {
-            try {
-              await new Promise((resolve, reject) => {
-                const existing = document.querySelector(`script[data-tfjs-src="${src}"]`);
-                if (existing) {
-                  if (window.tf) {
-                    resolve();
-                    return;
-                  }
-                  existing.addEventListener('load', () => resolve());
-                  existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)));
-                  return;
-                }
-                const script = document.createElement('script');
-                script.src = src;
-                script.async = false;
-                script.dataset.tfjsSrc = src;
-                script.onload = () => {
-                  script.dataset.tfjsLoaded = 'true';
-                  resolve();
-                };
-                script.onerror = () => reject(new Error(`Failed to load ${src}`));
-                document.head.appendChild(script);
-              });
-              if (window.tf) return window.tf;
-            } catch (error) {
-              console.warn(error);
-            }
-          }
-          throw new Error('TensorFlow.js failed to load.');
-        })();
-      }
-      return ensureTfReady.promise;
-    }
-
-  (async () => {
-    try {
-      await ensureTfReady();
-    } catch (error) {
-      console.error(error);
-      const status = document.getElementById('statusMessages');
-      if (status) {
-        status.innerHTML = '<p style="color:#ef4444;font-weight:600;">Kunde inte ladda TensorFlow.js. Kontrollera din internetanslutning eller installera beroenden lokalt.</p>';
-      }
-      return;
-    }
-
-    const tf = window.tf;
-    if (!tf) {
-      console.error('TensorFlow.js loaded but global tf object is missing.');
-      const status = document.getElementById('statusMessages');
-      if (status) {
-        status.innerHTML = '<p style="color:#ef4444;font-weight:600;">TensorFlow.js kunde inte initialiseras.</p>';
-      }
-      return;
-    }
-
+  (() => {
     const ACTIONS = [
       { dx: 0, dy: -1 },
       { dx: 0, dy: 1 },
@@ -1030,27 +967,6 @@
       }
     }
 
-    class DuelingMergeLayer extends tf.layers.Layer {
-      constructor(config) {
-        super(config);
-        this.actionDim = config.actionDim;
-      }
-      computeOutputShape(inputShape) {
-        return [inputShape[0][0], this.actionDim];
-      }
-      call(inputs) {
-        const [value, advantage] = inputs;
-        const mean = advantage.mean(-1, true);
-        const centered = advantage.sub(mean);
-        const tiledValue = value.tile([1, this.actionDim]);
-        return tiledValue.add(centered);
-      }
-      static get className() {
-        return 'DuelingMergeLayer';
-      }
-    }
-    tf.serialization.registerClass(DuelingMergeLayer);
-
     class DQNAgent {
       constructor(stateDim, actionDim, cfg = {}) {
         this.stateDim = stateDim;
@@ -1088,13 +1004,11 @@
         }
         let output;
         if (this.dueling) {
-          const value = tf.layers
-            .dense({ units: 1, activation: 'linear', kernelInitializer: 'glorotUniform' })
-            .apply(x);
-          const advantage = tf.layers
-            .dense({ units: this.actionDim, activation: 'linear', kernelInitializer: 'glorotUniform' })
-            .apply(x);
-          output = new DuelingMergeLayer({ actionDim: this.actionDim }).apply([value, advantage]);
+          const value = tf.layers.dense({ units: 1, activation: 'linear', kernelInitializer: 'glorotUniform' }).apply(x);
+          const advantage = tf.layers.dense({ units: this.actionDim, activation: 'linear', kernelInitializer: 'glorotUniform' }).apply(x);
+          const meanAdvantage = tf.layers.lambda(t => t.sub(t.mean(-1, true))).apply(advantage);
+          const tiledValue = tf.layers.lambda(t => t.tile([1, this.actionDim])).apply(value);
+          output = tf.layers.add().apply([tiledValue, meanAdvantage]);
         } else {
           output = tf.layers.dense({ units: this.actionDim, activation: 'linear', kernelInitializer: 'glorotUniform' }).apply(x);
         }
