@@ -61,15 +61,6 @@ function formatChanges(changes=[]){
 }
 
 export function createAITuner(options={}){
-  const {
-    apiKey: explicitApiKey,
-    fetchTelemetry,
-    applyRewardConfig,
-    applyHyperparameters,
-    log,
-    getVecEnv,
-  } = options;
-
   if(typeof fetchTelemetry!=='function'){
     throw new Error('createAITuner requires a fetchTelemetry() function');
   }
@@ -97,7 +88,7 @@ export function createAITuner(options={}){
       }
       return;
     }
-    const key=resolveApiKey(explicitApiKey);
+    const key=resolveApiKey(apiKey);
     if(!key){
       if(!warnedNoKey){
         logEvent({title:'AI Auto-Tune',detail:'OPENAI_API_KEY saknas. Hoppar över justeringar.',tone:'error',episodeNumber:episode});
