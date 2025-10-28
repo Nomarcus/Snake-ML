@@ -1213,11 +1213,18 @@
         const dir = this.dir;
         const left = { x: -dir.y, y: dir.x };
         const right = { x: dir.y, y: -dir.x };
+        const back = { x: -dir.x, y: -dir.y };
         const forward = { x: head.x + dir.x, y: head.y + dir.y };
         const leftCell = { x: head.x + left.x, y: head.y + left.y };
         const rightCell = { x: head.x + right.x, y: head.y + right.y };
         const tail = this.snake[this.snake.length - 1];
         const tailKey = `${tail.x},${tail.y}`;
+
+        const checkDanger = (cell) => {
+          const key = `${cell.x},${cell.y}`;
+          return this.outOfBounds(cell.x, cell.y)
+            || (this.snakeSet.has(key) && key !== tailKey);
+        };
 
         const dangerAhead = this.outOfBounds(forward.x, forward.y)
           || (this.snakeSet.has(`${forward.x},${forward.y}`) && `${forward.x},${forward.y}` !== tailKey);
@@ -1225,6 +1232,22 @@
           || (this.snakeSet.has(`${leftCell.x},${leftCell.y}`) && `${leftCell.x},${leftCell.y}` !== tailKey);
         const dangerRight = this.outOfBounds(rightCell.x, rightCell.y)
           || (this.snakeSet.has(`${rightCell.x},${rightCell.y}`) && `${rightCell.x},${rightCell.y}` !== tailKey);
+        const dangerBack = checkDanger({ x: head.x + back.x, y: head.y + back.y });
+        const frontLeft = { x: head.x + dir.x + left.x, y: head.y + dir.y + left.y };
+        const frontRight = { x: head.x + dir.x + right.x, y: head.y + dir.y + right.y };
+        const backLeft = { x: head.x + back.x + left.x, y: head.y + back.y + left.y };
+        const backRight = { x: head.x + back.x + right.x, y: head.y + back.y + right.y };
+        const dangerFrontLeft = checkDanger(frontLeft);
+        const dangerFrontRight = checkDanger(frontRight);
+        const dangerBackLeft = checkDanger(backLeft);
+        const dangerBackRight = checkDanger(backRight);
+
+        const immediateFreeRatio = (
+          (!dangerAhead ? 1 : 0)
+          + (!dangerLeft ? 1 : 0)
+          + (!dangerRight ? 1 : 0)
+          + (!dangerBack ? 1 : 0)
+        ) / 4;
 
         const direction = [
           dir.y === -1 ? 1 : 0,
@@ -1248,6 +1271,17 @@
         const fruitDx = norm(fruit.x - head.x, normX);
         const fruitDy = norm(fruit.y - head.y, normY);
         const manhattan = (Math.abs(fruit.x - head.x) + Math.abs(fruit.y - head.y)) / (this.cols + this.rows);
+        const maxDiag = Math.hypot(Math.max(1, this.cols - 1), Math.max(1, this.rows - 1));
+        const deltaX = fruit.x - head.x;
+        const deltaY = fruit.y - head.y;
+        const euclidean = maxDiag ? Math.hypot(deltaX, deltaY) / maxDiag : 0;
+        const dot = deltaX * dir.x + deltaY * dir.y;
+        const det = dir.x * deltaY - dir.y * deltaX;
+        const hyp = Math.hypot(deltaX, deltaY) || 1;
+        const fruitCos = dot / hyp;
+        const fruitSin = det / hyp;
+        const forwardProjection = Math.max(0, dot) / hyp;
+        const tailDistance = maxDiag ? Math.hypot(tail.x - head.x, tail.y - head.y) / maxDiag : 0;
         const lengthNorm = this.snake.length / (this.cols * this.rows);
         const stepsNorm = this.stepsSinceFruit / this.maxStepsWithoutFruit;
         const distForward = this.distanceUntilHit(dir);
@@ -1258,6 +1292,11 @@
           dangerAhead ? 1 : 0,
           dangerLeft ? 1 : 0,
           dangerRight ? 1 : 0,
+          dangerBack ? 1 : 0,
+          dangerFrontLeft ? 1 : 0,
+          dangerFrontRight ? 1 : 0,
+          dangerBackLeft ? 1 : 0,
+          dangerBackRight ? 1 : 0,
           ...direction,
           ...fruitDir,
           top,
@@ -1267,6 +1306,12 @@
           fruitDx,
           fruitDy,
           manhattan,
+          euclidean,
+          fruitCos,
+          fruitSin,
+          forwardProjection,
+          tailDistance,
+          immediateFreeRatio,
           lengthNorm,
           stepsNorm,
           distForward,
