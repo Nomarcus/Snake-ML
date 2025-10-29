@@ -521,7 +521,19 @@
       spaceGainReward: 1.2,
       spaceLossPenalty: 2.4,
       tailChaseBonus: 0.25,
-      tailPressureThreshold: 0.18
+      tailPressureThreshold: 0.18,
+      fruitPathBonus: 0.35,
+      tailPathBonus: 0.45,
+      pathRecoveryBonus: 0.8,
+      pathLossPenalty: 0.22,
+      noFruitPathPenalty: 1.2,
+      noTailPathPenalty: 2.1,
+      trapThreshold: 0.16,
+      trapPenalty: 2.5,
+      trapCounterLimit: 10,
+      coverageAdvanceReward: 0.28,
+      coverageDeviationPenalty: 0.24,
+      coverageStartThreshold: 0.55
     };
 
     const LOOP_HISTORY_LIMIT = 16;
@@ -1148,6 +1160,31 @@
         }
       }
 
+      buildCoveragePath() {
+        const path = [];
+        for (let y = 0; y < this.rows; y += 1) {
+          if (y % 2 === 0) {
+            for (let x = 0; x < this.cols; x += 1) {
+              path.push({ x, y });
+            }
+          } else {
+            for (let x = this.cols - 1; x >= 0; x -= 1) {
+              path.push({ x, y });
+            }
+          }
+        }
+        return path;
+      }
+
+      computeCoveragePressure() {
+        if (!this.snake || !this.snake.length) return 0;
+        const threshold = clamp(this.rewardConfig.coverageStartThreshold ?? 0.6, 0, 0.98);
+        const ratio = this.snake.length / Math.max(1, this.cols * this.rows);
+        if (ratio <= threshold) return 0;
+        const denom = Math.max(1 - threshold, 1e-6);
+        return clamp((ratio - threshold) / denom, 0, 1);
+      }
+
       reset(options = {}) {
         if (options.rewardConfig) {
           this.setRewardConfig(options.rewardConfig);
@@ -1173,6 +1210,21 @@
         this.lastBfsDistance = -1;
         this.lastSpaceDelta = 0;
         this.freeSpaceRatio = this.computeReachableRatio();
+        this.lastFruitPathDistance = -1;
+        this.lastTailPathDistance = -1;
+        this.trapCounter = 0;
+        this.trapTension = 0;
+        this.coveragePath = this.buildCoveragePath();
+        this.coverageIndex = new Map();
+        this.coveragePath.forEach((point, idx) => {
+          this.coverageIndex.set(cellKey(point.x, point.y), idx);
+        });
+        this.coverageLastIndex = this.coverageIndex.get(cellKey(this.snake[0].x, this.snake[0].y)) ?? 0;
+        const coverageLength = Math.max(1, this.coveragePath.length);
+        this.coverageExpectedIndex = (this.coverageLastIndex + 1) % coverageLength;
+        this.coverageDelta = 0;
+        this.coverageAligned = 1;
+        this.coveragePressure = 0;
         this.placeFruit();
         this.lastBfsDistance = computeBfsDistance(
           { cols: this.cols, rows: this.rows },
@@ -1180,6 +1232,11 @@
           this.fruit,
           { allowTail: true }
         );
+        this.lastFruitPathDistance = this.lastBfsDistance;
+        const tailTarget = this.snake[this.snake.length - 1];
+        this.lastTailPathDistance = this.snake.length > 1
+          ? computeBfsDistance({ cols: this.cols, rows: this.rows }, this.snake, tailTarget, { allowTail: true })
+          : 0;
         return this.getState();
       }
 
@@ -1267,7 +1324,11 @@
         }
         const cfg = this.rewardConfig;
         const head = this.snake[0];
+        const headKey = cellKey(head.x, head.y);
         const prevDistance = this.fruit ? Math.abs(this.fruit.x - head.x) + Math.abs(this.fruit.y - head.y) : 0;
+        const prevFruitPath = this.lastFruitPathDistance;
+        const prevTailPath = this.lastTailPathDistance;
+        const prevCoverageIndex = this.coverageIndex ? this.coverageIndex.get(headKey) : null;
         this.decayVisitHeatmap();
         this.applyAction(action);
         const move = this.dir;
@@ -1321,6 +1382,69 @@
             }
           }
         }
+        const coverageLen = this.coveragePath?.length ?? 0;
+        if (coverageLen > 0 && this.coverageIndex) {
+          const nextCoverageIndex = this.coverageIndex.get(nextKey);
+          const expectedIndex = Number.isInteger(prevCoverageIndex)
+            ? (prevCoverageIndex + 1) % coverageLen
+            : nextCoverageIndex ?? 0;
+          const rawDelta = Number.isInteger(nextCoverageIndex)
+            ? (nextCoverageIndex - expectedIndex + coverageLen) % coverageLen
+            : 0;
+          const deviation = rawDelta === 0 ? 0 : Math.min(rawDelta, coverageLen - rawDelta);
+          const pressure = this.computeCoveragePressure();
+          this.coveragePressure = pressure;
+          if (Number.isInteger(nextCoverageIndex)) {
+            this.coverageLastIndex = nextCoverageIndex;
+            this.coverageExpectedIndex = (nextCoverageIndex + 1) % coverageLen;
+          }
+          this.coverageDelta = deviation;
+          this.coverageAligned = deviation === 0 ? 1 : 0;
+          if (pressure > 0) {
+            if (deviation === 0) {
+              reward += pressure * (cfg.coverageAdvanceReward ?? 0);
+            } else {
+              reward -= pressure * deviation * (cfg.coverageDeviationPenalty ?? 0);
+            }
+          }
+        } else {
+          this.coveragePressure = 0;
+          this.coverageDelta = 0;
+          this.coverageAligned = 1;
+        }
+        const fruitDistance = this.fruit
+          ? computeBfsDistance({ cols: this.cols, rows: this.rows }, this.snake, this.fruit, { allowTail: !willGrow })
+          : -1;
+        const tailTargetAfterMove = this.snake[this.snake.length - 1];
+        const tailDistance = this.snake.length > 1
+          ? computeBfsDistance({ cols: this.cols, rows: this.rows }, this.snake, tailTargetAfterMove, { allowTail: true })
+          : 0;
+        const fruitPathMissing = Boolean(this.fruit) && fruitDistance < 0;
+        const tailPathMissing = this.snake.length > 1 && tailDistance < 0;
+        if (fruitDistance >= 0 && prevFruitPath >= 0) {
+          const diff = prevFruitPath - fruitDistance;
+          if (diff !== 0) {
+            const weight = diff > 0 ? (cfg.fruitPathBonus ?? 0) : (cfg.pathLossPenalty ?? cfg.fruitPathBonus ?? 0);
+            reward += diff * weight;
+          }
+        } else if (fruitDistance >= 0 && prevFruitPath < 0) {
+          reward += cfg.pathRecoveryBonus ?? 0;
+        } else if (fruitPathMissing) {
+          reward -= cfg.noFruitPathPenalty ?? 0;
+        }
+        if (tailDistance >= 0 && prevTailPath >= 0) {
+          const diffTail = prevTailPath - tailDistance;
+          if (diffTail !== 0) {
+            const weightTail = diffTail > 0 ? (cfg.tailPathBonus ?? 0) : (cfg.pathLossPenalty ?? cfg.tailPathBonus ?? 0);
+            reward += diffTail * weightTail;
+          }
+        } else if (tailDistance >= 0 && prevTailPath < 0) {
+          reward += (cfg.pathRecoveryBonus ?? 0) * 0.5;
+        } else if (tailPathMissing) {
+          reward -= cfg.noTailPathPenalty ?? 0;
+        }
+        this.lastFruitPathDistance = fruitDistance;
+        this.lastTailPathDistance = tailDistance;
         this.totalSteps += 1;
         const nextDistance = this.fruit ? Math.abs(this.fruit.x - next.x) + Math.abs(this.fruit.y - next.y) : prevDistance;
         if (nextDistance < prevDistance) {
@@ -1369,6 +1493,16 @@
           reward += this.lastSpaceDelta * (cfg.spaceGainReward ?? 1);
         } else if (this.lastSpaceDelta < 0) {
           reward += this.lastSpaceDelta * (cfg.spaceLossPenalty ?? 1);
+        }
+        const trapLimit = Math.max(1, cfg.trapCounterLimit ?? 8);
+        if (fruitPathMissing || tailPathMissing || this.freeSpaceRatio < (cfg.trapThreshold ?? 0.12)) {
+          this.trapCounter += 1;
+          const tension = clamp(this.trapCounter / trapLimit, 0, 1);
+          this.trapTension = tension;
+          reward -= tension * (cfg.trapPenalty ?? 0);
+        } else {
+          this.trapCounter = Math.max(0, this.trapCounter - 1);
+          this.trapTension = clamp(this.trapCounter / trapLimit, 0, 1);
         }
         if (this.snake.length >= this.cols * this.rows) {
           this.alive = false;
@@ -1487,6 +1621,31 @@
         const bfsCloseness = this.lastBfsDistance >= 0
           ? 1 - clamp(this.lastBfsDistance / (this.cols + this.rows), 0, 1)
           : -1;
+        const maxGridMetric = Math.max(1, this.cols + this.rows);
+        const fruitPathDistance = this.lastFruitPathDistance ?? -1;
+        const tailPathDistanceSteps = this.lastTailPathDistance ?? -1;
+        const fruitPathAvailable = fruitPathDistance >= 0 ? 1 : 0;
+        const tailPathAvailable = tailPathDistanceSteps >= 0 ? 1 : 0;
+        const fruitPathCloseness = fruitPathDistance >= 0
+          ? 1 - clamp(fruitPathDistance / maxGridMetric, 0, 1)
+          : -1;
+        const tailPathCloseness = tailPathDistanceSteps >= 0
+          ? 1 - clamp(tailPathDistanceSteps / maxGridMetric, 0, 1)
+          : -1;
+        const trapTension = clamp(this.trapTension ?? 0, 0, 1);
+        const coverageLen = this.coveragePath?.length ?? 0;
+        const coverageProgress = coverageLen > 1
+          ? clamp((this.coverageLastIndex ?? 0) / (coverageLen - 1), 0, 1)
+          : 0;
+        const coverageDelta = coverageLen > 0
+          ? clamp(this.coverageDelta ?? 0, 0, coverageLen) / Math.max(1, coverageLen)
+          : 0;
+        const coveragePressure = clamp(this.coveragePressure ?? 0, 0, 1);
+        const coverageAligned = this.coverageAligned ?? 0;
+        const coverageNextIndex = this.coverageExpectedIndex ?? 0;
+        const coverageNextNorm = coverageLen > 0
+          ? clamp(coverageNextIndex / coverageLen, 0, 1)
+          : 0;
 
         const features = [
           dangerAhead ? 1 : 0,
@@ -1522,7 +1681,17 @@
           this.helperAlignment,
           helperAvailable,
           loopPressure,
-          bfsCloseness
+          bfsCloseness,
+          fruitPathAvailable,
+          tailPathAvailable,
+          fruitPathCloseness,
+          tailPathCloseness,
+          trapTension,
+          coverageProgress,
+          coverageDelta,
+          coveragePressure,
+          coverageAligned,
+          coverageNextNorm
         ];
         return Float32Array.from(features);
       }
@@ -1533,7 +1702,11 @@
     class NEATAgent {
       constructor(genomeConfig, neatConfig, evalConfig) {
         this.genomeConfig = genomeConfig;
-        this.evalConfig = { ...evalConfig };
+        const { rewardConfig = {}, ...restEval } = evalConfig || {};
+        this.evalConfig = {
+          ...restEval,
+          rewardConfig: { ...DEFAULT_REWARD_CONFIG, ...rewardConfig }
+        };
         this.population = new NEATPopulation(genomeConfig, neatConfig);
         this.bestGenome = null;
         this.stopRequested = false;
@@ -1542,7 +1715,14 @@
       }
 
       updateEvaluationConfig(opts = {}) {
-        Object.assign(this.evalConfig, opts);
+        const { rewardConfig, ...rest } = opts || {};
+        Object.assign(this.evalConfig, rest);
+        if (rewardConfig && typeof rewardConfig === 'object') {
+          this.evalConfig.rewardConfig = {
+            ...this.evalConfig.rewardConfig,
+            ...rewardConfig
+          };
+        }
       }
 
       async evaluateGenome(genome) {
@@ -1552,11 +1732,12 @@
         const winBonus = this.evalConfig.winBonus ?? 0;
         const cols = Math.max(4, this.evalConfig.cols | 0);
         const rows = Math.max(4, this.evalConfig.rows | 0);
+        const rewardConfig = this.evalConfig.rewardConfig || DEFAULT_REWARD_CONFIG;
         let totalReward = 0;
         let totalFruits = 0;
         let totalSteps = 0;
         for (let ep = 0; ep < episodes; ep += 1) {
-          const env = new SnakeEnvironment(cols, rows);
+          const env = new SnakeEnvironment(cols, rows, { rewardConfig });
           let state = env.reset();
           let rewardSum = 0;
           let won = false;
@@ -1808,14 +1989,16 @@
     }
 
     function drawEmptyBoard(size = Number(ui.gridSize.value || 14)) {
-      const env = new SnakeEnvironment(size, size);
+      const rewardConfig = agent?.evalConfig?.rewardConfig || DEFAULT_REWARD_CONFIG;
+      const env = new SnakeEnvironment(size, size, { rewardConfig });
       drawEnvironment(env);
     }
 
     function previewChampion(genome) {
       if (!genome || watching) return;
       const size = Number(ui.gridSize.value || 14);
-      const env = new SnakeEnvironment(size, size);
+      const rewardConfig = agent?.evalConfig?.rewardConfig || DEFAULT_REWARD_CONFIG;
+      const env = new SnakeEnvironment(size, size, { rewardConfig });
       let state = env.reset();
       const maxSteps = Math.min(120, ui.maxSteps.value ? Number(ui.maxSteps.value) : 400);
       for (let i = 0; i < maxSteps; i += 1) {
@@ -1839,7 +2022,8 @@
 
     function createAgent() {
       const size = Number(ui.gridSize.value || 14);
-      const probeEnv = new SnakeEnvironment(size, size);
+      const evalRewardConfig = { ...DEFAULT_REWARD_CONFIG };
+      const probeEnv = new SnakeEnvironment(size, size, { rewardConfig: evalRewardConfig });
       const stateSize = probeEnv.reset().length;
       const genomeConfig = { inputCount: stateSize, outputCount: ACTIONS.length };
       const neatConfig = {
@@ -1864,7 +2048,8 @@
         episodes: Number(ui.episodeCount.value || 3),
         maxSteps: Number(ui.maxSteps.value || 600),
         fruitBonus: 6,
-        winBonus: 50
+        winBonus: 50,
+        rewardConfig: evalRewardConfig
       };
       agent = new NEATAgent(genomeConfig, neatConfig, evalConfig);
       stopWatch();
@@ -1912,7 +2097,8 @@
         ui.watchBtn.textContent = 'Titta på bästa';
       };
       const size = Number(ui.gridSize.value || 14);
-      const env = new SnakeEnvironment(size, size);
+      const rewardConfig = agent?.evalConfig?.rewardConfig || DEFAULT_REWARD_CONFIG;
+      const env = new SnakeEnvironment(size, size, { rewardConfig });
       let state = env.reset();
       drawEnvironment(env);
       while (!cancelled) {
