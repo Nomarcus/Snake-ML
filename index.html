@@ -484,6 +484,7 @@
     </section>
   </main>
   <script type="module">
+    import { bfsPath as computeBfsPath, bfsDistance as computeBfsDistance } from './src/path_helpers.js';
     const rand = {
       float(min = 0, max = 1) {
         return Math.random() * (max - min) + min;
@@ -500,6 +501,42 @@
         return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v) * sigma + mu;
       }
     };
+
+    const DEFAULT_REWARD_CONFIG = {
+      stepPenalty: 0.015,
+      wallPenalty: 2.5,
+      selfPenalty: 2.2,
+      timeoutPenalty: 1.5,
+      fruitReward: 4,
+      victoryReward: 25,
+      approachBonus: 0.1,
+      retreatPenalty: 0.14,
+      idlePenalty: 0.02,
+      helperWeight: 0.35,
+      helperPenalty: 0.5,
+      loopPenalty: 0.45,
+      revisitPenalty: 0.08,
+      revisitIncrement: 0.25,
+      visitDecay: 0.992,
+      spaceGainReward: 1.2,
+      spaceLossPenalty: 2.4,
+      tailChaseBonus: 0.25,
+      tailPressureThreshold: 0.18,
+      fruitPathBonus: 0.35,
+      tailPathBonus: 0.45,
+      pathRecoveryBonus: 0.8,
+      pathLossPenalty: 0.22,
+      noFruitPathPenalty: 1.2,
+      noTailPathPenalty: 2.1,
+      trapThreshold: 0.16,
+      trapPenalty: 2.5,
+      trapCounterLimit: 10,
+      coverageAdvanceReward: 0.28,
+      coverageDeviationPenalty: 0.24,
+      coverageStartThreshold: 0.55
+    };
+
+    const LOOP_HISTORY_LIMIT = 16;
 
     class NodeGene {
       constructor(id, type, layer, options = {}) {
@@ -1086,15 +1123,72 @@
       { x: -1, y: 0 }
     ];
 
+    const actionFromVector = (dx, dy) => {
+      for (let i = 0; i < ACTIONS.length; i += 1) {
+        if (ACTIONS[i].x === dx && ACTIONS[i].y === dy) return i;
+      }
+      return null;
+    };
+
+    const cellKey = (x, y) => `${x},${y}`;
+
+    const clamp = (value, min, max) => {
+      if (value < min) return min;
+      if (value > max) return max;
+      return value;
+    };
+
     class SnakeEnvironment {
-      constructor(cols, rows) {
+      constructor(cols, rows, options = {}) {
         this.cols = cols;
         this.rows = rows;
+        this.rewardConfig = { ...DEFAULT_REWARD_CONFIG, ...(options.rewardConfig || {}) };
         this.maxStepsWithoutFruit = Math.max(cols * rows, cols * rows * 2);
         this.reset();
       }
 
-      reset() {
+      setRewardConfig(config = {}) {
+        if (!config || typeof config !== 'object') return;
+        this.rewardConfig = { ...this.rewardConfig, ...config };
+      }
+
+      decayVisitHeatmap() {
+        const decay = this.rewardConfig.visitDecay ?? 1;
+        if (!this.visit || decay >= 1 || decay <= 0) return;
+        for (let i = 0; i < this.visit.length; i += 1) {
+          this.visit[i] *= decay;
+        }
+      }
+
+      buildCoveragePath() {
+        const path = [];
+        for (let y = 0; y < this.rows; y += 1) {
+          if (y % 2 === 0) {
+            for (let x = 0; x < this.cols; x += 1) {
+              path.push({ x, y });
+            }
+          } else {
+            for (let x = this.cols - 1; x >= 0; x -= 1) {
+              path.push({ x, y });
+            }
+          }
+        }
+        return path;
+      }
+
+      computeCoveragePressure() {
+        if (!this.snake || !this.snake.length) return 0;
+        const threshold = clamp(this.rewardConfig.coverageStartThreshold ?? 0.6, 0, 0.98);
+        const ratio = this.snake.length / Math.max(1, this.cols * this.rows);
+        if (ratio <= threshold) return 0;
+        const denom = Math.max(1 - threshold, 1e-6);
+        return clamp((ratio - threshold) / denom, 0, 1);
+      }
+
+      reset(options = {}) {
+        if (options.rewardConfig) {
+          this.setRewardConfig(options.rewardConfig);
+        }
         this.alive = true;
         this.totalSteps = 0;
         this.stepsSinceFruit = 0;
@@ -1107,8 +1201,42 @@
           { x: Math.max(0, centerX - 2), y: centerY }
         ];
         this.dir = { x: 1, y: 0 };
-        this.snakeSet = new Set(this.snake.map((seg) => `${seg.x},${seg.y}`));
+        this.snakeSet = new Set(this.snake.map((seg) => cellKey(seg.x, seg.y)));
+        this.visit = new Float32Array(this.cols * this.rows).fill(0);
+        this.headHistory = [];
+        this.loopCounter = 0;
+        this.helperAlignment = 0;
+        this.lastHelperAction = null;
+        this.lastBfsDistance = -1;
+        this.lastSpaceDelta = 0;
+        this.freeSpaceRatio = this.computeReachableRatio();
+        this.lastFruitPathDistance = -1;
+        this.lastTailPathDistance = -1;
+        this.trapCounter = 0;
+        this.trapTension = 0;
+        this.coveragePath = this.buildCoveragePath();
+        this.coverageIndex = new Map();
+        this.coveragePath.forEach((point, idx) => {
+          this.coverageIndex.set(cellKey(point.x, point.y), idx);
+        });
+        this.coverageLastIndex = this.coverageIndex.get(cellKey(this.snake[0].x, this.snake[0].y)) ?? 0;
+        const coverageLength = Math.max(1, this.coveragePath.length);
+        this.coverageExpectedIndex = (this.coverageLastIndex + 1) % coverageLength;
+        this.coverageDelta = 0;
+        this.coverageAligned = 1;
+        this.coveragePressure = 0;
         this.placeFruit();
+        this.lastBfsDistance = computeBfsDistance(
+          { cols: this.cols, rows: this.rows },
+          this.snake,
+          this.fruit,
+          { allowTail: true }
+        );
+        this.lastFruitPathDistance = this.lastBfsDistance;
+        const tailTarget = this.snake[this.snake.length - 1];
+        this.lastTailPathDistance = this.snake.length > 1
+          ? computeBfsDistance({ cols: this.cols, rows: this.rows }, this.snake, tailTarget, { allowTail: true })
+          : 0;
         return this.getState();
       }
 
@@ -1116,7 +1244,7 @@
         const free = [];
         for (let y = 0; y < this.rows; y += 1) {
           for (let x = 0; x < this.cols; x += 1) {
-            const key = `${x},${y}`;
+            const key = cellKey(x, y);
             if (!this.snakeSet.has(key)) free.push({ x, y });
           }
         }
@@ -1138,23 +1266,83 @@
         this.dir = move;
       }
 
+      computeReachableRatio(allowTail = true) {
+        if (!this.snake.length) return 0;
+        const head = this.snake[0];
+        const visited = new Set();
+        const queue = [{ x: head.x, y: head.y }];
+        let qIndex = 0;
+        visited.add(cellKey(head.x, head.y));
+        const blocked = new Set(this.snakeSet);
+        if (allowTail && this.snake.length) {
+          const tail = this.snake[this.snake.length - 1];
+          blocked.delete(cellKey(tail.x, tail.y));
+        }
+        let count = 0;
+        while (qIndex < queue.length) {
+          const current = queue[qIndex++];
+          count += 1;
+          for (const dir of ACTIONS) {
+            const nx = current.x + dir.x;
+            const ny = current.y + dir.y;
+            if (nx < 0 || ny < 0 || nx >= this.cols || ny >= this.rows) continue;
+            const key = cellKey(nx, ny);
+            if (visited.has(key)) continue;
+            if (blocked.has(key)) continue;
+            visited.add(key);
+            queue.push({ x: nx, y: ny });
+          }
+        }
+        return count / (this.cols * this.rows);
+      }
+
+      getBfsSuggestion(allowTail = true) {
+        if (!this.fruit || this.fruit.x < 0 || this.fruit.y < 0) {
+          return { action: null, distance: -1 };
+        }
+        try {
+          const path = computeBfsPath({ cols: this.cols, rows: this.rows }, this.snake, this.fruit, { allowTail });
+          if (!Array.isArray(path) || !path.length) {
+            return { action: null, distance: -1 };
+          }
+          const distance = path.length - 1;
+          if (path.length <= 1) {
+            return { action: null, distance };
+          }
+          const nextStep = path[1];
+          const dx = nextStep.x - this.snake[0].x;
+          const dy = nextStep.y - this.snake[0].y;
+          return { action: actionFromVector(dx, dy), distance };
+        } catch (err) {
+          return { action: null, distance: -1 };
+        }
+      }
+
       step(action) {
         if (!this.alive) {
           return { state: this.getState(), reward: 0, done: true, info: { crash: 'dead', ateFruit: false } };
         }
-        this.applyAction(action);
+        const cfg = this.rewardConfig;
         const head = this.snake[0];
-        const next = { x: head.x + this.dir.x, y: head.y + this.dir.y };
-        const nextKey = `${next.x},${next.y}`;
+        const headKey = cellKey(head.x, head.y);
+        const prevDistance = this.fruit ? Math.abs(this.fruit.x - head.x) + Math.abs(this.fruit.y - head.y) : 0;
+        const prevFruitPath = this.lastFruitPathDistance;
+        const prevTailPath = this.lastTailPathDistance;
+        const prevCoverageIndex = this.coverageIndex ? this.coverageIndex.get(headKey) : null;
+        this.decayVisitHeatmap();
+        this.applyAction(action);
+        const move = this.dir;
+        const next = { x: head.x + move.x, y: head.y + move.y };
+        const nextKey = cellKey(next.x, next.y);
         const tail = this.snake[this.snake.length - 1];
-        const tailKey = `${tail.x},${tail.y}`;
-        const willEatFruit = this.fruit && next.x === this.fruit.x && next.y === this.fruit.y;
+        const tailKey = cellKey(tail.x, tail.y);
+        const willGrow = this.fruit && next.x === this.fruit.x && next.y === this.fruit.y;
         const hitsWall = this.outOfBounds(next.x, next.y);
-        const hitsBody = this.snakeSet.has(nextKey) && !(nextKey === tailKey && !willEatFruit);
-        let reward = -0.01;
+        const hitsBody = this.snakeSet.has(nextKey) && !(nextKey === tailKey && !willGrow);
+        let reward = -cfg.stepPenalty;
         if (hitsWall || hitsBody) {
           this.alive = false;
-          reward -= 1;
+          reward -= hitsWall ? cfg.wallPenalty : cfg.selfPenalty;
           return {
             state: this.getState(),
             reward,
@@ -1162,32 +1350,171 @@
             info: { crash: hitsWall ? 'wall' : 'self', ateFruit: false }
           };
         }
+        const suggestion = this.getBfsSuggestion(!willGrow);
+        this.lastHelperAction = suggestion.action;
+        this.lastBfsDistance = suggestion.distance;
         this.snake.unshift(next);
         this.snakeSet.add(nextKey);
         let ateFruit = false;
-        if (willEatFruit) {
+        if (willGrow) {
           ateFruit = true;
-          reward += 1.5;
+          reward += cfg.fruitReward;
           this.fruits += 1;
           this.stepsSinceFruit = 0;
-          this.placeFruit();
+          if (this.snake.length < this.cols * this.rows) {
+            this.placeFruit();
+          } else {
+            this.fruit = null;
+          }
         } else {
           const removed = this.snake.pop();
-          this.snakeSet.delete(`${removed.x},${removed.y}`);
+          this.snakeSet.delete(cellKey(removed.x, removed.y));
           this.stepsSinceFruit += 1;
+          if (cfg.tailChaseBonus) {
+            const tailBefore = Math.abs(head.x - tail.x) + Math.abs(head.y - tail.y);
+            const tailAfter = Math.abs(next.x - removed.x) + Math.abs(next.y - removed.y);
+            if (tailBefore > tailAfter) {
+              const threshold = cfg.tailPressureThreshold ?? 0.15;
+              const pressure = clamp((threshold - this.freeSpaceRatio) / Math.max(threshold, 1e-6), 0, 1);
+              if (pressure > 0) {
+                reward += cfg.tailChaseBonus * (tailBefore - tailAfter) * pressure;
+              }
+            }
+          }
         }
+        const coverageLen = this.coveragePath?.length ?? 0;
+        if (coverageLen > 0 && this.coverageIndex) {
+          const nextCoverageIndex = this.coverageIndex.get(nextKey);
+          const expectedIndex = Number.isInteger(prevCoverageIndex)
+            ? (prevCoverageIndex + 1) % coverageLen
+            : nextCoverageIndex ?? 0;
+          const rawDelta = Number.isInteger(nextCoverageIndex)
+            ? (nextCoverageIndex - expectedIndex + coverageLen) % coverageLen
+            : 0;
+          const deviation = rawDelta === 0 ? 0 : Math.min(rawDelta, coverageLen - rawDelta);
+          const pressure = this.computeCoveragePressure();
+          this.coveragePressure = pressure;
+          if (Number.isInteger(nextCoverageIndex)) {
+            this.coverageLastIndex = nextCoverageIndex;
+            this.coverageExpectedIndex = (nextCoverageIndex + 1) % coverageLen;
+          }
+          this.coverageDelta = deviation;
+          this.coverageAligned = deviation === 0 ? 1 : 0;
+          if (pressure > 0) {
+            if (deviation === 0) {
+              reward += pressure * (cfg.coverageAdvanceReward ?? 0);
+            } else {
+              reward -= pressure * deviation * (cfg.coverageDeviationPenalty ?? 0);
+            }
+          }
+        } else {
+          this.coveragePressure = 0;
+          this.coverageDelta = 0;
+          this.coverageAligned = 1;
+        }
+        const fruitDistance = this.fruit
+          ? computeBfsDistance({ cols: this.cols, rows: this.rows }, this.snake, this.fruit, { allowTail: !willGrow })
+          : -1;
+        const tailTargetAfterMove = this.snake[this.snake.length - 1];
+        const tailDistance = this.snake.length > 1
+          ? computeBfsDistance({ cols: this.cols, rows: this.rows }, this.snake, tailTargetAfterMove, { allowTail: true })
+          : 0;
+        const fruitPathMissing = Boolean(this.fruit) && fruitDistance < 0;
+        const tailPathMissing = this.snake.length > 1 && tailDistance < 0;
+        if (fruitDistance >= 0 && prevFruitPath >= 0) {
+          const diff = prevFruitPath - fruitDistance;
+          if (diff !== 0) {
+            const weight = diff > 0 ? (cfg.fruitPathBonus ?? 0) : (cfg.pathLossPenalty ?? cfg.fruitPathBonus ?? 0);
+            reward += diff * weight;
+          }
+        } else if (fruitDistance >= 0 && prevFruitPath < 0) {
+          reward += cfg.pathRecoveryBonus ?? 0;
+        } else if (fruitPathMissing) {
+          reward -= cfg.noFruitPathPenalty ?? 0;
+        }
+        if (tailDistance >= 0 && prevTailPath >= 0) {
+          const diffTail = prevTailPath - tailDistance;
+          if (diffTail !== 0) {
+            const weightTail = diffTail > 0 ? (cfg.tailPathBonus ?? 0) : (cfg.pathLossPenalty ?? cfg.tailPathBonus ?? 0);
+            reward += diffTail * weightTail;
+          }
+        } else if (tailDistance >= 0 && prevTailPath < 0) {
+          reward += (cfg.pathRecoveryBonus ?? 0) * 0.5;
+        } else if (tailPathMissing) {
+          reward -= cfg.noTailPathPenalty ?? 0;
+        }
+        this.lastFruitPathDistance = fruitDistance;
+        this.lastTailPathDistance = tailDistance;
         this.totalSteps += 1;
+        const nextDistance = this.fruit ? Math.abs(this.fruit.x - next.x) + Math.abs(this.fruit.y - next.y) : prevDistance;
+        if (nextDistance < prevDistance) {
+          reward += cfg.approachBonus;
+        } else if (nextDistance > prevDistance) {
+          reward -= cfg.retreatPenalty;
+        }
+        if (this.stepsSinceFruit && this.stepsSinceFruit % Math.max(35, Math.floor(this.cols * 1.25)) === 0) {
+          reward -= cfg.idlePenalty;
+        }
+        if (this.lastHelperAction !== null && cfg.helperWeight) {
+          if (action === this.lastHelperAction) {
+            reward += cfg.helperWeight;
+            this.helperAlignment = 1;
+          } else {
+            reward -= Math.abs(cfg.helperWeight) * (cfg.helperPenalty ?? 0.5);
+            this.helperAlignment = -1;
+          }
+        } else {
+          this.helperAlignment = 0;
+        }
+        const index = next.y * this.cols + next.x;
+        if (index >= 0 && index < this.visit.length) {
+          const revisit = this.visit[index];
+          if (revisit > 0) {
+            reward -= revisit * cfg.revisitPenalty;
+          }
+          this.visit[index] = clamp(revisit + (cfg.revisitIncrement ?? 0.2), 0, 1);
+        }
+        const currentKey = cellKey(next.x, next.y);
+        this.headHistory.push(currentKey);
+        if (this.headHistory.length > LOOP_HISTORY_LIMIT) {
+          this.headHistory.shift();
+        }
+        const duplicates = this.headHistory.filter((key) => key === currentKey).length;
+        if (duplicates > 1) {
+          reward -= cfg.loopPenalty * (duplicates - 1);
+          this.loopCounter = Math.min(LOOP_HISTORY_LIMIT, this.loopCounter + duplicates);
+        } else {
+          this.loopCounter = Math.max(0, this.loopCounter - 0.5);
+        }
+        const previousRatio = this.freeSpaceRatio;
+        this.freeSpaceRatio = this.computeReachableRatio(!willGrow);
+        this.lastSpaceDelta = this.freeSpaceRatio - previousRatio;
+        if (this.lastSpaceDelta > 0) {
+          reward += this.lastSpaceDelta * (cfg.spaceGainReward ?? 1);
+        } else if (this.lastSpaceDelta < 0) {
+          reward += this.lastSpaceDelta * (cfg.spaceLossPenalty ?? 1);
+        }
+        const trapLimit = Math.max(1, cfg.trapCounterLimit ?? 8);
+        if (fruitPathMissing || tailPathMissing || this.freeSpaceRatio < (cfg.trapThreshold ?? 0.12)) {
+          this.trapCounter += 1;
+          const tension = clamp(this.trapCounter / trapLimit, 0, 1);
+          this.trapTension = tension;
+          reward -= tension * (cfg.trapPenalty ?? 0);
+        } else {
+          this.trapCounter = Math.max(0, this.trapCounter - 1);
+          this.trapTension = clamp(this.trapCounter / trapLimit, 0, 1);
+        }
+        if (this.snake.length >= this.cols * this.rows) {
+          this.alive = false;
+          reward += cfg.victoryReward;
+          return { state: this.getState(), reward, done: true, info: { crash: 'victory', ateFruit: true } };
+        }
         if (this.stepsSinceFruit > this.maxStepsWithoutFruit) {
           this.alive = false;
-          reward -= 0.5;
-          return {
-            state: this.getState(),
-            reward,
-            done: true,
-            info: { crash: 'timeout', ateFruit }
-          };
+          reward -= cfg.timeoutPenalty;
+          return { state: this.getState(), reward, done: true, info: { crash: 'timeout', ateFruit } };
         }
-        return { state: this.getState(), reward, done: false, info: { ateFruit } };
+        return { state: this.getState(), reward, done: false, info: { crash: null, ateFruit } };
       }
 
       distanceUntilHit(dir) {
@@ -1199,7 +1526,7 @@
         while (dist < limit) {
           x += dir.x;
           y += dir.y;
-          const key = `${x},${y}`;
+          const key = cellKey(x, y);
           if (this.outOfBounds(x, y)) break;
           if (this.snakeSet.has(key)) break;
           dist += 1;
@@ -1218,20 +1545,20 @@
         const leftCell = { x: head.x + left.x, y: head.y + left.y };
         const rightCell = { x: head.x + right.x, y: head.y + right.y };
         const tail = this.snake[this.snake.length - 1];
-        const tailKey = `${tail.x},${tail.y}`;
+        const tailKey = cellKey(tail.x, tail.y);
 
         const checkDanger = (cell) => {
-          const key = `${cell.x},${cell.y}`;
+          const key = cellKey(cell.x, cell.y);
           return this.outOfBounds(cell.x, cell.y)
             || (this.snakeSet.has(key) && key !== tailKey);
         };
 
         const dangerAhead = this.outOfBounds(forward.x, forward.y)
-          || (this.snakeSet.has(`${forward.x},${forward.y}`) && `${forward.x},${forward.y}` !== tailKey);
+          || (this.snakeSet.has(cellKey(forward.x, forward.y)) && cellKey(forward.x, forward.y) !== tailKey);
         const dangerLeft = this.outOfBounds(leftCell.x, leftCell.y)
-          || (this.snakeSet.has(`${leftCell.x},${leftCell.y}`) && `${leftCell.x},${leftCell.y}` !== tailKey);
+          || (this.snakeSet.has(cellKey(leftCell.x, leftCell.y)) && cellKey(leftCell.x, leftCell.y) !== tailKey);
         const dangerRight = this.outOfBounds(rightCell.x, rightCell.y)
-          || (this.snakeSet.has(`${rightCell.x},${rightCell.y}`) && `${rightCell.x},${rightCell.y}` !== tailKey);
+          || (this.snakeSet.has(cellKey(rightCell.x, rightCell.y)) && cellKey(rightCell.x, rightCell.y) !== tailKey);
         const dangerBack = checkDanger({ x: head.x + back.x, y: head.y + back.y });
         const frontLeft = { x: head.x + dir.x + left.x, y: head.y + dir.y + left.y };
         const frontRight = { x: head.x + dir.x + right.x, y: head.y + dir.y + right.y };
@@ -1287,6 +1614,38 @@
         const distForward = this.distanceUntilHit(dir);
         const distLeft = this.distanceUntilHit(left);
         const distRight = this.distanceUntilHit(right);
+        const freeSpaceRatio = clamp(this.freeSpaceRatio ?? 0, 0, 1);
+        const loopPressure = clamp(this.loopCounter / LOOP_HISTORY_LIMIT, 0, 1);
+        const spaceDelta = clamp(this.lastSpaceDelta ?? 0, -1, 1);
+        const helperAvailable = this.lastHelperAction === null ? 0 : 1;
+        const bfsCloseness = this.lastBfsDistance >= 0
+          ? 1 - clamp(this.lastBfsDistance / (this.cols + this.rows), 0, 1)
+          : -1;
+        const maxGridMetric = Math.max(1, this.cols + this.rows);
+        const fruitPathDistance = this.lastFruitPathDistance ?? -1;
+        const tailPathDistanceSteps = this.lastTailPathDistance ?? -1;
+        const fruitPathAvailable = fruitPathDistance >= 0 ? 1 : 0;
+        const tailPathAvailable = tailPathDistanceSteps >= 0 ? 1 : 0;
+        const fruitPathCloseness = fruitPathDistance >= 0
+          ? 1 - clamp(fruitPathDistance / maxGridMetric, 0, 1)
+          : -1;
+        const tailPathCloseness = tailPathDistanceSteps >= 0
+          ? 1 - clamp(tailPathDistanceSteps / maxGridMetric, 0, 1)
+          : -1;
+        const trapTension = clamp(this.trapTension ?? 0, 0, 1);
+        const coverageLen = this.coveragePath?.length ?? 0;
+        const coverageProgress = coverageLen > 1
+          ? clamp((this.coverageLastIndex ?? 0) / (coverageLen - 1), 0, 1)
+          : 0;
+        const coverageDelta = coverageLen > 0
+          ? clamp(this.coverageDelta ?? 0, 0, coverageLen) / Math.max(1, coverageLen)
+          : 0;
+        const coveragePressure = clamp(this.coveragePressure ?? 0, 0, 1);
+        const coverageAligned = this.coverageAligned ?? 0;
+        const coverageNextIndex = this.coverageExpectedIndex ?? 0;
+        const coverageNextNorm = coverageLen > 0
+          ? clamp(coverageNextIndex / coverageLen, 0, 1)
+          : 0;
 
         const features = [
           dangerAhead ? 1 : 0,
@@ -1316,7 +1675,23 @@
           stepsNorm,
           distForward,
           distLeft,
-          distRight
+          distRight,
+          freeSpaceRatio,
+          spaceDelta,
+          this.helperAlignment,
+          helperAvailable,
+          loopPressure,
+          bfsCloseness,
+          fruitPathAvailable,
+          tailPathAvailable,
+          fruitPathCloseness,
+          tailPathCloseness,
+          trapTension,
+          coverageProgress,
+          coverageDelta,
+          coveragePressure,
+          coverageAligned,
+          coverageNextNorm
         ];
         return Float32Array.from(features);
       }
@@ -1327,7 +1702,11 @@
     class NEATAgent {
       constructor(genomeConfig, neatConfig, evalConfig) {
         this.genomeConfig = genomeConfig;
-        this.evalConfig = { ...evalConfig };
+        const { rewardConfig = {}, ...restEval } = evalConfig || {};
+        this.evalConfig = {
+          ...restEval,
+          rewardConfig: { ...DEFAULT_REWARD_CONFIG, ...rewardConfig }
+        };
         this.population = new NEATPopulation(genomeConfig, neatConfig);
         this.bestGenome = null;
         this.stopRequested = false;
@@ -1336,28 +1715,46 @@
       }
 
       updateEvaluationConfig(opts = {}) {
-        Object.assign(this.evalConfig, opts);
+        const { rewardConfig, ...rest } = opts || {};
+        Object.assign(this.evalConfig, rest);
+        if (rewardConfig && typeof rewardConfig === 'object') {
+          this.evalConfig.rewardConfig = {
+            ...this.evalConfig.rewardConfig,
+            ...rewardConfig
+          };
+        }
       }
 
       async evaluateGenome(genome) {
         const episodes = Math.max(1, this.evalConfig.episodes | 0);
         const maxSteps = Math.max(50, this.evalConfig.maxSteps | 0);
         const fruitBonus = this.evalConfig.fruitBonus ?? 4;
+        const winBonus = this.evalConfig.winBonus ?? 0;
         const cols = Math.max(4, this.evalConfig.cols | 0);
         const rows = Math.max(4, this.evalConfig.rows | 0);
+        const rewardConfig = this.evalConfig.rewardConfig || DEFAULT_REWARD_CONFIG;
         let totalReward = 0;
         let totalFruits = 0;
         let totalSteps = 0;
         for (let ep = 0; ep < episodes; ep += 1) {
-          const env = new SnakeEnvironment(cols, rows);
+          const env = new SnakeEnvironment(cols, rows, { rewardConfig });
           let state = env.reset();
           let rewardSum = 0;
+          let won = false;
           for (let step = 0; step < maxSteps; step += 1) {
             const { action } = genome.decideAction(state);
             const result = env.step(action);
             state = result.state;
             rewardSum += result.reward;
-            if (result.done) break;
+            if (result.done) {
+              if (env.snake.length >= cols * rows) {
+                won = true;
+              }
+              break;
+            }
+          }
+          if (won) {
+            rewardSum += winBonus;
           }
           totalReward += rewardSum;
           totalFruits += env.fruits;
@@ -1592,14 +1989,16 @@
     }
 
     function drawEmptyBoard(size = Number(ui.gridSize.value || 14)) {
-      const env = new SnakeEnvironment(size, size);
+      const rewardConfig = agent?.evalConfig?.rewardConfig || DEFAULT_REWARD_CONFIG;
+      const env = new SnakeEnvironment(size, size, { rewardConfig });
       drawEnvironment(env);
     }
 
     function previewChampion(genome) {
       if (!genome || watching) return;
       const size = Number(ui.gridSize.value || 14);
-      const env = new SnakeEnvironment(size, size);
+      const rewardConfig = agent?.evalConfig?.rewardConfig || DEFAULT_REWARD_CONFIG;
+      const env = new SnakeEnvironment(size, size, { rewardConfig });
       let state = env.reset();
       const maxSteps = Math.min(120, ui.maxSteps.value ? Number(ui.maxSteps.value) : 400);
       for (let i = 0; i < maxSteps; i += 1) {
@@ -1623,7 +2022,8 @@
 
     function createAgent() {
       const size = Number(ui.gridSize.value || 14);
-      const probeEnv = new SnakeEnvironment(size, size);
+      const evalRewardConfig = { ...DEFAULT_REWARD_CONFIG };
+      const probeEnv = new SnakeEnvironment(size, size, { rewardConfig: evalRewardConfig });
       const stateSize = probeEnv.reset().length;
       const genomeConfig = { inputCount: stateSize, outputCount: ACTIONS.length };
       const neatConfig = {
@@ -1647,7 +2047,9 @@
         rows: size,
         episodes: Number(ui.episodeCount.value || 3),
         maxSteps: Number(ui.maxSteps.value || 600),
-        fruitBonus: 4
+        fruitBonus: 6,
+        winBonus: 50,
+        rewardConfig: evalRewardConfig
       };
       agent = new NEATAgent(genomeConfig, neatConfig, evalConfig);
       stopWatch();
@@ -1695,7 +2097,8 @@
         ui.watchBtn.textContent = 'Titta på bästa';
       };
       const size = Number(ui.gridSize.value || 14);
-      const env = new SnakeEnvironment(size, size);
+      const rewardConfig = agent?.evalConfig?.rewardConfig || DEFAULT_REWARD_CONFIG;
+      const env = new SnakeEnvironment(size, size, { rewardConfig });
       let state = env.reset();
       drawEnvironment(env);
       while (!cancelled) {
