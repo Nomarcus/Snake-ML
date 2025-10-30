@@ -1,29 +1,6 @@
-function normaliseGrid(gridSize) {
-  if (Number.isFinite(gridSize)) {
-    const size = gridSize | 0;
-    return { cols: size, rows: size };
-  }
-  if (gridSize && typeof gridSize === 'object') {
-    const size = Number.isFinite(gridSize.size) ? gridSize.size | 0 : 0;
-    const cols = Number.isFinite(gridSize.cols)
-      ? gridSize.cols | 0
-      : Number.isFinite(gridSize.width)
-        ? gridSize.width | 0
-        : size;
-    const rows = Number.isFinite(gridSize.rows)
-      ? gridSize.rows | 0
-      : Number.isFinite(gridSize.height)
-        ? gridSize.height | 0
-        : size || cols;
-    return { cols, rows };
-  }
-  return { cols: 0, rows: 0 };
-}
-
-export function bfsPath(gridSize, snake = [], fruit, options = {}) {
-  const { cols, rows } = normaliseGrid(gridSize);
-  const size = Math.min(cols, rows);
-  if (cols <= 0 || rows <= 0 || !fruit || typeof fruit.x !== 'number' || typeof fruit.y !== 'number') {
+export function bfsPath(gridSize, snake = [], fruit) {
+  const size = Number.isFinite(gridSize) ? gridSize | 0 : 0;
+  if (size <= 0 || !fruit || typeof fruit.x !== 'number' || typeof fruit.y !== 'number') {
     return [];
   }
   if (!Array.isArray(snake) || snake.length === 0) {
@@ -33,7 +10,6 @@ export function bfsPath(gridSize, snake = [], fruit, options = {}) {
   if (typeof head?.x !== 'number' || typeof head?.y !== 'number') {
     return [];
   }
-  const allowTail = !!options.allowTail;
   const dirs = [
     [1, 0],
     [-1, 0],
@@ -42,10 +18,6 @@ export function bfsPath(gridSize, snake = [], fruit, options = {}) {
   ];
   const key = (x, y) => `${x},${y}`;
   const blocked = new Set();
-  const tail = snake[snake.length - 1];
-  const tailKey = tail && Number.isFinite(tail.x) && Number.isFinite(tail.y)
-    ? key(tail.x, tail.y)
-    : null;
   for (const segment of snake) {
     if (segment && Number.isFinite(segment.x) && Number.isFinite(segment.y)) {
       blocked.add(key(segment.x, segment.y));
@@ -73,11 +45,10 @@ export function bfsPath(gridSize, snake = [], fruit, options = {}) {
     for (const [dx, dy] of dirs) {
       const nx = current.x + dx;
       const ny = current.y + dy;
-      if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) continue;
+      if (nx < 0 || ny < 0 || nx >= size || ny >= size) continue;
       const nextKey = key(nx, ny);
       if (visited.has(nextKey)) continue;
-      const isTail = allowTail && tailKey && nextKey === tailKey;
-      if (blocked.has(nextKey) && !(nx === fruit.x && ny === fruit.y) && !isTail) continue;
+      if (blocked.has(nextKey) && !(nx === fruit.x && ny === fruit.y)) continue;
       visited.add(nextKey);
       prev.set(nextKey, { x: current.x, y: current.y });
       queue.push({ x: nx, y: ny });
@@ -86,8 +57,8 @@ export function bfsPath(gridSize, snake = [], fruit, options = {}) {
   return [];
 }
 
-export function bfsDistance(gridSize, snake = [], fruit, options = {}) {
-  const path = bfsPath(gridSize, snake, fruit, options);
+export function bfsDistance(gridSize, snake = [], fruit) {
+  const path = bfsPath(gridSize, snake, fruit);
   return path.length ? path.length - 1 : -1;
 }
 
