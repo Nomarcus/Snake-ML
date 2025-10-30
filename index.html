@@ -783,6 +783,26 @@ select{
   color:#a7b2e8;
   font-size:12px;
 }
+.hint.error{color:var(--danger);}
+.hint.success{color:#34d399;}
+.audio-field .hint{display:block;margin-top:6px;}
+.audio-track-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:10px;
+  align-items:center;
+}
+.audio-track-row select{
+  flex:1 1 220px;
+  min-width:160px;
+}
+.audio-track-row .audio-buttons{
+  display:flex;
+  gap:8px;
+}
+.audio-track-row .audio-buttons button{
+  min-width:80px;
+}
 .game-card .hint{
   font-size:13px;
   line-height:1.6;
@@ -1191,6 +1211,19 @@ footer{
     <div class="field block">
       <label for="stagePresetSelect">Stage preset</label>
       <select id="stagePresetSelect"></select>
+    </div>
+    <div class="field block audio-field">
+      <label for="audioTrackSelect">Soundtrack</label>
+      <div class="audio-track-row">
+        <select id="audioTrackSelect" disabled>
+          <option value="">Loading…</option>
+        </select>
+        <div class="audio-buttons">
+          <button type="button" class="secondary" id="audioPlayButton" disabled>Play</button>
+          <button type="button" class="secondary" id="audioStopButton" disabled>Stop</button>
+        </div>
+      </div>
+      <span class="hint" id="audioStatus">Add MP3 files to the Audio folder to enable the in-game soundtrack.</span>
     </div>
     <div class="field block curriculum-field">
       <div class="curriculum-toggle">
@@ -1970,6 +2003,7 @@ const OBSERVATION_STATE_SIZES={
   [OBSERVATION_VERSIONS.extendedCompat]:21,
   [OBSERVATION_VERSIONS.extended]:24,
 };
+const SOUNDTRACK_ENDPOINT='/api/audio/tracks';
 const normalizeObservationVersion=version=>{
   if(typeof version!=='string') return DEFAULT_OBSERVATION_VERSION;
   const lower=version.trim().toLowerCase();
@@ -5291,6 +5325,10 @@ const ui={
   algoSelect:document.getElementById('algoSelect'),
   algoDescription:document.getElementById('algoDescription'),
   stagePresetSelect:document.getElementById('stagePresetSelect'),
+  audioTrackSelect:document.getElementById('audioTrackSelect'),
+  audioPlayButton:document.getElementById('audioPlayButton'),
+  audioStopButton:document.getElementById('audioStopButton'),
+  audioStatus:document.getElementById('audioStatus'),
   curriculumToggle:document.getElementById('curriculumToggle'),
   curriculumLength:document.getElementById('curriculumLength'),
   curriculumLengthReadout:document.getElementById('curriculumLengthReadout'),
@@ -5429,6 +5467,316 @@ const ui={
     ppo:document.querySelector('[data-config="ppo"]'),
   },
 };
+
+const soundtrackState={
+  audio:null,
+  tracks:[],
+  currentId:'',
+  activeId:'',
+  initialized:false,
+  loading:false,
+  wasStopped:false,
+  lastStatusTone:'info',
+};
+
+function getConfiguredApiBase(){
+  if(typeof globalThis==='undefined') return '';
+  const candidates=[globalThis.API_BASE_URL,globalThis.__API_BASE_URL];
+  for(const candidate of candidates){
+    if(typeof candidate!=='string') continue;
+    const trimmed=candidate.trim();
+    if(trimmed) return trimmed.replace(/\/+$/,'');
+  }
+  return '';
+}
+
+function buildAbsoluteUrl(path=''){
+  const base=getConfiguredApiBase();
+  if(typeof path!=='string') path=String(path||'');
+  const trimmed=path.trim();
+  if(!trimmed){
+    return base;
+  }
+  if(/^https?:\/\//i.test(trimmed)){
+    return trimmed;
+  }
+  if(!base){
+    return trimmed;
+  }
+  if(/^https?:\/\//i.test(base)){
+    if(trimmed.startsWith('/')) return `${base}${trimmed}`;
+    return `${base}/${trimmed}`;
+  }
+  const normalizedBase=base.startsWith('/')?base:`/${base}`;
+  if(trimmed.startsWith('/')) return `${normalizedBase}${trimmed}`;
+  return `${normalizedBase}/${trimmed}`;
+}
+
+function encodeSoundtrackPath(name){
+  if(typeof name!=='string') return '';
+  return name
+    .split('/')
+    .map(segment=>encodeURIComponent(segment))
+    .join('/');
+}
+
+function normalizeSoundtrackTrack(track){
+  if(!track||typeof track!=='object') return null;
+  const idCandidates=[track.id,track.file,track.name,track.url];
+  let id='';
+  for(const candidate of idCandidates){
+    if(typeof candidate==='string'&&candidate.trim()){
+      id=candidate.trim();
+      break;
+    }
+  }
+  if(!id) return null;
+  let url='';
+  if(typeof track.url==='string'&&track.url.trim()){
+    url=track.url.trim();
+  }else{
+    const fileName=typeof track.file==='string'&&track.file.trim()?track.file.trim():id;
+    url=`/Audio/${encodeSoundtrackPath(fileName)}`;
+  }
+  const labelCandidates=[track.label,track.name,track.file,id];
+  let label='Custom track';
+  for(const candidate of labelCandidates){
+    if(typeof candidate==='string'&&candidate.trim()){
+      label=candidate.trim();
+      break;
+    }
+  }
+  return {id,label,url};
+}
+
+function setSoundtrackStatus(message,{error=false,success=false}={}){
+  if(!ui.audioStatus) return;
+  ui.audioStatus.textContent=message;
+  ui.audioStatus.classList.toggle('error',!!error);
+  ui.audioStatus.classList.toggle('success',!!success);
+  soundtrackState.lastStatusTone=error?'error':success?'success':'info';
+}
+
+function getSoundtrackTrackById(id){
+  if(!id) return null;
+  return soundtrackState.tracks.find(track=>track.id===id)||null;
+}
+
+function updateSoundtrackButtons(){
+  const select=ui.audioTrackSelect;
+  const playBtn=ui.audioPlayButton;
+  const stopBtn=ui.audioStopButton;
+  const audio=soundtrackState.audio;
+  const isPlaying=!!(audio&&!audio.paused&&audio.src);
+  if(select){
+    select.disabled=!soundtrackState.tracks.length||soundtrackState.loading;
+  }
+  if(playBtn){
+    playBtn.disabled=soundtrackState.loading||!soundtrackState.tracks.length||!soundtrackState.currentId;
+    playBtn.textContent=isPlaying?'Pause':'Play';
+  }
+  if(stopBtn){
+    const canStop=isPlaying||!!(soundtrackState.activeId&&soundtrackState.tracks.length);
+    stopBtn.disabled=soundtrackState.loading||!canStop;
+  }
+}
+
+async function refreshSoundtrackList(){
+  const select=ui.audioTrackSelect;
+  if(!select) return;
+  soundtrackState.loading=true;
+  updateSoundtrackButtons();
+  const previousId=soundtrackState.currentId;
+  try{
+    setSoundtrackStatus('Loading soundtrack list…');
+    const response=await fetch(buildAbsoluteUrl(SOUNDTRACK_ENDPOINT),{headers:{Accept:'application/json'}});
+    if(!response.ok){
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const payload=await response.json();
+    const rawTracks=Array.isArray(payload?.tracks)?payload.tracks:Array.isArray(payload)?payload:[];
+    const normalized=rawTracks.map(normalizeSoundtrackTrack).filter(Boolean);
+    soundtrackState.tracks=normalized;
+    select.innerHTML='';
+    if(!normalized.length){
+      const option=document.createElement('option');
+      option.value='';
+      option.textContent='No MP3 files found';
+      option.disabled=true;
+      option.selected=true;
+      select.appendChild(option);
+      soundtrackState.currentId='';
+      soundtrackState.activeId='';
+      if(soundtrackState.audio){
+        soundtrackState.audio.pause();
+        soundtrackState.audio.removeAttribute('src');
+        soundtrackState.audio.load();
+      }
+      if(soundtrackState.lastStatusTone!=='error'){
+        setSoundtrackStatus('Add MP3 files to the Audio folder to enable the in-game soundtrack.');
+      }
+    }else{
+      const placeholder=document.createElement('option');
+      placeholder.value='';
+      placeholder.textContent='Choose a track';
+      select.appendChild(placeholder);
+      let selectedExists=false;
+      for(const track of normalized){
+        const option=document.createElement('option');
+        option.value=track.id;
+        option.textContent=track.label;
+        if(track.id===previousId){
+          option.selected=true;
+          selectedExists=true;
+        }
+        select.appendChild(option);
+      }
+      if(selectedExists){
+        soundtrackState.currentId=previousId;
+      }else{
+        soundtrackState.currentId='';
+        placeholder.selected=true;
+      }
+      if(soundtrackState.lastStatusTone!=='error'){
+        setSoundtrackStatus('Choose a track and press Play to loop it.');
+      }
+    }
+  }catch(error){
+    console.error('Failed to load soundtrack list',error);
+    soundtrackState.tracks=[];
+    select.innerHTML='';
+    const option=document.createElement('option');
+    option.value='';
+    option.textContent='Failed to load soundtrack list';
+    option.disabled=true;
+    option.selected=true;
+    select.appendChild(option);
+    soundtrackState.currentId='';
+    soundtrackState.activeId='';
+    setSoundtrackStatus('Could not load soundtrack list.',{error:true});
+  }finally{
+    soundtrackState.loading=false;
+    updateSoundtrackButtons();
+  }
+}
+
+function handleSoundtrackSelectionChange(){
+  if(!ui.audioTrackSelect) return;
+  soundtrackState.currentId=ui.audioTrackSelect.value||'';
+  if(!soundtrackState.currentId){
+    if(soundtrackState.lastStatusTone!=='error'){
+      setSoundtrackStatus('Choose a track and press Play to loop it.');
+    }
+    updateSoundtrackButtons();
+    return;
+  }
+  const track=getSoundtrackTrackById(soundtrackState.currentId);
+  if(!track){
+    setSoundtrackStatus('Could not find the selected track.',{error:true});
+    updateSoundtrackButtons();
+    return;
+  }
+  if(soundtrackState.audio&&!soundtrackState.audio.paused){
+    playSelectedSoundtrack({restart:true}).catch(err=>console.error('Failed to switch soundtrack',err));
+  }else if(soundtrackState.lastStatusTone!=='error'){
+    setSoundtrackStatus(`Ready to play "${track.label}".`);
+  }
+  updateSoundtrackButtons();
+}
+
+async function handleSoundtrackPlayToggle(){
+  if(soundtrackState.loading) return;
+  if(!soundtrackState.currentId){
+    setSoundtrackStatus('Select a track first.',{error:true});
+    updateSoundtrackButtons();
+    return;
+  }
+  const audio=soundtrackState.audio;
+  if(!audio) return;
+  if(!audio.paused){
+    soundtrackState.wasStopped=false;
+    audio.pause();
+    return;
+  }
+  try{
+    await playSelectedSoundtrack({restart:soundtrackState.activeId!==soundtrackState.currentId});
+  }catch(error){
+    console.error('Failed to play soundtrack',error);
+    setSoundtrackStatus('Could not start playback.',{error:true});
+  }finally{
+    updateSoundtrackButtons();
+  }
+}
+
+function stopSoundtrackPlayback(){
+  const audio=soundtrackState.audio;
+  if(!audio) return;
+  if(!audio.src&&!soundtrackState.activeId) return;
+  soundtrackState.wasStopped=true;
+  audio.pause();
+  try{
+    audio.currentTime=0;
+  }catch(err){
+    /* ignore */
+  }
+  soundtrackState.activeId='';
+  updateSoundtrackButtons();
+}
+
+async function playSelectedSoundtrack({restart=false}={}){
+  const audio=soundtrackState.audio;
+  if(!audio) throw new Error('Audio element not initialised');
+  const track=getSoundtrackTrackById(soundtrackState.currentId);
+  if(!track) throw new Error('Track not found');
+  const targetUrl=buildAbsoluteUrl(track.url);
+  if(restart||soundtrackState.activeId!==track.id||!audio.src){
+    audio.src=targetUrl;
+    soundtrackState.activeId=track.id;
+  }
+  soundtrackState.wasStopped=false;
+  const playPromise=audio.play();
+  if(playPromise&&typeof playPromise.then==='function'){
+    await playPromise;
+  }
+  setSoundtrackStatus(`Playing "${track.label}" on loop.`,{success:true});
+  updateSoundtrackButtons();
+}
+
+function initializeSoundtrackControls(){
+  if(soundtrackState.initialized) return;
+  if(!ui.audioTrackSelect) return;
+  soundtrackState.initialized=true;
+  const audio=new Audio();
+  audio.loop=true;
+  audio.preload='auto';
+  audio.crossOrigin='anonymous';
+  soundtrackState.audio=audio;
+  ui.audioTrackSelect.addEventListener('change',handleSoundtrackSelectionChange);
+  ui.audioPlayButton?.addEventListener('click',handleSoundtrackPlayToggle);
+  ui.audioStopButton?.addEventListener('click',stopSoundtrackPlayback);
+  audio.addEventListener('playing',()=>{
+    soundtrackState.wasStopped=false;
+    updateSoundtrackButtons();
+  });
+  audio.addEventListener('pause',()=>{
+    const track=getSoundtrackTrackById(soundtrackState.currentId||soundtrackState.activeId);
+    if(soundtrackState.wasStopped){
+      setSoundtrackStatus('Playback stopped.');
+    }else if(track&&soundtrackState.lastStatusTone!=='error'){
+      setSoundtrackStatus('Playback paused.');
+    }
+    soundtrackState.wasStopped=false;
+    updateSoundtrackButtons();
+  });
+  audio.addEventListener('error',()=>{
+    setSoundtrackStatus('Audio playback error.',{error:true});
+    updateSoundtrackButtons();
+  });
+  refreshSoundtrackList().catch(error=>{
+    console.error('Failed to initialise soundtrack controls',error);
+    setSoundtrackStatus('Could not load soundtrack list.',{error:true});
+  });
+}
 
 let presetSelectEl=null;
 
@@ -6383,6 +6731,7 @@ function bindUI(){
     }
     flash('Cleared local storage');
   });
+  initializeSoundtrackControls();
   ui.autoLogClear?.addEventListener('click',()=>{
     resetAutoLog();
   });
