@@ -4104,11 +4104,15 @@ class PPOAgent{
     this.warmupSteps=config.warmupSteps??0;
     this.normalizeAdvantages=config.normalizeAdvantages??true;
     this.normalizeObservations=config.normalizeObservations??false;
+    this.updateThreshold=config.updateThreshold??this.batchSize;
+    this.rolloutLimit=config.rolloutLimit??(this.batchSize*8);
+    this.updateThreshold=Math.max(this.minibatchSize*2,this.updateThreshold);
     this.initialEntropy=this.entropyCoef;
     this.obsRunningStats=this.normalizeObservations?new RunningMeanStd(this.sDim):null;
     this.optimizer=tf.train.adam(this.learningRate);
     this.model=this.buildModel();
     this.trajectory=[];
+    this.rolloutBuffer=[];
     this.lastActInfo=null;
     this.diagnostics={
       policyLoss:[],
@@ -4147,6 +4151,7 @@ class PPOAgent{
   setBatch(val){
     this.batchSize=Math.max(16,val|0);
     this.minibatchSize=Math.min(this.minibatchSize,this.batchSize);
+    this.updateThreshold=Math.max(this.minibatchSize*2,this.batchSize,this.updateThreshold);
   }
   setEpochs(val){ this.epochs=Math.max(1,val|0); }
   normalizeObservation(state,update=true){
@@ -4210,7 +4215,9 @@ class PPOAgent{
     this.trajectory.length=0;
     this.lastActInfo=null;
   }
-  async learn(){ return null; }
+  async learn(){
+    return this.maybeTrainFromBuffer();
+  }
   evaluateAction(state,action){
     const input=tf.tensor2d([state],[1,this.sDim]);
     const [policy,value]=this.model.predict(input);
@@ -4269,12 +4276,55 @@ class PPOAgent{
       lastValue=this.predictValue(this.trajectory[len-1].ns,true);
     }
     const {advantages,returns}=this.computeGAE(rewards,values,dones,lastValue);
-    const states=tf.tensor2d(this.trajectory.map(t=>t.s),[len,this.sDim]);
-    const actions=tf.tensor1d(this.trajectory.map(t=>t.a),'int32');
-    const oldLogProbs=tf.tensor1d(this.trajectory.map(t=>t.logProb));
-    const oldValues=tf.tensor1d(values);
-    const returnsTensor=tf.tensor1d(returns);
-    const advantagesTensor=tf.tensor1d(advantages);
+    const rolloutSamples=this.trajectory.map((t,idx)=>({
+      s:Float32Array.from(t.s),
+      a:t.a,
+      logProb:t.logProb,
+      value:t.value,
+      ret:returns[idx],
+      adv:advantages[idx],
+    }));
+    this.appendToRolloutBuffer(rolloutSamples);
+    this.trajectory.length=0;
+    return this.maybeTrainFromBuffer();
+  }
+  appendToRolloutBuffer(samples){
+    if(!Array.isArray(samples)||!samples.length) return;
+    this.rolloutBuffer.push(...samples);
+    const limit=Math.max(this.rolloutLimit,this.updateThreshold*2);
+    if(this.rolloutBuffer.length>limit){
+      this.rolloutBuffer.splice(0,this.rolloutBuffer.length-limit);
+    }
+  }
+  maybeTrainFromBuffer(force=false){
+    if(!force && this.rolloutBuffer.length<this.updateThreshold){
+      return null;
+    }
+    return this.runPpoUpdate();
+  }
+  buildBatchFromBuffer(){
+    if(!this.rolloutBuffer.length) return null;
+    const desired=Math.max(this.minibatchSize,Math.min(this.batchSize,this.rolloutBuffer.length));
+    const indices=Array.from({length:this.rolloutBuffer.length},(_,i)=>i);
+    this.shuffleArray(indices);
+    const selected=indices.slice(0,desired).sort((a,b)=>b-a);
+    const batch=[];
+    for(const idx of selected){
+      batch.push(this.rolloutBuffer[idx]);
+      this.rolloutBuffer.splice(idx,1);
+    }
+    return batch;
+  }
+  async runPpoUpdate(){
+    const batch=this.buildBatchFromBuffer();
+    const len=batch?.length??0;
+    if(!len) return null;
+    const states=tf.tensor2d(batch.map(t=>t.s),[len,this.sDim]);
+    const actions=tf.tensor1d(batch.map(t=>t.a),'int32');
+    const oldLogProbs=tf.tensor1d(batch.map(t=>t.logProb));
+    const oldValues=tf.tensor1d(batch.map(t=>t.value));
+    const returnsTensor=tf.tensor1d(batch.map(t=>t.ret));
+    const advantagesTensor=tf.tensor1d(batch.map(t=>t.adv));
     let totalPolicyLoss=0;
     let totalValueLoss=0;
     let totalEntropy=0;
@@ -4498,6 +4548,8 @@ class PPOAgent{
         normalizeAdvantages:this.normalizeAdvantages,
         normalizeObservations:this.normalizeObservations,
         warmupSteps:this.warmupSteps,
+        updateThreshold:this.updateThreshold,
+        rolloutLimit:this.rolloutLimit,
       },
       currentUpdate:this.currentUpdate,
       weights,
@@ -4527,6 +4579,9 @@ class PPOAgent{
     this.normalizeAdvantages=cfg.normalizeAdvantages??this.normalizeAdvantages;
     this.normalizeObservations=cfg.normalizeObservations??this.normalizeObservations;
     this.warmupSteps=cfg.warmupSteps??this.warmupSteps;
+    this.updateThreshold=cfg.updateThreshold??this.updateThreshold;
+    this.rolloutLimit=cfg.rolloutLimit??this.rolloutLimit;
+    this.updateThreshold=Math.max(this.minibatchSize*2,this.updateThreshold);
     this.currentUpdate=state.currentUpdate??0;
     this.optimizer=tf.train.adam(this.learningRate);
     this.model.dispose();
