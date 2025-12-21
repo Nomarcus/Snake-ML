@@ -8,6 +8,8 @@ const DEFAULT_MODEL_ID =
   process.env.GROQ_MODEL?.trim() || 'llama-3.1-8b-instant';
 const HISTORY_LOG_MAX_BYTES = 8 * 1024 * 1024;
 const HISTORY_LOG_PATH = path.join(process.cwd(), 'api', 'logs', 'snake-history.jsonl');
+const AUDIO_DIR = path.join(process.cwd(), 'Audio');
+const AUDIO_EXTENSIONS = new Set(['.mp3']);
 
 const SYSTEM_PROMPT = `You are an advanced reinforcement learning tuner for Snake-ML.  
 The agent plays Snake on a 2-D grid and the goad is to complete the whole board.  
@@ -84,6 +86,12 @@ app.use((req, res, next) => {
 });
 
 app.use(express.json({ limit: '1mb' }));
+
+ensureAudioDir().catch(error => {
+  console.warn('Kunde inte säkerställa Audio-katalogen vid uppstart:', error);
+});
+
+app.use('/Audio', express.static(AUDIO_DIR));
 
 app.options('/api/proxy', (req, res) => {
   const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
@@ -179,6 +187,22 @@ app.post('/api/proxy', async (req, res) => {
       raw: error instanceof Error && error.message ? error.message : undefined,
       status: 500,
     });
+  }
+});
+
+app.get('/api/audio/tracks', async (req, res) => {
+  const { allowed } = applyCorsHeaders({ req, res, allowAllOrigins, allowedOriginSet });
+  if (req.headers.origin && !allowed) {
+    return res.status(403).json({ error: 'Otillåten origin.' });
+  }
+
+  try {
+    await ensureAudioDir();
+    const tracks = await listAudioTracks();
+    return res.status(200).json({ tracks, count: tracks.length });
+  } catch (error) {
+    console.error('Misslyckades läsa Audio-katalogen:', error);
+    return res.status(500).json({ error: 'Kunde inte läsa Audio-katalogen.' });
   }
 });
 
@@ -450,6 +474,70 @@ async function rotateHistoryLog() {
 
   await fs.rename(HISTORY_LOG_PATH, backupPath);
   await fs.writeFile(HISTORY_LOG_PATH, '');
+}
+
+async function ensureAudioDir() {
+  await fs.mkdir(AUDIO_DIR, { recursive: true });
+}
+
+async function listAudioTracks() {
+  let entries = [];
+  try {
+    entries = await fs.readdir(AUDIO_DIR, { withFileTypes: true });
+  } catch (error) {
+    if (error && error.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+
+  const tracks = [];
+  for (const entry of entries) {
+    if (!entry?.isFile?.()) continue;
+    if (!isAudioFilename(entry.name)) continue;
+    tracks.push(buildAudioTrackMetadata(entry.name));
+  }
+
+  tracks.sort((a, b) => a.label.localeCompare(b.label, 'sv', { sensitivity: 'base' }));
+  return tracks;
+}
+
+function isAudioFilename(name) {
+  if (typeof name !== 'string') {
+    return false;
+  }
+  const ext = path.extname(name).toLowerCase();
+  return AUDIO_EXTENSIONS.has(ext);
+}
+
+function buildAudioTrackMetadata(filename) {
+  const label = prettifyAudioLabel(filename);
+  const encoded = encodePathSegments(filename);
+  return {
+    id: filename,
+    file: filename,
+    label,
+    url: `/Audio/${encoded}`,
+  };
+}
+
+function prettifyAudioLabel(filename) {
+  if (typeof filename !== 'string') {
+    return 'Unknown track';
+  }
+  const base = filename.replace(/\.[^/.]+$/, '');
+  const spaced = base.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
+  return spaced || base || filename;
+}
+
+function encodePathSegments(input) {
+  if (typeof input !== 'string') {
+    return '';
+  }
+  return input
+    .split('/')
+    .map(segment => encodeURIComponent(segment))
+    .join('/');
 }
 
 export default app;
