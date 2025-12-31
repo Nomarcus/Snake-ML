@@ -986,7 +986,8 @@ details summary::-webkit-details-marker{display:none}
   gap:4px;
 }
 .hidden{display:none!important}
-#guideView{
+#guideView,
+#infoView{
   max-width:900px;
   margin:24px auto 60px;
   padding:0 16px;
@@ -994,22 +995,27 @@ details summary::-webkit-details-marker{display:none}
   flex-direction:column;
   gap:16px;
 }
-#guideView .card{
+#guideView .card,
+#infoView .card{
   padding:24px;
 }
-#guideView h2{
+#guideView h2,
+#infoView h2{
   font-size:20px;
   margin-bottom:12px;
 }
-#guideView h3{
+#guideView h3,
+#infoView h3{
   margin-top:20px;
   margin-bottom:8px;
   color:#dfe3ff;
 }
-#guideView p,#guideView li{
+#guideView p,#guideView li,
+#infoView p,#infoView li{
   color:#c7cdef;
 }
-#guideView ul{
+#guideView ul,
+#infoView ul{
   padding-left:20px;
   margin:8px 0;
 }
@@ -1112,13 +1118,72 @@ footer{
       <span class="badge">LR <span id="lrBadge">0.0005</span></span>
     </div>
     <nav class="tabs">
-      <button type="button" id="tabTraining" class="active">Training</button>
+      <button type="button" id="tabInfo" class="active">Info</button>
+      <button type="button" id="tabTraining">Training</button>
       <button type="button" id="tabGuide">Guide</button>
     </nav>
   </div>
 </header>
 
-<main id="trainingView" class="layout">
+<section id="infoView">
+  <div class="card">
+    <h2>Welcome to Snake-ML</h2>
+    <p>This studio gathers a set of interactive AI experiments. Use this page as your landing guide so you know what every section and experiment is about before you start training.</p>
+    <ul>
+      <li><strong>Info (this page):</strong> a plain-English map of the experiments and their algorithms.</li>
+      <li><strong>Training:</strong> the live Snake simulation with full controls, rewards, and hyperparameters.</li>
+      <li><strong>Guide:</strong> deeper documentation for the training stack, sliders, and RL concepts.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>Experiments at a glance</h2>
+    <h3>SnakeAI</h3>
+    <p>A reinforcement learning sandbox where the agent learns to collect fruit, avoid crashes, and manage long-term planning on grid boards.</p>
+    <p><strong>Algorithms:</strong> DQN variants (Dueling/Double/PER), PPO, A2C, and policy gradient. Path helpers can provide BFS/Hamilton hints for safer navigation.</p>
+    <h3>FoodWars</h3>
+    <p>A resource-collection scenario where agents compete or cooperate for food. The goal is to balance fast pickups with safe routes and defense.</p>
+    <p><strong>Algorithms:</strong> multi-agent PPO/A2C with self-play, plus value-based baselines to compare individual foraging efficiency.</p>
+    <h3>DataSorting</h3>
+    <p>A data-organisation task focused on ordering and grouping items. It highlights how models learn structured operations and stable ordering rules.</p>
+    <p><strong>Algorithms:</strong> supervised sequence models (RNN/Transformer) with rule-based baselines (merge/insertion sorting) for comparison.</p>
+    <h3>Ballad</h3>
+    <p>A sequence-generation task that models rhythm, structure, and progression. It is designed to explore how models learn long-term dependencies.</p>
+    <p><strong>Algorithms:</strong> autoregressive sequence models, attention-based networks, and sampling/beam-search strategies for exploring variation.</p>
+    <h3>Volleyball Showdown</h3>
+    <p>A head-to-head control challenge with timing, positioning, and reactive play. It showcases policy learning under fast feedback loops.</p>
+    <p><strong>Algorithms:</strong> self-play PPO for reactive control, optional behavior cloning for serve/receive skill bootstrapping.</p>
+  </div>
+
+  <div class="card">
+    <h2>Algorithm toolkit (what they do)</h2>
+    <ul>
+      <li><strong>DQN / Dueling DQN:</strong> value-based methods that estimate how good each action is. Dueling splits the value of a state from the advantage of each action to stabilise learning.</li>
+      <li><strong>Double DQN:</strong> decouples action selection and evaluation to reduce value overestimation.</li>
+      <li><strong>Prioritised replay:</strong> revisits important experiences (high error) more often to speed up learning.</li>
+      <li><strong>Policy Gradient (REINFORCE):</strong> learns a policy directly by increasing the probability of good actions.</li>
+      <li><strong>A2C:</strong> combines a policy (actor) and a value function (critic) to reduce variance.</li>
+      <li><strong>PPO:</strong> a policy method that limits how far the policy can move each update, keeping training stable.</li>
+      <li><strong>Planning helpers:</strong> BFS/Hamilton hints provide safe paths that the reward model can gently encourage.</li>
+      <li><strong>Supervised baselines:</strong> useful for DataSorting or Ballad tasks where labelled sequences or targets are available.</li>
+      <li><strong>Self-play &amp; multi-agent:</strong> used in FoodWars and Volleyball Showdown to learn against increasingly strong opponents.</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h2>How to work with the experiments</h2>
+    <ol>
+      <li><strong>Pick a goal:</strong> decide if you want fast scoring, safety, long-term planning, or creative sequences.</li>
+      <li><strong>Select an algorithm:</strong> use DQN variants for stable value learning, or PPO/A2C for smoother policies and multi-agent setups.</li>
+      <li><strong>Tune rewards and hyperparameters:</strong> adjust the reward model to reinforce the behaviours you want, then tweak γ, LR, and exploration.</li>
+      <li><strong>Explore systematically:</strong> change one setting at a time, run a few hundred episodes, and compare reward trends and behaviour.</li>
+      <li><strong>Document results:</strong> save presets so you can reproduce strong runs or share them with others.</li>
+    </ol>
+    <p>If you are new, start with SnakeAI using Dueling Double DQN, then switch to PPO once you want smoother policies or to experiment with self-play behaviours.</p>
+  </div>
+</section>
+
+<main id="trainingView" class="layout hidden">
   <section class="card game-card" id="simulationCard">
     <div class="card-head">
       <div>
@@ -5451,8 +5516,10 @@ const ui={
   progressChartLegend:document.getElementById('progressChartLegend'),
   progressChartMeta:document.getElementById('progressChartMeta'),
   progressChartRange:document.getElementById('progressChartRange'),
+  tabInfo:document.getElementById('tabInfo'),
   tabTraining:document.getElementById('tabTraining'),
   tabGuide:document.getElementById('tabGuide'),
+  infoView:document.getElementById('infoView'),
   trainingView:document.getElementById('trainingView'),
   guideView:document.getElementById('guideView'),
   autoLogPanel:document.getElementById('autoLogPanel'),
@@ -6872,8 +6939,10 @@ function bindUI(){
     }
     applyRewardsToEnv();
   });
+  ui.tabInfo?.addEventListener('click',()=>setActiveTab('info'));
   ui.tabTraining.addEventListener('click',()=>setActiveTab('training'));
   ui.tabGuide.addEventListener('click',()=>setActiveTab('guide'));
+  setActiveTab('info');
   updateReadouts();
   updateGridLabel();
   applyRewardsToEnv();
@@ -6891,10 +6960,15 @@ function bindUI(){
   updateProgressChart();
 }
 function setActiveTab(tab){
-  const showGuide=tab==='guide';
-  ui.tabTraining.classList.toggle('active',!showGuide);
+  const normalized=tab==='training'||tab==='guide'||tab==='info'?tab:'info';
+  const showGuide=normalized==='guide';
+  const showTraining=normalized==='training';
+  const showInfo=normalized==='info';
+  ui.tabInfo?.classList.toggle('active',showInfo);
+  ui.tabTraining.classList.toggle('active',showTraining);
   ui.tabGuide.classList.toggle('active',showGuide);
-  ui.trainingView.classList.toggle('hidden',showGuide);
+  ui.infoView?.classList.toggle('hidden',!showInfo);
+  ui.trainingView.classList.toggle('hidden',!showTraining);
   ui.guideView.classList.toggle('hidden',!showGuide);
 }
 function updateGridLabel(){
